@@ -6,6 +6,10 @@ use gpui_platform::application;
 
 const TEXT_COLOR: u32 = 0xffffff;
 const BACKGROUND_COLOR: u32 = 0x1e1e1e;
+const WINDOW_TITLE: &str = "Posty pete";
+
+const WINDOW_WIDTH: f32 = 1280.;
+const WINDOW_HEIGHT: f32 = 720.;
 
 struct HelloWorld {
     text: SharedString,
@@ -27,10 +31,14 @@ impl Render for HelloWorld {
 
 fn run() {
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1000.), px(700.)), cx);
+        let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some(WINDOW_TITLE.into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             |_window, cx| {
