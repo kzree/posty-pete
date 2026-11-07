@@ -1,6 +1,10 @@
 use gpui::{
-    App, AppContext, Bounds, Context, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, WindowOptions, div, px, rgb, size,
+    App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
+    WindowOptions, div, px, rgb, size,
+};
+use gpui_component::{
+    Root,
+    input::{Input, InputState},
 };
 use gpui_platform::application;
 
@@ -12,7 +16,7 @@ const WINDOW_WIDTH: f32 = 1280.;
 const WINDOW_HEIGHT: f32 = 720.;
 
 struct HelloWorld {
-    text: SharedString,
+    input: Entity<InputState>,
 }
 
 impl Render for HelloWorld {
@@ -25,12 +29,18 @@ impl Render for HelloWorld {
             .bg(rgb(BACKGROUND_COLOR))
             .text_color(rgb(TEXT_COLOR))
             .text_xl()
-            .child(format!("Hello, {}!", self.text))
+            .child(
+                div()
+                    .w(px(400.))
+                    .text_color(rgb(0x000000))
+                    .child(Input::new(&self.input)),
+            )
     }
 }
 
 fn run() {
     application().run(|cx: &mut App| {
+        gpui_component::init(cx);
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         cx.open_window(
             WindowOptions {
@@ -41,10 +51,11 @@ fn run() {
                 }),
                 ..Default::default()
             },
-            |_window, cx| {
-                cx.new(|_| HelloWorld {
-                    text: "World".into(),
-                })
+            |window, cx| {
+                let input = cx.new(|cx| InputState::new(window, cx).placeholder("Type here..."));
+                let view = cx.new(|_| HelloWorld { input });
+
+                cx.new(|cx| Root::new(view, window, cx))
             },
         )
         .unwrap();
