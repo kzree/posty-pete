@@ -3,11 +3,17 @@ use gpui::{
     WindowOptions, div, px, size,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Root, Theme, ThemeMode, h_resizable,
+    ActiveTheme, Root, Theme, ThemeMode, h_resizable,
     input::{Input, InputState},
     resizable_panel,
 };
 use gpui_platform::application;
+
+mod sidebar;
+mod status_bar;
+
+use sidebar::Sidebar;
+use status_bar::StatusBar;
 
 const WINDOW_TITLE: &str = "Posty pete";
 
@@ -33,8 +39,7 @@ impl Render for BaseLayout {
                             .size(px(280.))
                             .size_range(px(200.)..px(400.))
                             .fixed()
-                            .bg(cx.theme().sidebar.lighten(1.0))
-                            .child("Sidebar"),
+                            .child(Sidebar::new()),
                     )
                     .child(
                         resizable_panel()
@@ -42,17 +47,7 @@ impl Render for BaseLayout {
                             .child(div().w(px(400.)).child(Input::new(&self.input))),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .h_6()
-                    .px_2()
-                    .items_center()
-                    .border_t_1()
-                    .border_color(cx.theme().status_bar_border)
-                    .bg(cx.theme().status_bar)
-                    .child("Bottom bar"),
-            )
+            .child(StatusBar::new())
     }
 }
 
