@@ -1,6 +1,6 @@
 use gpui::{
-    AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    div, px,
+    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Window, div, px,
 };
 use gpui_component::{
     IndexPath,
@@ -12,7 +12,11 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::domain::request::HttpMethod;
+use crate::domain::request::{HttpMethod, Request};
+
+pub enum RequestEditorEvent {
+    SendRequested(Request),
+}
 
 #[derive(Clone)]
 pub struct MethodItem(HttpMethod);
@@ -34,6 +38,8 @@ pub struct RequestEditor {
     url: Entity<InputState>,
 }
 
+impl EventEmitter<RequestEditorEvent> for RequestEditor {}
+
 impl RequestEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let items: Vec<MethodItem> = HttpMethod::ALL.into_iter().map(MethodItem).collect();
@@ -41,6 +47,18 @@ impl RequestEditor {
         let url = cx.new(|cx| InputState::new(window, cx).placeholder("https://..."));
 
         Self { method, url }
+    }
+
+    fn build_request(&self, cx: &App) -> Request {
+        Request {
+            method: self
+                .method
+                .read(cx)
+                .selected_value()
+                .copied()
+                .unwrap_or_default(),
+            url: self.url.read(cx).value().into(),
+        }
     }
 }
 
@@ -62,14 +80,8 @@ impl Render for RequestEditor {
                         .primary()
                         .label("Send")
                         .on_click(cx.listener(|this, _, _, cx| {
-                            let method = this
-                                .method
-                                .read(cx)
-                                .selected_value()
-                                .copied()
-                                .unwrap_or_default();
-                            let url = this.url.read(cx).value();
-                            println!("{} {}", method.as_str(), url);
+                            let req = this.build_request(cx);
+                            cx.emit(RequestEditorEvent::SendRequested(req));
                         })),
                 ),
         )

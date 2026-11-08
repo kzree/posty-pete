@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
-    WindowOptions, div, px, size,
+    App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled,
+    Subscription, Window, WindowOptions, div, px, size,
 };
 use gpui_component::{
     ActiveTheme, Root, Theme, ThemeMode, h_resizable, resizable_panel, v_resizable,
@@ -17,7 +17,10 @@ mod status_bar;
 use sidebar::Sidebar;
 use status_bar::StatusBar;
 
-use crate::{request_editor::RequestEditor, response::Response};
+use crate::{
+    request_editor::{RequestEditor, RequestEditorEvent},
+    response::Response,
+};
 
 const WINDOW_TITLE: &str = "Posty pete";
 
@@ -26,12 +29,21 @@ const WINDOW_HEIGHT: f32 = 720.;
 
 struct BaseLayout {
     request_editor: Entity<RequestEditor>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl BaseLayout {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let request_editor = cx.new(|cx| RequestEditor::new(window, cx));
+
+        let sub = cx.subscribe(&request_editor, |_this, _editor, event, _cx| match event {
+            RequestEditorEvent::SendRequested(request) => {
+                println!("send: {} {}", request.method.as_str(), request.url);
+            }
+        });
         Self {
-            request_editor: cx.new(|cx| RequestEditor::new(window, cx)),
+            request_editor,
+            _subscriptions: vec![sub],
         }
     }
 }
