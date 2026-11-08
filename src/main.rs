@@ -3,9 +3,9 @@ use gpui::{
     WindowOptions, div, px, size,
 };
 use gpui_component::{
-    ActiveTheme, Root, Theme, ThemeMode,
-    button::{Button, ButtonVariants},
+    ActiveTheme, Colorize, Root, Theme, ThemeMode, h_resizable,
     input::{Input, InputState},
+    resizable_panel,
 };
 use gpui_platform::application;
 
@@ -14,29 +14,44 @@ const WINDOW_TITLE: &str = "Posty pete";
 const WINDOW_WIDTH: f32 = 1280.;
 const WINDOW_HEIGHT: f32 = 720.;
 
-struct HelloWorld {
+struct BaseLayout {
     input: Entity<InputState>,
 }
 
-impl Render for HelloWorld {
+impl Render for BaseLayout {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
+            .flex_col()
             .size_full()
-            .justify_center()
-            .items_center()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .text_xl()
-            .child(div().w(px(400.)).child(Input::new(&self.input)))
             .child(
-                Button::new("submit-btn")
-                    .label("Submit")
-                    .primary()
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        let val = this.input.read(cx).value();
-                        println!("submitted: {val}")
-                    })),
+                h_resizable("main-layout")
+                    .child(
+                        resizable_panel()
+                            .size(px(280.))
+                            .size_range(px(200.)..px(400.))
+                            .fixed()
+                            .bg(cx.theme().sidebar.lighten(1.0))
+                            .child("Sidebar"),
+                    )
+                    .child(
+                        resizable_panel()
+                            .p_4()
+                            .child(div().w(px(400.)).child(Input::new(&self.input))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .h_6()
+                    .px_2()
+                    .items_center()
+                    .border_t_1()
+                    .border_color(cx.theme().status_bar_border)
+                    .bg(cx.theme().status_bar)
+                    .child("Bottom bar"),
             )
     }
 }
@@ -58,7 +73,7 @@ fn run() {
             },
             |window, cx| {
                 let input = cx.new(|cx| InputState::new(window, cx).placeholder("Type here..."));
-                let view = cx.new(|_| HelloWorld { input });
+                let view = cx.new(|_| BaseLayout { input });
 
                 cx.new(|cx| Root::new(view, window, cx))
             },
