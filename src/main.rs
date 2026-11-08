@@ -5,8 +5,10 @@ use gpui::{
 use gpui_component::{
     ActiveTheme, Root, Theme, ThemeMode, h_resizable, resizable_panel, v_resizable,
 };
+use gpui_kit_assets::Assets;
 use gpui_platform::application;
 
+mod domain;
 mod request_editor;
 mod response;
 mod sidebar;
@@ -64,7 +66,7 @@ impl Render for BaseLayout {
 }
 
 fn run() {
-    application().run(|cx: &mut App| {
+    application().with_assets(Assets).run(|cx: &mut App| {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
 

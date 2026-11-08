@@ -25,7 +25,7 @@ Status: early, just scaffolding.
 
 ## Code organization
 
-Code is organized **by feature**, with all non-UI logic in a gpui-free `core/` module.
+Code is organized **by feature**, with all non-UI logic in a gpui-free `domain/` module.
 
 ```
 src/
@@ -37,18 +37,18 @@ src/
 ├── sidebar.rs     # Sidebar: collections, history
 ├── status_bar.rs  # StatusBar
 ├── ui/            # small shared RenderOnce pieces (badges, pills, etc.)
-└── core/          # pure Rust: models, HTTP, persistence, env variables
+└── domain/        # pure Rust: models, HTTP, persistence, env variables
 ```
 
 Rules:
 
-- **`core/` must not import gpui or gpui-component.** It holds request/response models, the HTTP client (reqwest on tokio), collections and persistence, and `{{variable}}` substitution. It must be testable with plain `cargo test`. It may later become a separate workspace crate.
+- **`domain/` must not import gpui or gpui-component.** It holds request/response models, the HTTP client (reqwest on tokio), collections and persistence, and `{{variable}}` substitution. It must be testable with plain `cargo test`. It may later become a separate workspace crate. (It is named `domain` rather than `core` to avoid clashing with Rust's built-in `core` crate.)
 - **One feature per module, named after its main type.** The module is the snake_case form of the view or component it contains (`RequestEditor` → `request_editor`, `StatusBar` → `status_bar`), and fields holding it use the same name (`request_editor: Entity<RequestEditor>`). A view's struct, `impl Render`, events (`EventEmitter`) and actions live together in its module. Start as a single file (`request_editor.rs`) and split it into a folder (`request_editor/mod.rs` + sub-files) only when it grows.
-- **Views own UI state; models live in `core/`.** For example, `RequestEditor` holds `Entity<InputState>`s and builds a `core::Request` from them. Core types never depend on widget types.
+- **Views own UI state; models live in `domain/`.** For example, `RequestEditor` holds `Entity<InputState>`s and builds a `domain::Request` from them. Domain types never depend on widget types.
 - **Children emit events and parents wire them up.** Sibling views don't reach into each other; `Workspace` (`app.rs`) subscribes to child events and coordinates.
 - **Use `Entity` + `Render` for components with lasting state, and `RenderOnce` or plain functions for presentation.** Shared presentational pieces go in `ui/`; ones used by a single feature stay in that feature's folder.
 
-When reviewing, flag violations of these rules, especially gpui imports in `core/`.
+When reviewing, flag violations of these rules, especially gpui imports in `domain/`.
 
 ## Agent role
 
@@ -56,6 +56,18 @@ The developer is writing this code themselves. Agents are here mainly for:
 
 1. **Code review**: correctness, idiomatic Rust, gpui usage, async and threading issues, error handling.
 2. **Docs search**: looking up APIs and examples for gpui, gpui-component, reqwest, tokio, and other dependencies.
+
+## Reference material
+
+The repo vendors two skills from `longbridge/gpui-kit` in `.agents/skills/` (pinned in `skills-lock.json`, symlinked into `.claude/skills/` for Claude Code):
+
+- **`gpui-kit`**: Coding Guides, component conventions and usage (Input, Select, Button, Dialog...), an app recipe, and gpui references (entities, elements, layout/style, focus, actions, async, events, testing) in `references/gpui/`.
+- **`gpui-kit-design-guides`**: design rules for layout, spacing, color, interaction states, overlays and interface copy, plus review checklists.
+
+Consult them for gpui and gpui-component questions, but keep in mind:
+
+- They're written for the umbrella **`gpui-kit`** crate (`use gpui_kit::component::...`, `gpui_kit::application()`, `gpui_kit::open_window`). This project depends on **`gpui-component`** and **`gpui-pre`** directly, so translate the paths: `gpui_kit::component::X` → `gpui_component::X`, GPUI items → `gpui::X`, `gpui_kit::application()` → `gpui_platform::application()`. Don't add `gpui-kit` as a dependency unless the developer decides to switch.
+- They may lag behind the pinned versions (their setup snippet mentions `gpui-kit = "0.7"`). When a skill and the source disagree, the source in `~/.cargo/registry/src/*/gpui-component-0.9.0` (and `gpui-base-0.9.0`, `gpui-pre-0.3.11`) wins.
 
 ## Rules
 
