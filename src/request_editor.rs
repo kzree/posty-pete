@@ -3,7 +3,9 @@ use gpui::{
     div, px,
 };
 use gpui_component::{
-    IndexPath, h_flex,
+    IndexPath,
+    button::{Button, ButtonVariants},
+    h_flex,
     input::{Input, InputState},
     searchable_list::SearchableListItem,
     select::{Select, SelectState},
@@ -43,7 +45,7 @@ impl RequestEditor {
 }
 
 impl Render for RequestEditor {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().size_full().p_4().gap_2().child(
             h_flex()
                 .w_full()
@@ -54,7 +56,22 @@ impl Render for RequestEditor {
                         .w(px(110.))
                         .child(Select::new(&self.method)),
                 )
-                .child(div().flex_1().child(Input::new(&self.url))),
+                .child(div().flex_1().child(Input::new(&self.url)))
+                .child(
+                    Button::new("send")
+                        .primary()
+                        .label("Send")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let method = this
+                                .method
+                                .read(cx)
+                                .selected_value()
+                                .copied()
+                                .unwrap_or_default();
+                            let url = this.url.read(cx).value();
+                            println!("{} {}", method.as_str(), url);
+                        })),
+                ),
         )
     }
 }
