@@ -3,17 +3,19 @@ use gpui::{
     WindowOptions, div, px, size,
 };
 use gpui_component::{
-    ActiveTheme, Root, Theme, ThemeMode, h_resizable,
-    input::{Input, InputState},
-    resizable_panel,
+    ActiveTheme, Root, Theme, ThemeMode, h_resizable, resizable_panel, v_resizable,
 };
 use gpui_platform::application;
 
+mod request_editor;
+mod response;
 mod sidebar;
 mod status_bar;
 
 use sidebar::Sidebar;
 use status_bar::StatusBar;
+
+use crate::{request_editor::RequestEditor, response::Response};
 
 const WINDOW_TITLE: &str = "Posty pete";
 
@@ -21,7 +23,15 @@ const WINDOW_WIDTH: f32 = 1280.;
 const WINDOW_HEIGHT: f32 = 720.;
 
 struct BaseLayout {
-    input: Entity<InputState>,
+    request_editor: Entity<RequestEditor>,
+}
+
+impl BaseLayout {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self {
+            request_editor: cx.new(|cx| RequestEditor::new(window, cx)),
+        }
+    }
 }
 
 impl Render for BaseLayout {
@@ -42,9 +52,11 @@ impl Render for BaseLayout {
                             .child(Sidebar::new()),
                     )
                     .child(
-                        resizable_panel()
-                            .p_4()
-                            .child(div().w(px(400.)).child(Input::new(&self.input))),
+                        resizable_panel().child(
+                            v_resizable("request-response")
+                                .child(resizable_panel().child(self.request_editor.clone()))
+                                .child(resizable_panel().child(Response::new())),
+                        ),
                     ),
             )
             .child(StatusBar::new())
@@ -67,9 +79,7 @@ fn run() {
                 ..Default::default()
             },
             |window, cx| {
-                let input = cx.new(|cx| InputState::new(window, cx).placeholder("Type here..."));
-                let view = cx.new(|_| BaseLayout { input });
-
+                let view = cx.new(|cx| BaseLayout::new(window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )

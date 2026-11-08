@@ -32,9 +32,10 @@ src/
 ├── main.rs        # app startup: init, theme, open window
 ├── app.rs         # Workspace: root view, owns the panes, wires up events
 ├── actions.rs     # global actions + key bindings
-├── request/       # feature: editing a request (RequestEditor + sub-views)
-├── response/      # feature: viewing a response
-├── sidebar/       # feature: collections, history
+├── request_editor # RequestEditor: editing a request (.rs now, folder when it grows)
+├── response_view  # ResponseView: viewing a response
+├── sidebar.rs     # Sidebar: collections, history
+├── status_bar.rs  # StatusBar
 ├── ui/            # small shared RenderOnce pieces (badges, pills, etc.)
 └── core/          # pure Rust: models, HTTP, persistence, env variables
 ```
@@ -42,7 +43,7 @@ src/
 Rules:
 
 - **`core/` must not import gpui or gpui-component.** It holds request/response models, the HTTP client (reqwest on tokio), collections and persistence, and `{{variable}}` substitution. It must be testable with plain `cargo test`. It may later become a separate workspace crate.
-- **One feature per folder.** A view's struct, `impl Render`, events (`EventEmitter`) and actions live together in its feature folder. Start a feature as a single file (`request.rs`) and split it into a folder (`request/mod.rs` + sub-files) only when it grows.
+- **One feature per module, named after its main type.** The module is the snake_case form of the view or component it contains (`RequestEditor` → `request_editor`, `StatusBar` → `status_bar`), and fields holding it use the same name (`request_editor: Entity<RequestEditor>`). A view's struct, `impl Render`, events (`EventEmitter`) and actions live together in its module. Start as a single file (`request_editor.rs`) and split it into a folder (`request_editor/mod.rs` + sub-files) only when it grows.
 - **Views own UI state; models live in `core/`.** For example, `RequestEditor` holds `Entity<InputState>`s and builds a `core::Request` from them. Core types never depend on widget types.
 - **Children emit events and parents wire them up.** Sibling views don't reach into each other; `Workspace` (`app.rs`) subscribes to child events and coordinates.
 - **Use `Entity` + `Render` for components with lasting state, and `RenderOnce` or plain functions for presentation.** Shared presentational pieces go in `ui/`; ones used by a single feature stay in that feature's folder.
