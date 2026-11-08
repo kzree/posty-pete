@@ -4,6 +4,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme, Root, Theme, ThemeMode,
+    button::{Button, ButtonVariants},
     input::{Input, InputState},
 };
 use gpui_platform::application;
@@ -28,6 +29,15 @@ impl Render for HelloWorld {
             .text_color(cx.theme().foreground)
             .text_xl()
             .child(div().w(px(400.)).child(Input::new(&self.input)))
+            .child(
+                Button::new("submit-btn")
+                    .label("Submit")
+                    .primary()
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        let val = this.input.read(cx).value();
+                        println!("submitted: {val}")
+                    })),
+            )
     }
 }
 
