@@ -15,7 +15,7 @@ mod sidebar;
 mod status_bar;
 
 use sidebar::Sidebar;
-use status_bar::StatusBar;
+use status_bar::{StatusBar, StatusBarEvent};
 
 use crate::{
     domain::http,
@@ -28,11 +28,19 @@ const WINDOW_TITLE: &str = "Posty pete";
 const WINDOW_WIDTH: f32 = 1280.;
 const WINDOW_HEIGHT: f32 = 720.;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LeftPanelState {
+    Closed,
+    Open,
+}
+
 struct BaseLayout {
     request_editor: Entity<RequestEditor>,
     response_view: Entity<ResponseView>,
+    status_bar: Entity<StatusBar>,
     client: reqwest::Client,
     pending: Option<Task<()>>,
+    left_panel: LeftPanelState,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -40,6 +48,8 @@ impl BaseLayout {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let request_editor = cx.new(|cx| RequestEditor::new(window, cx));
         let response_view = cx.new(|cx| ResponseView::new(window, cx));
+        let left_panel = LeftPanelState::Open;
+        let status_bar = cx.new(|_| StatusBar::new(left_panel == LeftPanelState::Open));
 
         let sub = cx.subscribe_in(
             &request_editor,
@@ -63,13 +73,33 @@ impl BaseLayout {
                 }
             },
         );
+
+        let status_sub = cx.subscribe(&status_bar, |this, _, event, cx| match event {
+            StatusBarEvent::ToggleLeftPanel => this.toggle_left_panel(cx),
+            StatusBarEvent::OpenSettings => println!("open settings"),
+        });
+
         Self {
             request_editor,
             response_view,
+            status_bar,
             client: reqwest::Client::new(),
             pending: None,
-            _subscriptions: vec![sub],
+            left_panel,
+            _subscriptions: vec![sub, status_sub],
         }
+    }
+
+    fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
+        match self.left_panel {
+            LeftPanelState::Closed => self.left_panel = LeftPanelState::Open,
+            LeftPanelState::Open => self.left_panel = LeftPanelState::Closed,
+        }
+        let open = self.left_panel == LeftPanelState::Open;
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_left_panel_open(open, cx)
+        });
+        cx.notify();
     }
 }
 
@@ -86,6 +116,7 @@ impl Render for BaseLayout {
                     h_resizable("main-layout")
                         .child(
                             resizable_panel()
+                                .visible(self.left_panel == LeftPanelState::Open)
                                 .size(px(280.))
                                 .size_range(px(200.)..px(400.))
                                 .fixed()
@@ -100,7 +131,7 @@ impl Render for BaseLayout {
                         ),
                 ),
             )
-            .child(StatusBar::new())
+            .child(self.status_bar.clone())
     }
 }
 
