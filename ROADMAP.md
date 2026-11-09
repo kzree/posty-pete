@@ -25,15 +25,14 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## App
 
 - [ ] **Global keybindings via actions.** `cmd-enter` send, `cmd-,` settings, `cmd-b` toggle sidebar. Buttons and menus dispatch the same actions (`actions.rs`).
-- [ ] **Settings screen.** `StatusBarEvent::OpenSettings` only prints for now.
-- [ ] **Collections, history, environments.** Sidebar content, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md). The sidebar becomes a view once it holds state.
+- [ ] **Settings tab content.** The sidebar's Settings tab is a placeholder (theme, request timeout, ...).
+- [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
 - [ ] **Extract `Workspace` into `app.rs`.** `BaseLayout` currently lives in `main.rs`.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
 ## Look and feel
 
 - [ ] **Custom theme.** Own theme JSON with a colored `primary` (instead of hardcoding colors), loaded via `ThemeRegistry`.
-- [ ] **Extra icons.** Own `AssetSource` for icons outside the default 106 (e.g. `Send`, `Trash`, `Clock`), falling back to `gpui_kit_assets::Assets`.
 
 ## Quality
 

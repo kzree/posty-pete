@@ -6,9 +6,9 @@ use gpui_component::{
     ActiveTheme, ResizableState, Root, Theme, ThemeMode, h_resizable, resizable_panel,
     v_resizable,
 };
-use gpui_kit_assets::Assets;
 use gpui_platform::application;
 
+mod assets;
 mod domain;
 mod request_editor;
 mod response_view;
@@ -16,7 +16,8 @@ mod sidebar;
 mod status_bar;
 mod ui;
 
-use sidebar::Sidebar;
+use assets::AppAssets;
+use sidebar::{Sidebar, SidebarTab};
 use status_bar::{StatusBar, StatusBarEvent};
 
 use crate::{
@@ -40,6 +41,7 @@ struct BaseLayout {
     request_editor: Entity<RequestEditor>,
     response_view: Entity<ResponseView>,
     status_bar: Entity<StatusBar>,
+    sidebar: Entity<Sidebar>,
     client: reqwest::Client,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
@@ -54,6 +56,7 @@ impl BaseLayout {
         let response_view = cx.new(|cx| ResponseView::new(window, cx));
         let left_panel = LeftPanelState::Open;
         let status_bar = cx.new(|_| StatusBar::new(left_panel == LeftPanelState::Open));
+        let sidebar = cx.new(|_| Sidebar::default());
 
         let sub = cx.subscribe_in(
             &request_editor,
@@ -80,13 +83,14 @@ impl BaseLayout {
 
         let status_sub = cx.subscribe(&status_bar, |this, _, event, cx| match event {
             StatusBarEvent::ToggleLeftPanel => this.toggle_left_panel(cx),
-            StatusBarEvent::OpenSettings => println!("open settings"),
+            StatusBarEvent::OpenSettings => this.open_settings(cx),
         });
 
         Self {
             request_editor,
             response_view,
             status_bar,
+            sidebar,
             client: reqwest::Client::new(),
             pending: None,
             left_panel,
@@ -107,6 +111,15 @@ impl BaseLayout {
         });
         cx.notify();
     }
+
+    /// Shows the sidebar's Settings tab, opening the sidebar if it's closed.
+    fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_active_tab(SidebarTab::Settings, cx));
+        if self.left_panel == LeftPanelState::Closed {
+            self.toggle_left_panel(cx);
+        }
+    }
 }
 
 impl Render for BaseLayout {
@@ -126,7 +139,7 @@ impl Render for BaseLayout {
                         .size(px(280.))
                         .size_range(px(200.)..px(400.))
                         .fixed()
-                        .child(Sidebar::new()),
+                        .child(self.sidebar.clone()),
                 )
                 .child(resizable_panel().child(main_content))
                 .into_any_element()
@@ -146,7 +159,7 @@ impl Render for BaseLayout {
 }
 
 fn run() {
-    application().with_assets(Assets).run(|cx: &mut App| {
+    application().with_assets(AppAssets).run(|cx: &mut App| {
         gpui_component::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
 

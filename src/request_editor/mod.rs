@@ -41,9 +41,8 @@ impl EventEmitter<RequestEditorEvent> for RequestEditor {}
 
 impl RequestEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let method = cx.new(|cx| {
-            SelectState::new(MethodItem::all(), Some(IndexPath::new(0)), window, cx)
-        });
+        let method =
+            cx.new(|cx| SelectState::new(MethodItem::all(), Some(IndexPath::new(0)), window, cx));
         let url = cx.new(|cx| InputState::new(window, cx).placeholder("https://..."));
 
         let sub = cx.subscribe_in(
@@ -115,7 +114,6 @@ impl Render for RequestEditor {
                 .overflow_y_scrollbar()
                 .child(self.headers.clone())
                 .into_any_element(),
-            // The body editor sizes itself (the raw editor fills the height).
             RequestTab::Body => self.body.clone().into_any_element(),
             RequestTab::Authorization => self.auth.clone().into_any_element(),
         };
