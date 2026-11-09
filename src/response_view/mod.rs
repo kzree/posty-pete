@@ -3,35 +3,17 @@ use gpui::{
     div, relative,
 };
 use gpui_component::{
-    ActiveTheme, ColorName, Sizable, h_flex,
+    ActiveTheme, h_flex,
     input::{Editor, EditorState},
     scroll::ScrollableElement,
     tab::TabBar,
-    tag::Tag,
     v_flex,
 };
 
-use crate::domain::{
-    body_format::BodyFormat,
-    response::{Response, StatusClass},
-};
+mod status_tag;
 
-fn status_tag(response: &Response) -> Tag {
-    let color = match response.status_class() {
-        StatusClass::Success => ColorName::Green,
-        StatusClass::Redirect => ColorName::Blue,
-        StatusClass::ClientError => ColorName::Amber,
-        StatusClass::ServerError => ColorName::Red,
-        StatusClass::Informational => ColorName::Gray,
-    };
-    Tag::custom(
-        color.scale(950),
-        color.scale(200),
-        color.scale(800).opacity(0.6),
-    )
-    .small()
-    .child(response.status_text())
-}
+use crate::domain::{body_format::BodyFormat, response::Response};
+use status_tag::status_tag;
 
 /// gpui-component highlighter language for a body format.
 fn editor_language(format: BodyFormat) -> &'static str {
