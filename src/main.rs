@@ -111,6 +111,7 @@ impl BaseLayout {
             loading_bar,
             client: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
+                .redirect(domain::http::redirect_policy())
                 .build()
                 .expect("failed to build HTTP client"),
             pending: None,

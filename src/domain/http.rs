@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use reqwest::{
     header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
     multipart::Form,
+    redirect::{Attempt, Policy},
 };
 
 use super::{
@@ -37,6 +38,26 @@ fn header_map(items: &[KeyValue]) -> anyhow::Result<HeaderMap> {
         map.append(name, value); // repeated headers are allowed
     }
     Ok(map)
+}
+
+fn same_origin(a: &reqwest::Url, b: &reqwest::Url) -> bool {
+    a.origin() == b.origin()
+}
+
+/// Follows redirects only within the same origin; a cross-origin 3xx is returned as the response.
+pub fn redirect_policy() -> Policy {
+    let limited = Policy::default();
+    Policy::custom(move |attempt: Attempt| {
+        let same = attempt
+            .previous()
+            .last()
+            .is_some_and(|prev| same_origin(prev, attempt.url()));
+        if same {
+            limited.redirect(attempt)
+        } else {
+            attempt.stop()
+        }
+    })
 }
 
 fn runtime() -> &'static Runtime {
@@ -167,6 +188,37 @@ mod tests {
             username: username.into(),
             password: password.into(),
         }
+    }
+
+    fn origins_match(a: &str, b: &str) -> bool {
+        same_origin(&a.parse().unwrap(), &b.parse().unwrap())
+    }
+
+    #[test]
+    fn same_origin_comparison() {
+        assert!(origins_match(
+            "https://a.example/x",
+            "https://a.example/y?z=1"
+        ));
+        assert!(origins_match(
+            "https://a.example/",
+            "https://a.example:443/"
+        ));
+        assert!(origins_match(
+            "http://localhost:4000/a",
+            "http://LOCALHOST:4000/b"
+        ));
+        assert!(!origins_match(
+            "http://localhost:4000/",
+            "http://localhost:4001/"
+        ));
+        assert!(!origins_match("https://a.example/", "https://b.example/"));
+        assert!(!origins_match(
+            "https://a.example/",
+            "https://sub.a.example/"
+        ));
+        assert!(!origins_match("https://a.example/", "http://a.example/"));
+        assert!(!origins_match("http://a.example/", "https://a.example/"));
     }
 
     #[test]
