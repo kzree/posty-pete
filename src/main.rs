@@ -3,8 +3,7 @@ use gpui::{
     Subscription, Task, Window, WindowOptions, div, px, size,
 };
 use gpui_component::{
-    ActiveTheme, ResizableState, Root, Theme, ThemeMode, h_resizable, resizable_panel,
-    v_resizable,
+    ActiveTheme, ResizableState, Root, Theme, ThemeMode, h_resizable, resizable_panel, v_resizable,
 };
 use gpui_platform::application;
 
@@ -28,8 +27,8 @@ use crate::{
 
 const WINDOW_TITLE: &str = "Posty pete";
 
-const WINDOW_WIDTH: f32 = 1280.;
-const WINDOW_HEIGHT: f32 = 720.;
+const WINDOW_WIDTH: f32 = 1600.;
+const WINDOW_HEIGHT: f32 = 900.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LeftPanelState {
@@ -114,8 +113,9 @@ impl BaseLayout {
 
     /// Shows the sidebar's Settings tab, opening the sidebar if it's closed.
     fn open_settings(&mut self, cx: &mut Context<Self>) {
-        self.sidebar
-            .update(cx, |sidebar, cx| sidebar.set_active_tab(SidebarTab::Settings, cx));
+        self.sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_active_tab(SidebarTab::Settings, cx)
+        });
         if self.left_panel == LeftPanelState::Closed {
             self.toggle_left_panel(cx);
         }
