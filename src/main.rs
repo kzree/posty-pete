@@ -10,7 +10,7 @@ use gpui_platform::application;
 
 mod domain;
 mod request_editor;
-mod response;
+mod response_view;
 mod sidebar;
 mod status_bar;
 
@@ -20,7 +20,7 @@ use status_bar::StatusBar;
 use crate::{
     domain::http::{self, Response as HttpResponse},
     request_editor::{RequestEditor, RequestEditorEvent},
-    response::ResponseView,
+    response_view::ResponseView,
 };
 
 const WINDOW_TITLE: &str = "Posty pete";
