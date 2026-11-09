@@ -65,8 +65,15 @@ impl RequestEditor {
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
+        if self.input_is_empty(cx) {
+            return;
+        }
         let req = self.build_request(cx);
         cx.emit(RequestEditorEvent::SendRequested(req));
+    }
+
+    fn input_is_empty(&self, cx: &App) -> bool {
+        self.url.read(cx).value().to_string().is_empty()
     }
 
     fn build_request(&self, cx: &App) -> Request {
