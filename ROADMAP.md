@@ -19,7 +19,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 - [ ] **Content sniffing fallback.** When `Content-Type` is wrong or missing, detect JSON from the body (starts with `{`/`[` and parses).
 - [ ] **XML highlighting.** gpui-component 0.9 has no XML grammar; XML is highlighted as HTML for now.
-- [ ] **Large responses.** The editor handles ~50K lines; add a size cutoff or a "response too large to display" message.
+- [ ] **Large responses.** Downloads are capped at 50 MB (`MAX_BODY_BYTES` in `domain/http.rs`; larger bodies fail with "response exceeds 50 MB"), but the editor handles only ~50K lines; add a display cutoff or a "response too large to display" message, and possibly make the download cap configurable.
 
 ## App
 

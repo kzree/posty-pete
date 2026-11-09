@@ -129,7 +129,7 @@ fn build_request(client: &reqwest::Client, request: Request) -> anyhow::Result<r
 pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<Response> {
     let start = Instant::now();
     let req = build_request(&client, request)?;
-    let res = client.execute(req).await?;
+    let mut res = client.execute(req).await?;
 
     let status = res.status().as_u16();
     let headers = res
@@ -137,7 +137,8 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
         .collect();
-    let body = res.text().await?;
+    let bytes = read_body(&mut res, MAX_BODY_BYTES).await?;
+    let body = String::from_utf8_lossy(&bytes).into_owned();
 
     Ok(Response {
         status,
@@ -145,6 +146,24 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
         body,
         elapsed: start.elapsed(),
     })
+}
+
+const MAX_BODY_BYTES: usize = 50 * 1024 * 1024;
+
+async fn read_body(res: &mut reqwest::Response, limit: usize) -> anyhow::Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    while let Some(chunk) = res.chunk().await? {
+        append_limited(&mut buf, &chunk, limit)?;
+    }
+    Ok(buf)
+}
+
+fn append_limited(buf: &mut Vec<u8>, chunk: &[u8], limit: usize) -> anyhow::Result<()> {
+    if buf.len() + chunk.len() > limit {
+        anyhow::bail!("response exceeds {} MB", limit / (1024 * 1024));
+    }
+    buf.extend_from_slice(chunk);
+    Ok(())
 }
 
 pub fn spawn_send(
@@ -188,6 +207,22 @@ mod tests {
             username: username.into(),
             password: password.into(),
         }
+    }
+
+    #[test]
+    fn body_limit() {
+        let mut buf = Vec::new();
+        append_limited(&mut buf, b"abc", 5).unwrap();
+        append_limited(&mut buf, b"de", 5).unwrap();
+        assert_eq!(buf, b"abcde");
+
+        let err = append_limited(&mut buf, b"f", 5).unwrap_err();
+        assert!(err.to_string().starts_with("response exceeds"), "{err}");
+        assert_eq!(buf, b"abcde");
+
+        let mut buf = Vec::new();
+        assert!(append_limited(&mut buf, b"abcdef", 5).is_err());
+        assert!(buf.is_empty());
     }
 
     fn origins_match(a: &str, b: &str) -> bool {
