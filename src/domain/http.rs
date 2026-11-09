@@ -49,11 +49,9 @@ fn runtime() -> &'static Runtime {
     })
 }
 
-pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<Response> {
-    let start = Instant::now();
+fn build_request(client: &reqwest::Client, request: Request) -> anyhow::Result<reqwest::Request> {
     let query: Vec<_> = active(&request.params).collect();
     let mut headers = header_map(&request.headers)?;
-    // A user-set Authorization header wins over the Auth tab.
     let user_set_authorization = headers.contains_key(AUTHORIZATION);
 
     if let Auth::ApiKey { key, value } = &request.auth
@@ -87,7 +85,9 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
         .headers(headers);
 
     let builder = match &request.auth {
-        Auth::Basic { username, password } if !user_set_authorization && !username.is_empty() => {
+        Auth::Basic { username, password }
+            if !user_set_authorization && !(username.is_empty() && password.is_empty()) =>
+        {
             builder.basic_auth(username, Some(password))
         }
         Auth::Bearer { token } if !user_set_authorization && !token.is_empty() => {
@@ -102,7 +102,13 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
         Body::Raw { text, .. } => builder.body(text),
     };
 
-    let res = builder.send().await?;
+    Ok(builder.build()?)
+}
+
+pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<Response> {
+    let start = Instant::now();
+    let req = build_request(&client, request)?;
+    let res = client.execute(req).await?;
 
     let status = res.status().as_u16();
     let headers = res
@@ -125,4 +131,86 @@ pub fn spawn_send(
     request: Request,
 ) -> JoinHandle<anyhow::Result<Response>> {
     runtime().spawn(send(client, request))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::request::HttpMethod;
+
+    fn header(key: &str, value: &str, enabled: bool) -> KeyValue {
+        KeyValue {
+            enabled,
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    fn authorization(headers: Vec<KeyValue>, auth: Auth) -> Option<String> {
+        let request = Request {
+            method: HttpMethod::Get,
+            url: "example.com".into(),
+            params: vec![],
+            headers,
+            body: Body::None,
+            auth,
+        };
+        let built = build_request(&reqwest::Client::new(), request).unwrap();
+        built
+            .headers()
+            .get(AUTHORIZATION)
+            .map(|v| v.to_str().unwrap().to_owned())
+    }
+
+    fn basic(username: &str, password: &str) -> Auth {
+        Auth::Basic {
+            username: username.into(),
+            password: password.into(),
+        }
+    }
+
+    #[test]
+    fn basic_auth_credentials() {
+        for (username, password, expected) in [
+            ("user", "pass", Some("Basic dXNlcjpwYXNz")),
+            ("", "pass", Some("Basic OnBhc3M=")),
+            ("user", "", Some("Basic dXNlcjo=")),
+            ("", "", None),
+        ] {
+            assert_eq!(
+                authorization(vec![], basic(username, password)).as_deref(),
+                expected,
+                "{username:?}:{password:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn manual_authorization_header_overrides_auth_tab() {
+        let headers = vec![header("Authorization", "Token abc", true)];
+        assert_eq!(
+            authorization(headers.clone(), basic("user", "pass")).as_deref(),
+            Some("Token abc")
+        );
+        let bearer = Auth::Bearer {
+            token: "xyz".into(),
+        };
+        assert_eq!(authorization(headers, bearer).as_deref(), Some("Token abc"));
+    }
+
+    #[test]
+    fn disabled_authorization_header_does_not_suppress_auth() {
+        let headers = vec![header("Authorization", "Token abc", false)];
+        assert_eq!(
+            authorization(headers.clone(), basic("", "pass")).as_deref(),
+            Some("Basic OnBhc3M=")
+        );
+        let bearer = Auth::Bearer {
+            token: "xyz".into(),
+        };
+        assert_eq!(
+            authorization(headers, bearer).as_deref(),
+            Some("Bearer xyz")
+        );
+    }
 }
