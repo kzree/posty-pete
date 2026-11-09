@@ -15,6 +15,7 @@ impl RenderOnce for StatusBar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .flex()
+            .flex_none()
             .h_6()
             .px_2()
             .items_center()

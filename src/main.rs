@@ -57,21 +57,23 @@ impl Render for BaseLayout {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
-                h_resizable("main-layout")
-                    .child(
-                        resizable_panel()
-                            .size(px(280.))
-                            .size_range(px(200.)..px(400.))
-                            .fixed()
-                            .child(Sidebar::new()),
-                    )
-                    .child(
-                        resizable_panel().child(
-                            v_resizable("request-response")
-                                .child(resizable_panel().child(self.request_editor.clone()))
-                                .child(resizable_panel().child(Response::new())),
+                div().flex_1().min_h_0().overflow_hidden().child(
+                    h_resizable("main-layout")
+                        .child(
+                            resizable_panel()
+                                .size(px(280.))
+                                .size_range(px(200.)..px(400.))
+                                .fixed()
+                                .child(Sidebar::new()),
+                        )
+                        .child(
+                            resizable_panel().child(
+                                v_resizable("request-response")
+                                    .child(resizable_panel().child(self.request_editor.clone()))
+                                    .child(resizable_panel().child(Response::new())),
+                            ),
                         ),
-                    ),
+                ),
             )
             .child(StatusBar::new())
     }
