@@ -40,13 +40,17 @@ impl ResponseView {
 
     fn render_tab_content(&self, response: &Response, cx: &Context<Self>) -> AnyElement {
         match self.active_tab {
-            ResponseTab::Body => div().child(response.body.clone()).into_any_element(),
+            ResponseTab::Body => div()
+                .text_sm()
+                .child(response.body.clone())
+                .into_any_element(),
             ResponseTab::Headers => v_flex()
                 .gap_1()
                 .children(response.headers.iter().map(|(name, value)| {
                     h_flex()
                         .gap_4()
                         .items_start()
+                        .text_sm()
                         .child(
                             div()
                                 .w_48()
@@ -91,9 +95,17 @@ impl Render for ResponseView {
                             cx.notify();
                         }))
                         .children(ResponseTab::ALL.map(ResponseTab::label))
-                        .suffix(div().px_3().text_color(cx.theme().muted_foreground).child(
-                            format!("{} · {} ms", response.status, response.elapsed.as_millis()),
-                        )),
+                        .suffix(
+                            div()
+                                .px_3()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!(
+                                    "{} · {} ms",
+                                    response.status,
+                                    response.elapsed.as_millis()
+                                )),
+                        ),
                 )
                 .child(
                     div()
