@@ -83,10 +83,65 @@ impl Response {
         if self.body_format() != BodyFormat::Json {
             return text.clone();
         }
-        serde_json::from_str::<serde_json::Value>(text)
-            .and_then(|v| serde_json::to_string_pretty(&v))
-            .unwrap_or_else(|_| text.clone())
+        pretty_json(text).unwrap_or_else(|| text.clone())
     }
+}
+
+/// Re-indents valid JSON without parsing values, so numbers and duplicate keys are kept as-is.
+fn pretty_json(text: &str) -> Option<String> {
+    serde_json::from_str::<serde::de::IgnoredAny>(text).ok()?;
+
+    fn newline(out: &mut String, depth: usize) {
+        out.push('\n');
+        out.extend(std::iter::repeat_n("  ", depth));
+    }
+    let is_ws = |c: &char| matches!(c, ' ' | '\t' | '\n' | '\r');
+
+    let mut out = String::with_capacity(text.len() + text.len() / 2);
+    let mut depth = 0;
+    let (mut in_string, mut escaped) = (false, false);
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_string = true;
+                out.push(c);
+            }
+            '{' | '[' => {
+                out.push(c);
+                while chars.next_if(is_ws).is_some() {}
+                if let Some(close) = chars.next_if(|&n| n == '}' || n == ']') {
+                    out.push(close);
+                } else {
+                    depth += 1;
+                    newline(&mut out, depth);
+                }
+            }
+            '}' | ']' => {
+                depth -= 1;
+                newline(&mut out, depth);
+                out.push(c);
+            }
+            ',' => {
+                out.push(c);
+                newline(&mut out, depth);
+            }
+            ':' => out.push_str(": "),
+            c if is_ws(&c) => {}
+            c => out.push(c),
+        }
+    }
+    Some(out)
 }
 
 /// Decodes with the BOM or declared charset, else strict UTF-8.
@@ -186,6 +241,46 @@ mod tests {
             response.pretty_body(),
             "<binary or non-UTF-8 body, 5 bytes, not shown>"
         );
+    }
+
+    #[test]
+    fn pretty_json_matches_serde_for_ordinary_json() {
+        let input = r#" {"a":[1, 2,{"b":null}],"c":{},"d":[ ],"e":"x, y: {z}","f":true} "#;
+        let value: serde_json::Value = serde_json::from_str(input).unwrap();
+        assert_eq!(
+            pretty_json(input).unwrap(),
+            serde_json::to_string_pretty(&value).unwrap()
+        );
+    }
+
+    #[test]
+    fn pretty_json_keeps_number_tokens() {
+        let input = r#"{"big":18446744073709551617,"dec":0.10000000000000000000000001,"exp":1.5E+300,"neg":-0e-0}"#;
+        assert_eq!(
+            pretty_json(input).unwrap(),
+            "{\n  \"big\": 18446744073709551617,\n  \"dec\": 0.10000000000000000000000001,\n  \"exp\": 1.5E+300,\n  \"neg\": -0e-0\n}"
+        );
+    }
+
+    #[test]
+    fn pretty_json_keeps_duplicate_keys_and_escapes() {
+        assert_eq!(
+            pretty_json(r#"{"a":1,"a":2,"s":"q\"\\\u00e9,"}"#).unwrap(),
+            "{\n  \"a\": 1,\n  \"a\": 2,\n  \"s\": \"q\\\"\\\\\\u00e9,\"\n}"
+        );
+    }
+
+    #[test]
+    fn malformed_json_is_shown_raw() {
+        assert_eq!(pretty_json(r#"{"a":1,}"#), None);
+        assert_eq!(pretty_json("{\"a\":1} x"), None);
+        let response = Response::new(
+            200,
+            vec![("content-type".into(), "application/json".into())],
+            b"{\"a\": [1,".to_vec(),
+            Duration::ZERO,
+        );
+        assert_eq!(response.pretty_body(), "{\"a\": [1,");
     }
 
     #[test]
