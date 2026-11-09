@@ -7,7 +7,7 @@
 Planned scope:
 - Compose and send HTTP requests (method, URL, query params, headers, body, auth)
 - View responses (status, timing, headers, pretty-printed and highlighted body)
-- Collections of saved requests, request history
+- A library of saved requests (organized in folders), request history
 - Environments with `{{variable}}` substitution
 
 Status: early. Composing and sending GET-style requests (method, URL, query params, headers) and viewing responses (body with highlighting, headers) works.
@@ -36,7 +36,7 @@ src/
 ├── actions.rs     # global actions + key bindings
 ├── request_editor # RequestEditor: editing a request (.rs now, folder when it grows)
 ├── response_view  # ResponseView: viewing a response
-├── sidebar.rs     # Sidebar: collections, history
+├── sidebar.rs     # Sidebar: library, history, settings tabs
 ├── status_bar.rs  # StatusBar
 ├── ui/            # reusable, feature-agnostic components (stateless or stateful)
 └── domain/        # pure Rust: models, HTTP, persistence, env variables
@@ -44,7 +44,7 @@ src/
 
 Rules:
 
-- **`domain/` must not import gpui or gpui-component.** It holds request/response models, the HTTP client (reqwest on tokio), collections and persistence, and `{{variable}}` substitution. It must be testable with plain `cargo test`. It may later become a separate workspace crate. (It is named `domain` rather than `core` to avoid clashing with Rust's built-in `core` crate.)
+- **`domain/` must not import gpui or gpui-component.** It holds request/response models, the HTTP client (reqwest on tokio), the library of saved requests and persistence, and `{{variable}}` substitution. It must be testable with plain `cargo test`. It may later become a separate workspace crate. (It is named `domain` rather than `core` to avoid clashing with Rust's built-in `core` crate.)
 - **One feature per module, named after its main type.** The module is the snake_case form of the view or component it contains (`RequestEditor` → `request_editor`, `StatusBar` → `status_bar`), and fields holding it use the same name (`request_editor: Entity<RequestEditor>`). A view's struct, `impl Render`, events (`EventEmitter`) and actions live together in its module. Start as a single file (`request_editor.rs`) and split it into a folder (`request_editor/mod.rs` + sub-files) only when it grows.
 - **Views own UI state; models live in `domain/`.** For example, `RequestEditor` holds `Entity<InputState>`s and builds a `domain::Request` from them. Domain types never depend on widget types.
 - **Children emit events and parents wire them up.** Sibling views don't reach into each other; `Workspace` (`app.rs`) subscribes to child events and coordinates.
