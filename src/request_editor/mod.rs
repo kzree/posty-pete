@@ -80,7 +80,7 @@ impl RequestEditor {
         cx.notify();
     }
 
-    fn send(&mut self, cx: &mut Context<Self>) {
+    pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.loading || self.input_is_empty(cx) {
             return;
         }

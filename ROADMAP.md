@@ -10,7 +10,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Secrets at rest.** Once requests are persisted, don't store passwords and tokens in plain JSON. Use the OS keychain (`keyring` crate) or environment variables.
 - [ ] **Body: more modes.** `x-www-form-urlencoded`, file fields in form-data, more raw kinds (XML, HTML).
 - [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
-- [ ] **Body: Cmd+Enter to send** from the raw editor (`InputEvent::PressEnter { secondary: true, .. }`).
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Friendlier TLS errors.** When the error chain contains rustls `InvalidContentType` (server answered in plain HTTP), show a hint: "The server didn't respond with TLS. Did you mean http://?"
 - [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `main.rs`) is hard-coded; make it configurable in the Settings tab and per request.
@@ -24,7 +23,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## App
 
-- [ ] **Global keybindings via actions.** `cmd-enter` send, `cmd-,` settings, `cmd-b` toggle sidebar. Buttons and menus dispatch the same actions (`actions.rs`).
+- [ ] **More keybindings and a menu bar.** `cmd-,` opens settings; add a native menu bar (`cx.set_menus`) listing the actions with their shortcuts (`actions.rs`).
 - [ ] **Settings tab content.** The sidebar's Settings tab is a placeholder (theme, request timeout, ...).
 - [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
 - [ ] **Extract `Workspace` into `app.rs`.** `BaseLayout` currently lives in `main.rs`.

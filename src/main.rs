@@ -11,6 +11,7 @@ use gpui_component::{
 };
 use gpui_platform::application;
 
+mod actions;
 mod assets;
 mod domain;
 mod request_editor;
@@ -19,6 +20,7 @@ mod sidebar;
 mod status_bar;
 mod ui;
 
+use actions::{SendRequest, ToggleSidebar, WORKSPACE_CONTEXT};
 use assets::AppAssets;
 use sidebar::{Sidebar, SidebarTab};
 use status_bar::{StatusBar, StatusBarEvent};
@@ -184,7 +186,13 @@ impl Render for BaseLayout {
             .role(Role::Group)
             .aria_label("Workspace")
             .track_focus(&self.focus_handle)
-            .key_context("Workspace")
+            .key_context(WORKSPACE_CONTEXT)
+            .on_action(cx.listener(|this, _: &SendRequest, _, cx| {
+                this.request_editor.update(cx, |editor, cx| editor.send(cx));
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
+                this.toggle_left_panel(cx);
+            }))
             // Escape inside an input bubbles up here: move focus off the input.
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
                 window.focus(&this.focus_handle, cx);
@@ -202,6 +210,7 @@ impl Render for BaseLayout {
 fn run() {
     application().with_assets(AppAssets).run(|cx: &mut App| {
         gpui_component::init(cx);
+        actions::bind_keys(cx);
         Theme::change(ThemeMode::Dark, None, cx);
 
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
