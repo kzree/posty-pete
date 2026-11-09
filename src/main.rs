@@ -18,7 +18,7 @@ use sidebar::Sidebar;
 use status_bar::StatusBar;
 
 use crate::{
-    domain::http::{self, Response as HttpResponse},
+    domain::http,
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
 };
@@ -30,15 +30,16 @@ const WINDOW_HEIGHT: f32 = 720.;
 
 struct BaseLayout {
     request_editor: Entity<RequestEditor>,
+    response_view: Entity<ResponseView>,
     client: reqwest::Client,
     pending: Option<Task<()>>,
-    last_response: Option<Result<HttpResponse, String>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl BaseLayout {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let request_editor = cx.new(|cx| RequestEditor::new(window, cx));
+        let response_view = cx.new(|_| ResponseView::new());
 
         let sub = cx.subscribe(&request_editor, |this, _editor, event, cx| match event {
             RequestEditorEvent::SendRequested(request) => {
@@ -50,9 +51,9 @@ impl BaseLayout {
                         Err(e) => Err(format!("task failed: {e}")),
                     };
                     this.update(cx, |this, cx| {
-                        this.last_response = Some(result);
+                        this.response_view
+                            .update(cx, |view, cx| view.set_response(result, cx));
                         this.pending = None;
-                        cx.notify();
                     })
                     .ok();
                 }));
@@ -60,8 +61,8 @@ impl BaseLayout {
         });
         Self {
             request_editor,
+            response_view,
             client: reqwest::Client::new(),
-            last_response: None,
             pending: None,
             _subscriptions: vec![sub],
         }
@@ -90,10 +91,7 @@ impl Render for BaseLayout {
                             resizable_panel().child(
                                 v_resizable("request-response")
                                     .child(resizable_panel().child(self.request_editor.clone()))
-                                    .child(
-                                        resizable_panel()
-                                            .child(ResponseView::new(self.last_response.clone())),
-                                    ),
+                                    .child(resizable_panel().child(self.response_view.clone())),
                             ),
                         ),
                 ),
