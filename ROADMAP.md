@@ -26,6 +26,8 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Native menu bar.** `cx.set_menus` listing the actions in `actions.rs` with their shortcuts.
 - [ ] **Settings tab content.** The sidebar's Settings tab is a placeholder (theme, request timeout, ...).
 - [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
+- [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
+- [ ] **History retention setting.** 14 days is hard-coded (`RETENTION` in `domain/history.rs`); make it configurable in the Settings tab.
 - [ ] **Extract `Workspace` into `app.rs`.** `BaseLayout` currently lives in `main.rs`.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
