@@ -12,7 +12,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
 - [ ] **Body: Cmd+Enter to send** from the raw editor (`InputEvent::PressEnter { secondary: true, .. }`).
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
-- [ ] **Default URL scheme.** When the URL has no scheme (`localhost:4000/health`), prepend `http://` for localhost/loopback and `https://` otherwise (Postman-style). Today reqwest rejects it as a relative URL.
 - [ ] **Friendlier TLS errors.** When the error chain contains rustls `InvalidContentType` (server answered in plain HTTP), show a hint: "The server didn't respond with TLS. Did you mean http://?"
 - [ ] **Loading state.** Show progress on the Send button while `BaseLayout::pending` is `Some`.
 - [ ] **Cancel in-flight requests.** Replacing `pending` drops the gpui task, but the request keeps running on tokio.

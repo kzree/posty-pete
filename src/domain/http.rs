@@ -11,6 +11,7 @@ use reqwest::{
 use super::{
     request::{Auth, Body, KeyValue, Request},
     response::Response,
+    url_scheme::with_default_scheme,
 };
 
 fn form_data(fields: &[KeyValue]) -> Form {
@@ -79,8 +80,10 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
         _ => {}
     }
 
+    let url = with_default_scheme(&request.url);
+
     let builder = client
-        .request(request.method.into(), &request.url)
+        .request(request.method.into(), url.as_ref())
         .query(&query)
         .headers(headers);
 
