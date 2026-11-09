@@ -10,7 +10,7 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::domain::http::{BodyFormat, Response};
+use crate::domain::{body_format::BodyFormat, response::Response};
 
 /// gpui-component highlighter language for a body format.
 fn editor_language(format: BodyFormat) -> &'static str {
