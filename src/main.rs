@@ -39,26 +39,30 @@ struct BaseLayout {
 impl BaseLayout {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let request_editor = cx.new(|cx| RequestEditor::new(window, cx));
-        let response_view = cx.new(|_| ResponseView::new());
+        let response_view = cx.new(|cx| ResponseView::new(window, cx));
 
-        let sub = cx.subscribe(&request_editor, |this, _editor, event, cx| match event {
-            RequestEditorEvent::SendRequested(request) => {
-                let handle = http::spawn_send(this.client.clone(), request.clone());
-                this.pending = Some(cx.spawn(async move |this, cx| {
-                    let result = match handle.await {
-                        Ok(Ok(resp)) => Ok(resp),
-                        Ok(Err(e)) => Err(format!("{e:#}")),
-                        Err(e) => Err(format!("task failed: {e}")),
-                    };
-                    this.update(cx, |this, cx| {
-                        this.response_view
-                            .update(cx, |view, cx| view.set_response(result, cx));
-                        this.pending = None;
-                    })
-                    .ok();
-                }));
-            }
-        });
+        let sub = cx.subscribe_in(
+            &request_editor,
+            window,
+            |this, _editor, event, window, cx| match event {
+                RequestEditorEvent::SendRequested(request) => {
+                    let handle = http::spawn_send(this.client.clone(), request.clone());
+                    this.pending = Some(cx.spawn_in(window, async move |this, cx| {
+                        let result = match handle.await {
+                            Ok(Ok(resp)) => Ok(resp),
+                            Ok(Err(e)) => Err(format!("{e:#}")),
+                            Err(e) => Err(format!("task failed: {e}")),
+                        };
+                        this.update_in(cx, |this, window, cx| {
+                            this.response_view
+                                .update(cx, |view, cx| view.set_response(result, window, cx));
+                            this.pending = None;
+                        })
+                        .ok();
+                    }));
+                }
+            },
+        );
         Self {
             request_editor,
             response_view,

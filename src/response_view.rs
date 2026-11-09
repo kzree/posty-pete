@@ -1,5 +1,14 @@
-use gpui::{AnyElement, Context, IntoElement, ParentElement, Render, Styled, Window, div};
-use gpui_component::{ActiveTheme, h_flex, scroll::ScrollableElement, tab::TabBar, v_flex};
+use gpui::{
+    AnyElement, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
+    div, relative,
+};
+use gpui_component::{
+    ActiveTheme, h_flex,
+    input::{Editor, EditorState},
+    scroll::ScrollableElement,
+    tab::TabBar,
+    v_flex,
+};
 
 use crate::domain::http::Response;
 
@@ -23,43 +32,62 @@ impl ResponseTab {
 pub struct ResponseView {
     response: Option<Result<Response, String>>,
     active_tab: ResponseTab,
+    body: Entity<EditorState>,
 }
 
 impl ResponseView {
-    pub fn new() -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let body = cx.new(|cx| EditorState::new(window, cx).language("json"));
         Self {
             response: None,
             active_tab: ResponseTab::Body,
+            body,
         }
     }
 
-    pub fn set_response(&mut self, response: Result<Response, String>, cx: &mut Context<Self>) {
+    pub fn set_response(
+        &mut self,
+        response: Result<Response, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Ok(resp) = &response {
+            let text = resp.pretty_body();
+            self.body
+                .update(cx, |state, cx| state.set_value(text, window, cx));
+        }
         self.response = Some(response);
         cx.notify();
     }
-
     fn render_tab_content(&self, response: &Response, cx: &Context<Self>) -> AnyElement {
         match self.active_tab {
             ResponseTab::Body => div()
-                .text_sm()
-                .child(response.body.clone())
+                .flex_1()
+                .min_h_0()
+                .p_2()
+                .child(Editor::new(&self.body).readonly(true).h(relative(1.)))
                 .into_any_element(),
-            ResponseTab::Headers => v_flex()
-                .gap_1()
-                .children(response.headers.iter().map(|(name, value)| {
-                    h_flex()
-                        .gap_4()
-                        .items_start()
-                        .text_sm()
-                        .child(
-                            div()
-                                .w_48()
-                                .flex_none()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(name.clone()),
-                        )
-                        .child(div().flex_1().min_w_0().child(value.clone()))
-                }))
+            ResponseTab::Headers => div()
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scrollbar()
+                .p_4()
+                .child(v_flex().gap_1().children(response.headers.iter().map(
+                    |(name, value)| {
+                        h_flex()
+                            .gap_4()
+                            .items_start()
+                            .text_sm()
+                            .child(
+                                div()
+                                    .w_48()
+                                    .flex_none()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(name.clone()),
+                            )
+                            .child(div().flex_1().min_w_0().child(value.clone()))
+                    },
+                )))
                 .into_any_element(),
         }
     }
@@ -107,14 +135,7 @@ impl Render for ResponseView {
                                 )),
                         ),
                 )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scrollbar()
-                        .p_4()
-                        .child(self.render_tab_content(response, cx)),
-                )
+                .child(self.render_tab_content(response, cx))
                 .into_any_element(),
         };
 

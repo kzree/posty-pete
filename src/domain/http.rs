@@ -16,6 +16,14 @@ pub struct Response {
     pub elapsed: Duration,
 }
 
+impl Response {
+    pub fn pretty_body(&self) -> String {
+        serde_json::from_str::<serde_json::Value>(&self.body)
+            .and_then(|v| serde_json::to_string_pretty(&v))
+            .unwrap_or_else(|_| self.body.clone())
+    }
+}
+
 fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
