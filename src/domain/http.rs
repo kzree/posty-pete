@@ -3,12 +3,21 @@ use std::{sync::OnceLock, time::Instant};
 use tokio::{runtime::Runtime, task::JoinHandle};
 
 use anyhow::Context as _;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::{
+    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    multipart::Form,
+};
 
 use super::{
-    request::{KeyValue, Request},
+    request::{Body, KeyValue, Request},
     response::Response,
 };
+
+fn form_data(fields: &[KeyValue]) -> Form {
+    active(fields).fold(Form::new(), |form, (key, value)| {
+        form.text(key.to_owned(), value.to_owned())
+    })
+}
 
 /// Enabled rows that have a key.
 fn active(items: &[KeyValue]) -> impl Iterator<Item = (&str, &str)> {
@@ -43,14 +52,31 @@ fn runtime() -> &'static Runtime {
 pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<Response> {
     let start = Instant::now();
     let query: Vec<_> = active(&request.params).collect();
-    let headers = header_map(&request.headers)?;
+    let mut headers = header_map(&request.headers)?;
 
-    let res = client
+    match &request.body {
+        // reqwest sets multipart/form-data with the boundary; a user value would break it.
+        Body::FormData(_) => {
+            headers.remove(CONTENT_TYPE);
+        }
+        Body::Raw { kind, .. } if !headers.contains_key(CONTENT_TYPE) => {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_str(kind.mime().as_ref())?);
+        }
+        _ => {}
+    }
+
+    let builder = client
         .request(request.method.into(), &request.url)
         .query(&query)
-        .headers(headers)
-        .send()
-        .await?;
+        .headers(headers);
+
+    let builder = match request.body {
+        Body::None => builder,
+        Body::FormData(fields) => builder.multipart(form_data(&fields)),
+        Body::Raw { text, .. } => builder.body(text),
+    };
+
+    let res = builder.send().await?;
 
     let status = res.status().as_u16();
     let headers = res

@@ -1,3 +1,4 @@
+mod body_editor;
 mod method_item;
 mod tabs;
 mod url_bar;
@@ -15,6 +16,7 @@ use gpui_component::{
 };
 
 use crate::{domain::request::Request, ui::key_value_editor::KeyValueEditor};
+use body_editor::BodyEditor;
 use method_item::MethodItem;
 use tabs::RequestTab;
 
@@ -28,6 +30,7 @@ pub struct RequestEditor {
     active_tab: RequestTab,
     params: Entity<KeyValueEditor>,
     headers: Entity<KeyValueEditor>,
+    body: Entity<BodyEditor>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -52,6 +55,7 @@ impl RequestEditor {
 
         let params = cx.new(|cx| KeyValueEditor::new(window, cx));
         let headers = cx.new(|cx| KeyValueEditor::new(window, cx));
+        let body = cx.new(|cx| BodyEditor::new(window, cx));
 
         Self {
             method,
@@ -59,6 +63,7 @@ impl RequestEditor {
             active_tab: RequestTab::Params,
             params,
             headers,
+            body,
             _subscriptions: vec![sub],
         }
     }
@@ -86,6 +91,7 @@ impl RequestEditor {
             url: self.url.read(cx).value().into(),
             params: self.params.read(cx).values(cx),
             headers: self.headers.read(cx).values(cx),
+            body: self.body.read(cx).body(cx),
         }
     }
 }
@@ -93,10 +99,19 @@ impl RequestEditor {
 impl Render for RequestEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match self.active_tab {
-            RequestTab::Params => self.params.clone().into_any_element(),
-            RequestTab::Headers => self.headers.clone().into_any_element(),
-            // Other tabs come later.
-            _ => div().into_any_element(),
+            RequestTab::Params => div()
+                .size_full()
+                .overflow_y_scrollbar()
+                .child(self.params.clone())
+                .into_any_element(),
+            RequestTab::Headers => div()
+                .size_full()
+                .overflow_y_scrollbar()
+                .child(self.headers.clone())
+                .into_any_element(),
+            // The body editor sizes itself (the raw editor fills the height).
+            RequestTab::Body => self.body.clone().into_any_element(),
+            RequestTab::Authorization => div().into_any_element(),
         };
 
         v_flex()
@@ -105,6 +120,6 @@ impl Render for RequestEditor {
             .gap_2()
             .child(self.render_url_bar(cx))
             .child(self.render_tab_bar(cx))
-            .child(div().flex_1().min_h_0().overflow_y_scrollbar().child(content))
+            .child(div().flex_1().min_h_0().child(content))
     }
 }

@@ -6,6 +6,42 @@ pub struct Request {
     pub url: String,
     pub params: Vec<KeyValue>,
     pub headers: Vec<KeyValue>,
+    pub body: Body,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub enum Body {
+    #[default]
+    None,
+    /// Sent as `multipart/form-data`.
+    FormData(Vec<KeyValue>),
+    Raw { kind: RawKind, text: String },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RawKind {
+    #[default]
+    Json,
+    Text,
+}
+
+impl RawKind {
+    pub const ALL: [RawKind; 2] = [Self::Json, Self::Text];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Json => "JSON",
+            Self::Text => "Text",
+        }
+    }
+
+    /// Content-Type sent when the user hasn't set one.
+    pub fn mime(self) -> mime::Mime {
+        match self {
+            Self::Json => mime::APPLICATION_JSON,
+            Self::Text => mime::TEXT_PLAIN_UTF_8,
+        }
+    }
 }
 
 /// One row of a key/value table (query params, headers, ...).

@@ -6,7 +6,9 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 - [ ] **URL ↔ Params two-way sync.** Typing `?page=2` in the URL fills the Params table, and editing the table rewrites the URL (Postman-style). Parse with the `url` crate and guard against update loops. Today the table is the source of truth and reqwest appends params at send time, so a query string in the URL *and* table params are both sent.
 - [ ] **Authorization tab.** Content for the tab (e.g. Bearer token, Basic auth).
-- [ ] **Body tab.** Editable `Editor` (JSON etc.), form-encoded and multipart bodies. Cmd+Enter should send from a multi-line editor (`InputEvent::PressEnter { secondary: true, .. }`).
+- [ ] **Body: more modes.** `x-www-form-urlencoded`, file fields in form-data, more raw kinds (XML, HTML).
+- [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
+- [ ] **Body: Cmd+Enter to send** from the raw editor (`InputEvent::PressEnter { secondary: true, .. }`).
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Default URL scheme.** When the URL has no scheme (`localhost:4000/health`), prepend `http://` for localhost/loopback and `https://` otherwise (Postman-style). Today reqwest rejects it as a relative URL.
 - [ ] **Friendlier TLS errors.** When the error chain contains rustls `InvalidContentType` (server answered in plain HTTP), show a hint: "The server didn't respond with TLS. Did you mean http://?"
