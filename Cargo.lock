@@ -4648,6 +4648,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "directories",
+ "encoding_rs",
  "futures",
  "gpui-component",
  "gpui-kit-assets",

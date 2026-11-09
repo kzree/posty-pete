@@ -17,6 +17,7 @@ gpui-component = { version = "0.9", features = [
 ] }
 gpui-kit-assets = "0.9"
 mime = "0.3"
+encoding_rs = "0.8"
 reqwest = { version = "0.13", default-features = false, features = [
   "json",
   "multipart",

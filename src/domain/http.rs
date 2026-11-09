@@ -11,7 +11,7 @@ use reqwest::{
 
 use super::{
     request::{Auth, Body, KeyValue, Request},
-    response::Response,
+    response::{Response, header_value_text},
     url_scheme::with_default_scheme,
 };
 
@@ -135,17 +135,11 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
     let headers = res
         .headers()
         .iter()
-        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
+        .map(|(k, v)| (k.to_string(), header_value_text(v.as_bytes())))
         .collect();
-    let bytes = read_body(&mut res, MAX_BODY_BYTES).await?;
-    let body = String::from_utf8_lossy(&bytes).into_owned();
+    let body = read_body(&mut res, MAX_BODY_BYTES).await?;
 
-    Ok(Response {
-        status,
-        headers,
-        body,
-        elapsed: start.elapsed(),
-    })
+    Ok(Response::new(status, headers, body, start.elapsed()))
 }
 
 const MAX_BODY_BYTES: usize = 50 * 1024 * 1024;

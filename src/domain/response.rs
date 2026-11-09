@@ -1,12 +1,17 @@
 use std::time::Duration;
 
+use encoding_rs::{Encoding, UTF_8};
+use mime::Mime;
+
 use super::body_format::BodyFormat;
 
 #[derive(Clone, Debug)]
 pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: String,
+    pub body: Vec<u8>,
+    /// `None` when the body is binary or can't be decoded faithfully.
+    pub text: Option<String>,
     pub elapsed: Duration,
 }
 
@@ -20,6 +25,23 @@ pub enum StatusClass {
 }
 
 impl Response {
+    pub fn new(
+        status: u16,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        elapsed: Duration,
+    ) -> Self {
+        let mut response = Self {
+            status,
+            headers,
+            body,
+            text: None,
+            elapsed,
+        };
+        response.text = decode_body(&response.body, response.content_type());
+        response
+    }
+
     pub fn status_class(&self) -> StatusClass {
         match self.status {
             200..=299 => StatusClass::Success,
@@ -52,11 +74,127 @@ impl Response {
     }
 
     pub fn pretty_body(&self) -> String {
+        let Some(text) = &self.text else {
+            return format!(
+                "<binary or non-UTF-8 body, {} bytes, not shown>",
+                self.body.len()
+            );
+        };
         if self.body_format() != BodyFormat::Json {
-            return self.body.clone();
+            return text.clone();
         }
-        serde_json::from_str::<serde_json::Value>(&self.body)
+        serde_json::from_str::<serde_json::Value>(text)
             .and_then(|v| serde_json::to_string_pretty(&v))
-            .unwrap_or_else(|_| self.body.clone())
+            .unwrap_or_else(|_| text.clone())
+    }
+}
+
+/// Decodes with the BOM or declared charset, else strict UTF-8.
+fn decode_body(bytes: &[u8], content_type: Option<&str>) -> Option<String> {
+    let (encoding, bytes) = match Encoding::for_bom(bytes) {
+        Some((encoding, bom_len)) => (encoding, &bytes[bom_len..]),
+        None => (declared_charset(content_type)?, bytes),
+    };
+    let text = encoding.decode_without_bom_handling_and_without_replacement(bytes)?;
+    (!text.contains('\0')).then(|| text.into_owned())
+}
+
+/// `None` for an unsupported charset; UTF-8 when none is declared.
+fn declared_charset(content_type: Option<&str>) -> Option<&'static Encoding> {
+    let mime = content_type.and_then(|ct| ct.parse::<Mime>().ok());
+    match mime.as_ref().and_then(|m| m.get_param(mime::CHARSET)) {
+        Some(label) => Encoding::for_label(label.as_str().as_bytes()),
+        None => Some(UTF_8),
+    }
+}
+
+/// UTF-8 when valid, otherwise each byte as its Latin-1 character.
+pub fn header_value_text(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(_) => bytes.iter().map(|&b| char::from(b)).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn decode(bytes: &[u8], content_type: &str) -> Option<String> {
+        decode_body(bytes, Some(content_type))
+    }
+
+    #[test]
+    fn utf8_body() {
+        assert_eq!(
+            decode("héllo ✓".as_bytes(), "text/plain; charset=utf-8").as_deref(),
+            Some("héllo ✓")
+        );
+        assert_eq!(
+            decode_body("{\"a\":\"ü\"}".as_bytes(), None).as_deref(),
+            Some("{\"a\":\"ü\"}")
+        );
+    }
+
+    #[test]
+    fn utf8_bom_is_stripped() {
+        assert_eq!(
+            decode(b"\xEF\xBB\xBF{}", "application/json").as_deref(),
+            Some("{}")
+        );
+    }
+
+    #[test]
+    fn legacy_charsets() {
+        assert_eq!(
+            decode(b"caf\xE9 \x80", "text/plain; charset=windows-1252").as_deref(),
+            Some("café €")
+        );
+        assert_eq!(
+            decode(b"caf\xE9", "text/html; charset=ISO-8859-1").as_deref(),
+            Some("café")
+        );
+        assert_eq!(
+            decode(b"\x82\xA0", "text/plain; charset=Shift_JIS").as_deref(),
+            Some("あ")
+        );
+    }
+
+    #[test]
+    fn malformed_utf8_is_not_shown_as_text() {
+        assert_eq!(decode(b"caf\xE9", "text/plain; charset=utf-8"), None);
+        assert_eq!(decode_body(b"caf\xE9", None), None);
+    }
+
+    #[test]
+    fn binary_and_unsupported_bodies() {
+        assert_eq!(decode(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR", "image/png"), None);
+        assert_eq!(decode(b"a\0b", "application/octet-stream"), None);
+        assert_eq!(decode(b"abc", "text/plain; charset=x-made-up"), None);
+    }
+
+    #[test]
+    fn pretty_body_marks_binary() {
+        let response = Response::new(
+            200,
+            vec![("content-type".into(), "image/png".into())],
+            vec![0x89, b'P', b'N', b'G', 0xFF],
+            Duration::ZERO,
+        );
+        assert_eq!(response.text, None);
+        assert_eq!(
+            response.pretty_body(),
+            "<binary or non-UTF-8 body, 5 bytes, not shown>"
+        );
+    }
+
+    #[test]
+    fn header_values() {
+        assert_eq!(header_value_text(b"text/html"), "text/html");
+        assert_eq!(
+            header_value_text("attachment; filename=\"ü.txt\"".as_bytes()),
+            "attachment; filename=\"ü.txt\""
+        );
+        assert_eq!(header_value_text(b"caf\xE9"), "café");
     }
 }
