@@ -23,7 +23,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## App
 
-- [ ] **More keybindings and a menu bar.** `cmd-,` opens settings; add a native menu bar (`cx.set_menus`) listing the actions with their shortcuts (`actions.rs`).
+- [ ] **Native menu bar.** `cx.set_menus` listing the actions in `actions.rs` with their shortcuts.
 - [ ] **Settings tab content.** The sidebar's Settings tab is a placeholder (theme, request timeout, ...).
 - [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
 - [ ] **Extract `Workspace` into `app.rs`.** `BaseLayout` currently lives in `main.rs`.

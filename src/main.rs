@@ -20,10 +20,13 @@ mod sidebar;
 mod status_bar;
 mod ui;
 
-use actions::{SendRequest, ToggleSidebar, WORKSPACE_CONTEXT};
+use actions::{
+    FocusUrl, OpenHistory, OpenLibrary, OpenSettings, SendRequest, ToggleSidebar,
+    WORKSPACE_CONTEXT,
+};
 use assets::AppAssets;
 use sidebar::{Sidebar, SidebarTab};
-use status_bar::{StatusBar, StatusBarEvent};
+use status_bar::StatusBar;
 
 use crate::{
     domain::http,
@@ -101,10 +104,6 @@ impl BaseLayout {
             },
         );
 
-        let status_sub = cx.subscribe(&status_bar, |this, _, event, cx| match event {
-            StatusBarEvent::ToggleLeftPanel => this.toggle_left_panel(cx),
-            StatusBarEvent::OpenSettings => this.open_settings(cx),
-        });
 
         Self {
             request_editor,
@@ -121,7 +120,7 @@ impl BaseLayout {
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
             focus_handle: cx.focus_handle(),
-            _subscriptions: vec![sub, status_sub],
+            _subscriptions: vec![sub],
         }
     }
 
@@ -137,10 +136,9 @@ impl BaseLayout {
         cx.notify();
     }
 
-    fn open_settings(&mut self, cx: &mut Context<Self>) {
-        self.sidebar.update(cx, |sidebar, cx| {
-            sidebar.set_active_tab(SidebarTab::Settings, cx)
-        });
+    fn open_sidebar_tab(&mut self, tab: SidebarTab, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_active_tab(tab, cx));
         if self.left_panel == LeftPanelState::Closed {
             self.toggle_left_panel(cx);
         }
@@ -188,6 +186,19 @@ impl Render for BaseLayout {
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.toggle_left_panel(cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenLibrary, _, cx| {
+                this.open_sidebar_tab(SidebarTab::Library, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenHistory, _, cx| {
+                this.open_sidebar_tab(SidebarTab::History, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
+                this.open_sidebar_tab(SidebarTab::Settings, cx);
+            }))
+            .on_action(cx.listener(|this, _: &FocusUrl, window, cx| {
+                this.request_editor
+                    .update(cx, |editor, cx| editor.focus_url(window, cx));
             }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
                 window.focus(&this.focus_handle, cx);

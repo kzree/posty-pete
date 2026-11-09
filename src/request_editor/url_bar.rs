@@ -7,6 +7,7 @@ use gpui_component::{
 };
 
 use super::RequestEditor;
+use crate::actions::{SendRequest, WORKSPACE_CONTEXT};
 
 impl RequestEditor {
     pub(super) fn render_url_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -25,6 +26,7 @@ impl RequestEditor {
                     .primary()
                     .label("Send")
                     .loading(self.loading)
+                    .tooltip_with_action("Send request", &SendRequest, Some(WORKSPACE_CONTEXT))
                     .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
             )
     }

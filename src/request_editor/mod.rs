@@ -80,6 +80,13 @@ impl RequestEditor {
         cx.notify();
     }
 
+    pub fn focus_url(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.url.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.select_all(window, cx);
+        });
+    }
+
     pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.loading || self.input_is_empty(cx) {
             return;

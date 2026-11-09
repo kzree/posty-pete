@@ -1,13 +1,10 @@
-use gpui::{Context, EventEmitter, IntoElement, ParentElement, Render, Styled, Window, div};
+use gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div};
 use gpui_component::{
     ActiveTheme, IconName, Sizable,
     button::{Button, ButtonVariants},
 };
 
-pub enum StatusBarEvent {
-    ToggleLeftPanel,
-    OpenSettings,
-}
+use crate::actions::{OpenSettings, ToggleSidebar, WORKSPACE_CONTEXT};
 
 pub struct StatusBar {
     left_panel_open: bool,
@@ -23,8 +20,6 @@ impl StatusBar {
         cx.notify();
     }
 }
-
-impl EventEmitter<StatusBarEvent> for StatusBar {}
 
 impl Render for StatusBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -43,20 +38,24 @@ impl Render for StatusBar {
                     .ghost()
                     .xsmall()
                     .icon(IconName::PanelLeft)
-                    .tooltip(if self.left_panel_open {
-                        "Close left panel"
-                    } else {
-                        "Open left panel"
-                    })
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(StatusBarEvent::ToggleLeftPanel))),
+                    .tooltip_with_action(
+                        if self.left_panel_open {
+                            "Close left panel"
+                        } else {
+                            "Open left panel"
+                        },
+                        &ToggleSidebar,
+                        Some(WORKSPACE_CONTEXT),
+                    )
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleSidebar), cx)),
             )
             .child(
                 Button::new("settings")
                     .ghost()
                     .xsmall()
                     .icon(IconName::Settings)
-                    .tooltip("Settings")
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(StatusBarEvent::OpenSettings))),
+                    .tooltip_with_action("Settings", &OpenSettings, Some(WORKSPACE_CONTEXT))
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
             )
     }
 }
