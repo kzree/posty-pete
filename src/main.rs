@@ -21,8 +21,7 @@ mod status_bar;
 mod ui;
 
 use actions::{
-    FocusUrl, OpenHistory, OpenLibrary, OpenSettings, SendRequest, ToggleSidebar,
-    WORKSPACE_CONTEXT,
+    FocusUrl, OpenHistory, OpenLibrary, OpenSettings, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
 };
 use assets::AppAssets;
 use sidebar::{Sidebar, SidebarTab};
@@ -103,7 +102,6 @@ impl BaseLayout {
                 }
             },
         );
-
 
         Self {
             request_editor,

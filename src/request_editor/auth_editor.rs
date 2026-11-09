@@ -65,15 +65,21 @@ pub struct AuthEditor {
 impl AuthEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let items = AuthKind::ALL.into_iter().map(AuthKindItem).collect();
-        let kind_select =
-            cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
+        let kind_select = cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
 
         let api_key_name = cx.new(|cx| InputState::new(window, cx).placeholder("X-API-Key"));
         let api_key_value = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
         let username = cx.new(|cx| InputState::new(window, cx).placeholder("Username"));
-        let password =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Password").masked(true));
-        let token = cx.new(|cx| InputState::new(window, cx).placeholder("Token").masked(true));
+        let password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Password")
+                .masked(true)
+        });
+        let token = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Token")
+                .masked(true)
+        });
 
         let sub = cx.subscribe(
             &kind_select,
@@ -124,7 +130,11 @@ impl Render for AuthEditor {
             .flex_none()
             .gap_2()
             .child(div().text_sm().text_color(muted).child("Type"))
-            .child(div().w(px(140.)).child(Select::new(&self.kind_select).small()));
+            .child(
+                div()
+                    .w(px(140.))
+                    .child(Select::new(&self.kind_select).small()),
+            );
 
         let fields = match self.kind {
             AuthKind::None => div()
@@ -133,11 +143,23 @@ impl Render for AuthEditor {
                 .child("This request doesn't use authorization.")
                 .into_any_element(),
             AuthKind::ApiKey => v_form()
-                .child(field().label("Key").child(Input::new(&self.api_key_name).small()))
-                .child(field().label("Value").child(Input::new(&self.api_key_value).small()))
+                .child(
+                    field()
+                        .label("Key")
+                        .child(Input::new(&self.api_key_name).small()),
+                )
+                .child(
+                    field()
+                        .label("Value")
+                        .child(Input::new(&self.api_key_value).small()),
+                )
                 .into_any_element(),
             AuthKind::Basic => v_form()
-                .child(field().label("Username").child(Input::new(&self.username).small()))
+                .child(
+                    field()
+                        .label("Username")
+                        .child(Input::new(&self.username).small()),
+                )
                 .child(
                     field()
                         .label("Password")

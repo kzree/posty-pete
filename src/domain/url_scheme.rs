@@ -6,7 +6,11 @@ pub fn with_default_scheme(input: &str) -> Cow<'_, str> {
     if input.contains("://") {
         return Cow::Borrowed(input);
     }
-    let scheme = if is_local(authority(input)) { "http" } else { "https" };
+    let scheme = if is_local(authority(input)) {
+        "http"
+    } else {
+        "https"
+    };
     Cow::Owned(format!("{scheme}://{input}"))
 }
 
@@ -15,7 +19,9 @@ fn authority(input: &str) -> &str {
 }
 
 fn is_local(authority: &str) -> bool {
-    let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
     // IPv6 hosts are bracketed: `[::1]:8080`.
     let host = match host.strip_prefix('[') {
         Some(rest) => rest.split(']').next().unwrap_or_default(),
@@ -39,8 +45,14 @@ mod tests {
 
     #[test]
     fn keeps_existing_scheme() {
-        assert_eq!(with_default_scheme("https://localhost:4000"), "https://localhost:4000");
-        assert_eq!(with_default_scheme("http://example.com"), "http://example.com");
+        assert_eq!(
+            with_default_scheme("https://localhost:4000"),
+            "https://localhost:4000"
+        );
+        assert_eq!(
+            with_default_scheme("http://example.com"),
+            "http://example.com"
+        );
     }
 
     #[test]
@@ -56,19 +68,35 @@ mod tests {
             "[::1]:8080/x",
             "user:pass@localhost:4000",
         ] {
-            assert_eq!(with_default_scheme(input), format!("http://{input}"), "{input}");
+            assert_eq!(
+                with_default_scheme(input),
+                format!("http://{input}"),
+                "{input}"
+            );
         }
     }
 
     #[test]
     fn other_hosts_get_https() {
-        for input in ["example.com", "httpbin.org/get?x=1", "8.8.8.8", "localhost.example.com"] {
-            assert_eq!(with_default_scheme(input), format!("https://{input}"), "{input}");
+        for input in [
+            "example.com",
+            "httpbin.org/get?x=1",
+            "8.8.8.8",
+            "localhost.example.com",
+        ] {
+            assert_eq!(
+                with_default_scheme(input),
+                format!("https://{input}"),
+                "{input}"
+            );
         }
     }
 
     #[test]
     fn trims_whitespace() {
-        assert_eq!(with_default_scheme("  localhost:4000 "), "http://localhost:4000");
+        assert_eq!(
+            with_default_scheme("  localhost:4000 "),
+            "http://localhost:4000"
+        );
     }
 }

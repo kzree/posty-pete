@@ -15,9 +15,17 @@ pub enum Auth {
     #[default]
     None,
     /// Sent as a header (`key: value`).
-    ApiKey { key: String, value: String },
-    Basic { username: String, password: String },
-    Bearer { token: String },
+    ApiKey {
+        key: String,
+        value: String,
+    },
+    Basic {
+        username: String,
+        password: String,
+    },
+    Bearer {
+        token: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -26,7 +34,10 @@ pub enum Body {
     None,
     /// Sent as `multipart/form-data`.
     FormData(Vec<KeyValue>),
-    Raw { kind: RawKind, text: String },
+    Raw {
+        kind: RawKind,
+        text: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

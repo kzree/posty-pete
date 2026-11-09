@@ -24,7 +24,8 @@ impl GlobalLoading {
     }
 
     pub fn is_active(cx: &App) -> bool {
-        cx.try_global::<Self>().is_some_and(|loading| loading.active > 0)
+        cx.try_global::<Self>()
+            .is_some_and(|loading| loading.active > 0)
     }
 }
 
