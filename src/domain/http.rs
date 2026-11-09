@@ -3,10 +3,48 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Ok;
+use mime::Mime;
 use tokio::{runtime::Runtime, task::JoinHandle};
 
 use crate::domain::request::Request;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyFormat {
+    Json,
+    Html,
+    Xml,
+    Css,
+    JavaScript,
+    Yaml,
+    Text,
+}
+
+impl BodyFormat {
+    pub fn from_content_type(content_type: Option<&str>) -> Self {
+        let Some(mime) = content_type.and_then(|ct| ct.parse::<Mime>().ok()) else {
+            return Self::Text;
+        };
+
+        let (ty, subtype, suffix) = (mime.type_(), mime.subtype(), mime.suffix());
+
+        if subtype == mime::JSON || suffix == Some(mime::JSON) {
+            Self::Json
+        } else if subtype == mime::XML || suffix == Some(mime::XML) {
+            Self::Xml
+        } else if ty == mime::TEXT && subtype == mime::HTML {
+            Self::Html
+        } else if ty == mime::TEXT && subtype == mime::CSS {
+            Self::Css
+        } else if subtype == mime::JAVASCRIPT {
+            Self::JavaScript
+        } else if subtype == "yaml" || subtype == "x-yaml" || suffix.is_some_and(|s| s == "yaml") {
+            // mime has no YAML constant
+            Self::Yaml
+        } else {
+            Self::Text
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Response {
@@ -17,7 +55,21 @@ pub struct Response {
 }
 
 impl Response {
+    pub fn content_type(&self) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+            .map(|(_, value)| value.as_str())
+    }
+
+    pub fn body_format(&self) -> BodyFormat {
+        BodyFormat::from_content_type(self.content_type())
+    }
+
     pub fn pretty_body(&self) -> String {
+        if self.body_format() != BodyFormat::Json {
+            return self.body.clone();
+        }
         serde_json::from_str::<serde_json::Value>(&self.body)
             .and_then(|v| serde_json::to_string_pretty(&v))
             .unwrap_or_else(|_| self.body.clone())

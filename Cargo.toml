@@ -8,8 +8,15 @@ gpui = { package = "gpui-pre", version = "=0.3.11" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = [
   "font-kit",
 ] }
-gpui-component = { version = "0.9", features = ["tree-sitter"] }
+gpui-component = { version = "0.9", features = [
+  "tree-sitter",            # json
+  "tree-sitter-html",
+  "tree-sitter-css",
+  "tree-sitter-javascript",
+  "tree-sitter-yaml",
+] }
 gpui-kit-assets = "0.9"
+mime = "0.3"
 reqwest = { version = "0.13", default-features = false, features = [
   "json",
   "multipart",

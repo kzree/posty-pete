@@ -2066,7 +2066,11 @@ dependencies = [
  "smol",
  "tracing",
  "tree-sitter",
+ "tree-sitter-css",
+ "tree-sitter-html",
+ "tree-sitter-javascript",
  "tree-sitter-json",
+ "tree-sitter-yaml",
  "unicode-segmentation",
  "unicode-width",
  "uuid",
@@ -4649,6 +4653,7 @@ dependencies = [
  "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
+ "mime",
  "reqwest",
  "serde",
  "serde_json",
@@ -6705,6 +6710,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-css"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ad6489794d41350d12a7fbe520e5199f688618f43aace5443980d1ddcf1b29e"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-html"
+version = "0.23.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "261b708e5d92061ede329babaaa427b819329a9d427a1d710abb0f67bbef63ee"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-javascript"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf40bf599e0416c16c125c3cec10ee5ddc7d1bb8b0c60fa5c4de249ad34dc1b1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-json"
 version = "0.24.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6719,6 +6754,16 @@ name = "tree-sitter-language"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0af592be68c579aa78a16846bd19422978c3c52e438523d45ff5d1bff1f9d4a"
+
+[[package]]
+name = "tree-sitter-yaml"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53c223db85f05e34794f065454843b0668ebc15d240ada63e2b5939f43ce7c97"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
 
 [[package]]
 name = "triomphe"

@@ -10,7 +10,20 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::domain::http::Response;
+use crate::domain::http::{BodyFormat, Response};
+
+/// gpui-component highlighter language for a body format.
+fn editor_language(format: BodyFormat) -> &'static str {
+    match format {
+        BodyFormat::Json => "json",
+        BodyFormat::Html => "html",
+        BodyFormat::Xml => "html", // gpui-component 0.9 has no XML grammar
+        BodyFormat::Css => "css",
+        BodyFormat::JavaScript => "javascript",
+        BodyFormat::Yaml => "yaml",
+        BodyFormat::Text => "text",
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum ResponseTab {
@@ -52,9 +65,12 @@ impl ResponseView {
         cx: &mut Context<Self>,
     ) {
         if let Ok(resp) = &response {
+            let language = editor_language(resp.body_format());
             let text = resp.pretty_body();
-            self.body
-                .update(cx, |state, cx| state.set_value(text, window, cx));
+            self.body.update(cx, |state, cx| {
+                state.set_highlighter(language, cx);
+                state.set_value(text, window, cx);
+            });
         }
         self.response = Some(response);
         cx.notify();
