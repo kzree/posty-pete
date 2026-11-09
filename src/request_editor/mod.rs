@@ -1,41 +1,30 @@
+mod method_item;
+mod tabs;
+mod url_bar;
+
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, px,
+    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
+    Subscription, Window,
 };
 use gpui_component::{
     IndexPath,
-    button::{Button, ButtonVariants},
-    h_flex,
-    input::{Input, InputEvent, InputState},
-    searchable_list::SearchableListItem,
-    select::{Select, SelectState},
+    input::{InputEvent, InputState},
+    select::SelectState,
     v_flex,
 };
 
-use crate::domain::request::{HttpMethod, Request};
+use crate::domain::request::Request;
+use method_item::MethodItem;
+use tabs::RequestTab;
 
 pub enum RequestEditorEvent {
     SendRequested(Request),
 }
 
-#[derive(Clone)]
-pub struct MethodItem(HttpMethod);
-
-impl SearchableListItem for MethodItem {
-    type Value = HttpMethod;
-
-    fn title(&self) -> SharedString {
-        self.0.as_str().into()
-    }
-
-    fn value(&self) -> &HttpMethod {
-        &self.0
-    }
-}
-
 pub struct RequestEditor {
     method: Entity<SelectState<Vec<MethodItem>>>,
     url: Entity<InputState>,
+    active_tab: RequestTab,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -43,8 +32,9 @@ impl EventEmitter<RequestEditorEvent> for RequestEditor {}
 
 impl RequestEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let items: Vec<MethodItem> = HttpMethod::ALL.into_iter().map(MethodItem).collect();
-        let method = cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
+        let method = cx.new(|cx| {
+            SelectState::new(MethodItem::all(), Some(IndexPath::new(0)), window, cx)
+        });
         let url = cx.new(|cx| InputState::new(window, cx).placeholder("https://..."));
 
         let sub = cx.subscribe_in(
@@ -60,6 +50,7 @@ impl RequestEditor {
         Self {
             method,
             url,
+            active_tab: RequestTab::Params,
             _subscriptions: vec![sub],
         }
     }
@@ -91,23 +82,11 @@ impl RequestEditor {
 
 impl Render for RequestEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().size_full().p_4().gap_2().child(
-            h_flex()
-                .w_full()
-                .gap_2()
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(110.))
-                        .child(Select::new(&self.method)),
-                )
-                .child(div().flex_1().child(Input::new(&self.url)))
-                .child(
-                    Button::new("send")
-                        .primary()
-                        .label("Send")
-                        .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
-                ),
-        )
+        v_flex()
+            .size_full()
+            .p_4()
+            .gap_2()
+            .child(self.render_url_bar(cx))
+            .child(self.render_tab_bar(cx))
     }
 }
