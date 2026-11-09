@@ -3,7 +3,8 @@ use gpui::{
     Subscription, Task, Window, WindowOptions, div, px, size,
 };
 use gpui_component::{
-    ActiveTheme, Root, Theme, ThemeMode, h_resizable, resizable_panel, v_resizable,
+    ActiveTheme, ResizableState, Root, Theme, ThemeMode, h_resizable, resizable_panel,
+    v_resizable,
 };
 use gpui_kit_assets::Assets;
 use gpui_platform::application;
@@ -41,6 +42,8 @@ struct BaseLayout {
     client: reqwest::Client,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
+    main_layout: Entity<ResizableState>,
+    request_response_layout: Entity<ResizableState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -86,6 +89,8 @@ impl BaseLayout {
             client: reqwest::Client::new(),
             pending: None,
             left_panel,
+            main_layout: cx.new(|_| ResizableState::default()),
+            request_response_layout: cx.new(|_| ResizableState::default()),
             _subscriptions: vec![sub, status_sub],
         }
     }
@@ -105,32 +110,36 @@ impl BaseLayout {
 
 impl Render for BaseLayout {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let main_content = v_resizable("request-response")
+            .with_state(&self.request_response_layout)
+            .child(resizable_panel().child(self.request_editor.clone()))
+            .child(resizable_panel().child(self.response_view.clone()));
+
+        // Only build the horizontal split while the sidebar is open: a hidden
+        // panel still leaves the next panel's resize handle in place.
+        let body = if self.left_panel == LeftPanelState::Open {
+            h_resizable("main-layout")
+                .with_state(&self.main_layout)
+                .child(
+                    resizable_panel()
+                        .size(px(280.))
+                        .size_range(px(200.)..px(400.))
+                        .fixed()
+                        .child(Sidebar::new()),
+                )
+                .child(resizable_panel().child(main_content))
+                .into_any_element()
+        } else {
+            main_content.into_any_element()
+        };
+
         div()
             .flex()
             .flex_col()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(
-                div().flex_1().min_h_0().overflow_hidden().child(
-                    h_resizable("main-layout")
-                        .child(
-                            resizable_panel()
-                                .visible(self.left_panel == LeftPanelState::Open)
-                                .size(px(280.))
-                                .size_range(px(200.)..px(400.))
-                                .fixed()
-                                .child(Sidebar::new()),
-                        )
-                        .child(
-                            resizable_panel().child(
-                                v_resizable("request-response")
-                                    .child(resizable_panel().child(self.request_editor.clone()))
-                                    .child(resizable_panel().child(self.response_view.clone())),
-                            ),
-                        ),
-                ),
-            )
+            .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .child(self.status_bar.clone())
     }
 }
