@@ -3,13 +3,11 @@ use gpui_component::searchable_list::SearchableListItem;
 
 use crate::domain::request::HttpMethod;
 
-/// Wraps `HttpMethod` so it can be shown in a `Select` without `domain`
-/// depending on gpui-component.
+/// Keeps gpui-component out of `domain`.
 #[derive(Clone)]
 pub struct MethodItem(HttpMethod);
 
 impl MethodItem {
-    /// One item per HTTP method, in dropdown order.
     pub fn all() -> Vec<MethodItem> {
         HttpMethod::ALL.into_iter().map(MethodItem).collect()
     }

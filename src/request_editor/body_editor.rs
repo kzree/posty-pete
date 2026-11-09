@@ -40,7 +40,6 @@ impl BodyMode {
     }
 }
 
-/// Wraps `RawKind` for the `Select` (same pattern as `MethodItem`).
 #[derive(Clone)]
 struct RawKindItem(RawKind);
 
@@ -79,7 +78,6 @@ impl BodyEditor {
             cx.new(|cx| EditorState::new(window, cx).language(editor_language(RawKind::default())));
         let form_data = cx.new(|cx| KeyValueEditor::new(window, cx));
 
-        // Switching JSON/Text switches the highlighter.
         let sub = cx.subscribe(
             &raw_kind,
             |this, _, event: &SelectEvent<Vec<RawKindItem>>, cx| {

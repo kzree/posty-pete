@@ -30,7 +30,6 @@ impl Response {
         }
     }
 
-    /// `200 OK`, `404 Not Found`; just the code when there's no standard reason.
     pub fn status_text(&self) -> String {
         let reason = reqwest::StatusCode::from_u16(self.status)
             .ok()
@@ -52,7 +51,6 @@ impl Response {
         BodyFormat::from_content_type(self.content_type())
     }
 
-    /// The body, pretty-printed if it's JSON.
     pub fn pretty_body(&self) -> String {
         if self.body_format() != BodyFormat::Json {
             return self.body.clone();

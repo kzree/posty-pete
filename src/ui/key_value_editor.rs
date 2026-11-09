@@ -17,7 +17,6 @@ struct Row {
     enabled: bool,
     key: Entity<InputState>,
     value: Entity<InputState>,
-    /// Dropped together with the row.
     _subscriptions: Vec<Subscription>,
 }
 
@@ -37,7 +36,6 @@ impl Row {
     }
 }
 
-/// Postman-style editable key/value table. A trailing empty row is always kept.
 pub struct KeyValueEditor {
     rows: Vec<Row>,
 }
@@ -49,7 +47,6 @@ impl KeyValueEditor {
         this
     }
 
-    /// Every non-empty row, disabled ones included (the sender filters those).
     pub fn values(&self, cx: &App) -> Vec<KeyValue> {
         self.rows
             .iter()
@@ -62,7 +59,6 @@ impl KeyValueEditor {
         let key = cx.new(|cx| InputState::new(window, cx).placeholder("Key"));
         let value = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
 
-        // Typing into the trailing row adds a fresh empty row below it.
         let subscriptions = [&key, &value]
             .into_iter()
             .map(|input| {

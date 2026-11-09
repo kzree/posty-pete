@@ -3,8 +3,6 @@ use gpui_component::{ColorName, Sizable, tag::Tag};
 
 use crate::domain::response::{Response, StatusClass};
 
-/// Status code + reason phrase, colored by status class.
-/// Tuned for the dark theme: opaque dark tint, bright text.
 pub(super) fn status_tag(response: &Response) -> Tag {
     let color = match response.status_class() {
         StatusClass::Success => ColorName::Green,

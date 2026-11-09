@@ -9,7 +9,6 @@ pub enum StatusBarEvent {
     OpenSettings,
 }
 
-/// The bar along the bottom of the window.
 pub struct StatusBar {
     left_panel_open: bool,
 }

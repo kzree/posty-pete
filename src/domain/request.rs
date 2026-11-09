@@ -46,7 +46,6 @@ impl RawKind {
         }
     }
 
-    /// Content-Type sent when the user hasn't set one.
     pub fn mime(self) -> mime::Mime {
         match self {
             Self::Json => mime::APPLICATION_JSON,
@@ -55,7 +54,6 @@ impl RawKind {
     }
 }
 
-/// One row of a key/value table (query params, headers, ...).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct KeyValue {
     pub enabled: bool,

@@ -20,7 +20,6 @@ fn form_data(fields: &[KeyValue]) -> Form {
     })
 }
 
-/// Enabled rows that have a key.
 fn active(items: &[KeyValue]) -> impl Iterator<Item = (&str, &str)> {
     items
         .iter()
@@ -35,7 +34,7 @@ fn header_map(items: &[KeyValue]) -> anyhow::Result<HeaderMap> {
             .with_context(|| format!("invalid header name: {key:?}"))?;
         let value = HeaderValue::from_str(value)
             .with_context(|| format!("invalid value for header {key:?}"))?;
-        map.append(name, value); // append, not insert: repeated headers are allowed
+        map.append(name, value); // repeated headers are allowed
     }
     Ok(map)
 }
@@ -54,7 +53,7 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
     let start = Instant::now();
     let query: Vec<_> = active(&request.params).collect();
     let mut headers = header_map(&request.headers)?;
-    // An Authorization header set in the Headers tab wins over the Auth tab.
+    // A user-set Authorization header wins over the Auth tab.
     let user_set_authorization = headers.contains_key(AUTHORIZATION);
 
     if let Auth::ApiKey { key, value } = &request.auth
@@ -70,7 +69,7 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
     }
 
     match &request.body {
-        // reqwest sets multipart/form-data with the boundary; a user value would break it.
+        // reqwest sets the multipart Content-Type with its boundary.
         Body::FormData(_) => {
             headers.remove(CONTENT_TYPE);
         }
@@ -121,7 +120,6 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
     })
 }
 
-/// Runs `send` on the tokio runtime. Await the handle from any executor.
 pub fn spawn_send(
     client: reqwest::Client,
     request: Request,

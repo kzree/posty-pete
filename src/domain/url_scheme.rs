@@ -10,14 +10,13 @@ pub fn with_default_scheme(input: &str) -> Cow<'_, str> {
     Cow::Owned(format!("{scheme}://{input}"))
 }
 
-/// `user:pass@host:port` part of a scheme-less URL.
 fn authority(input: &str) -> &str {
     input.split(['/', '?', '#']).next().unwrap_or_default()
 }
 
 fn is_local(authority: &str) -> bool {
-    // Drop userinfo, then the port. IPv6 hosts are bracketed: `[::1]:8080`.
     let host = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    // IPv6 hosts are bracketed: `[::1]:8080`.
     let host = match host.strip_prefix('[') {
         Some(rest) => rest.split(']').next().unwrap_or_default(),
         None => host.rsplit_once(':').map_or(host, |(host, _)| host),

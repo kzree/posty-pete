@@ -55,7 +55,6 @@ struct BaseLayout {
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
     request_response_layout: Entity<ResizableState>,
-    /// Focused when clicking empty space or pressing Escape in an input.
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -75,7 +74,7 @@ impl BaseLayout {
             |this, _editor, event, window, cx| match event {
                 RequestEditorEvent::SendRequested(request) => {
                     if this.pending.is_some() {
-                        return; // the button is disabled too; this is the backstop
+                        return;
                     }
                     GlobalLoading::begin(cx);
                     this.request_editor
@@ -138,7 +137,6 @@ impl BaseLayout {
         cx.notify();
     }
 
-    /// Shows the sidebar's Settings tab, opening the sidebar if it's closed.
     fn open_settings(&mut self, cx: &mut Context<Self>) {
         self.sidebar.update(cx, |sidebar, cx| {
             sidebar.set_active_tab(SidebarTab::Settings, cx)
@@ -156,15 +154,13 @@ impl Render for BaseLayout {
             .child(resizable_panel().child(self.request_editor.clone()))
             .child(resizable_panel().child(self.response_view.clone()));
 
-        // The loading bar floats over the top of the main area only (not the sidebar).
         let main_content = div()
             .relative()
             .size_full()
             .child(main_content)
             .child(self.loading_bar.clone());
 
-        // Only build the horizontal split while the sidebar is open: a hidden
-        // panel still leaves the next panel's resize handle in place.
+        // A hidden panel would still leave its resize handle behind.
         let body = if self.left_panel == LeftPanelState::Open {
             h_resizable("main-layout")
                 .with_state(&self.main_layout)
@@ -193,7 +189,6 @@ impl Render for BaseLayout {
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.toggle_left_panel(cx);
             }))
-            // Escape inside an input bubbles up here: move focus off the input.
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
                 window.focus(&this.focus_handle, cx);
             }))

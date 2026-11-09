@@ -18,7 +18,6 @@ use crate::domain::{body_format::BodyFormat, response::Response};
 use gpui_kit_assets::IconName as LucideIcon;
 use status_tag::status_tag;
 
-/// gpui-component highlighter language for a body format.
 fn editor_language(format: BodyFormat) -> &'static str {
     match format {
         BodyFormat::Json => "json",
@@ -82,7 +81,6 @@ impl ResponseView {
         cx.notify();
     }
 
-    /// Back to the empty state; also empties the editor so a large body isn't kept around.
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.response = None;
         self.body

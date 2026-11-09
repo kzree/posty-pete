@@ -6,8 +6,6 @@ use gpui::{
 };
 use gpui_component::ActiveTheme;
 
-/// App-wide count of in-flight work. Call `begin`/`end` around anything slow;
-/// `LoadingBar` shows while the count is above zero.
 #[derive(Default)]
 pub struct GlobalLoading {
     active: usize,
@@ -30,8 +28,7 @@ impl GlobalLoading {
     }
 }
 
-/// Thin progress line floating over the top edge of the window.
-/// Render it as the last child of a `relative()` container.
+/// Render as the last child of a `relative()` container.
 pub struct LoadingBar {
     _observe: Subscription,
 }
@@ -75,7 +72,6 @@ impl Render for LoadingBar {
                     Animation::new(Duration::from_millis(1200))
                         .repeat()
                         .with_easing(ease_in_out),
-                    // Slide from fully off the left edge to fully off the right.
                     |segment, delta| segment.left(relative(delta * 1.3 - 0.3)),
                 ),
         )

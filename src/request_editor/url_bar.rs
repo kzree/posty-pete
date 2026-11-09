@@ -9,7 +9,6 @@ use gpui_component::{
 use super::RequestEditor;
 
 impl RequestEditor {
-    /// Method dropdown, URL input and Send button.
     pub(super) fn render_url_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .w_full()

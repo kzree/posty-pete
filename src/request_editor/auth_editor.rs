@@ -36,7 +36,6 @@ impl AuthKind {
     }
 }
 
-/// Wraps `AuthKind` for the `Select` (same pattern as `MethodItem`).
 #[derive(Clone)]
 struct AuthKindItem(AuthKind);
 
@@ -76,7 +75,6 @@ impl AuthEditor {
             cx.new(|cx| InputState::new(window, cx).placeholder("Password").masked(true));
         let token = cx.new(|cx| InputState::new(window, cx).placeholder("Token").masked(true));
 
-        // The panel shows different fields per type, so re-render on change.
         let sub = cx.subscribe(
             &kind_select,
             |this, _, event: &SelectEvent<Vec<AuthKindItem>>, cx| {

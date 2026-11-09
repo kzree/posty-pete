@@ -7,8 +7,7 @@ use gpui_component::{
     tooltip::Tooltip,
     v_flex,
 };
-// The full Lucide catalog (`gpui_component::IconName` only has the original set).
-// Icons used from here must also be listed in `assets.rs`.
+// Icons used here must also be listed in `assets.rs`.
 use gpui_kit_assets::IconName as LucideIcon;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -43,7 +42,6 @@ impl SidebarTab {
     }
 }
 
-/// The left-hand sidebar: library (saved requests), history, settings.
 #[derive(Default)]
 pub struct Sidebar {
     active_tab: SidebarTab,
@@ -65,7 +63,6 @@ impl Render for Sidebar {
                 this.set_active_tab(SidebarTab::ALL[*ix], cx);
             }))
             .children(SidebarTab::ALL.map(|tab| {
-                // Equal-width tabs, so the icons sit centered across the sidebar.
                 Tab::new()
                     .flex_1()
                     .icon(tab.icon())

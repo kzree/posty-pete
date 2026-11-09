@@ -1,6 +1,5 @@
 use mime::Mime;
 
-/// What kind of content a response body holds, based on its Content-Type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BodyFormat {
     Json,
