@@ -16,8 +16,16 @@ fn runtime() -> &'static Runtime {
 
 pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<Response> {
     let start = Instant::now();
+    let query: Vec<(&str, &str)> = request
+        .params
+        .iter()
+        .filter(|p| p.enabled && !p.key.is_empty())
+        .map(|p| (p.key.as_str(), p.value.as_str()))
+        .collect();
+
     let res = client
         .request(request.method.into(), &request.url)
+        .query(&query)
         .send()
         .await?;
 

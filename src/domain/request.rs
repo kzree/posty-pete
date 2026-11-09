@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 pub struct Request {
     pub method: HttpMethod,
     pub url: String,
+    pub params: Vec<QueryParam>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct QueryParam {
+    pub enabled: bool,
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
