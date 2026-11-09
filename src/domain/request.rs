@@ -7,6 +7,17 @@ pub struct Request {
     pub params: Vec<KeyValue>,
     pub headers: Vec<KeyValue>,
     pub body: Body,
+    pub auth: Auth,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub enum Auth {
+    #[default]
+    None,
+    /// Sent as a header (`key: value`).
+    ApiKey { key: String, value: String },
+    Basic { username: String, password: String },
+    Bearer { token: String },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

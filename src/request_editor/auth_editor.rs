@@ -1,0 +1,164 @@
+use gpui::{
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Window, div, px,
+};
+use gpui_component::{
+    ActiveTheme, IndexPath, Sizable,
+    form::{field, v_form},
+    h_flex,
+    input::{Input, InputState},
+    searchable_list::SearchableListItem,
+    select::{Select, SelectEvent, SelectState},
+    v_flex,
+};
+
+use crate::domain::request::Auth;
+
+#[derive(Clone, Copy, Default, PartialEq)]
+enum AuthKind {
+    #[default]
+    None,
+    ApiKey,
+    Basic,
+    Bearer,
+}
+
+impl AuthKind {
+    const ALL: [AuthKind; 4] = [Self::None, Self::ApiKey, Self::Basic, Self::Bearer];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "No auth",
+            Self::ApiKey => "API key",
+            Self::Basic => "Basic auth",
+            Self::Bearer => "Bearer token",
+        }
+    }
+}
+
+/// Wraps `AuthKind` for the `Select` (same pattern as `MethodItem`).
+#[derive(Clone)]
+struct AuthKindItem(AuthKind);
+
+impl SearchableListItem for AuthKindItem {
+    type Value = AuthKind;
+
+    fn title(&self) -> SharedString {
+        self.0.label().into()
+    }
+
+    fn value(&self) -> &AuthKind {
+        &self.0
+    }
+}
+
+pub struct AuthEditor {
+    kind: AuthKind,
+    kind_select: Entity<SelectState<Vec<AuthKindItem>>>,
+    api_key_name: Entity<InputState>,
+    api_key_value: Entity<InputState>,
+    username: Entity<InputState>,
+    password: Entity<InputState>,
+    token: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl AuthEditor {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let items = AuthKind::ALL.into_iter().map(AuthKindItem).collect();
+        let kind_select =
+            cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
+
+        let api_key_name = cx.new(|cx| InputState::new(window, cx).placeholder("X-API-Key"));
+        let api_key_value = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
+        let username = cx.new(|cx| InputState::new(window, cx).placeholder("Username"));
+        let password =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Password").masked(true));
+        let token = cx.new(|cx| InputState::new(window, cx).placeholder("Token").masked(true));
+
+        // The panel shows different fields per type, so re-render on change.
+        let sub = cx.subscribe(
+            &kind_select,
+            |this, _, event: &SelectEvent<Vec<AuthKindItem>>, cx| {
+                if let SelectEvent::Confirm(Some(kind)) = event {
+                    this.kind = *kind;
+                    cx.notify();
+                }
+            },
+        );
+
+        Self {
+            kind: AuthKind::default(),
+            kind_select,
+            api_key_name,
+            api_key_value,
+            username,
+            password,
+            token,
+            _subscriptions: vec![sub],
+        }
+    }
+
+    pub fn auth(&self, cx: &App) -> Auth {
+        let text = |input: &Entity<InputState>| input.read(cx).value().to_string();
+        match self.kind {
+            AuthKind::None => Auth::None,
+            AuthKind::ApiKey => Auth::ApiKey {
+                key: text(&self.api_key_name),
+                value: text(&self.api_key_value),
+            },
+            AuthKind::Basic => Auth::Basic {
+                username: text(&self.username),
+                password: text(&self.password),
+            },
+            AuthKind::Bearer => Auth::Bearer {
+                token: text(&self.token),
+            },
+        }
+    }
+}
+
+impl Render for AuthEditor {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+
+        let type_row = h_flex()
+            .flex_none()
+            .gap_2()
+            .child(div().text_sm().text_color(muted).child("Type"))
+            .child(div().w(px(140.)).child(Select::new(&self.kind_select).small()));
+
+        let fields = match self.kind {
+            AuthKind::None => div()
+                .text_sm()
+                .text_color(muted)
+                .child("This request doesn't use authorization.")
+                .into_any_element(),
+            AuthKind::ApiKey => v_form()
+                .child(field().label("Key").child(Input::new(&self.api_key_name).small()))
+                .child(field().label("Value").child(Input::new(&self.api_key_value).small()))
+                .into_any_element(),
+            AuthKind::Basic => v_form()
+                .child(field().label("Username").child(Input::new(&self.username).small()))
+                .child(
+                    field()
+                        .label("Password")
+                        .child(Input::new(&self.password).small().mask_toggle()),
+                )
+                .into_any_element(),
+            AuthKind::Bearer => v_form()
+                .child(
+                    field()
+                        .label("Token")
+                        .child(Input::new(&self.token).small().mask_toggle()),
+                )
+                .into_any_element(),
+        };
+
+        v_flex()
+            .size_full()
+            .gap_3()
+            .child(type_row)
+            .child(div().max_w(px(480.)).child(fields))
+    }
+}

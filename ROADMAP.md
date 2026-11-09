@@ -5,7 +5,9 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## Requests
 
 - [ ] **URL ↔ Params two-way sync.** Typing `?page=2` in the URL fills the Params table, and editing the table rewrites the URL (Postman-style). Parse with the `url` crate and guard against update loops. Today the table is the source of truth and reqwest appends params at send time, so a query string in the URL *and* table params are both sent.
-- [ ] **Authorization tab.** Content for the tab (e.g. Bearer token, Basic auth).
+- [ ] **Auth: API key in query params.** An "Add to: Header / Query params" option, like Postman's.
+- [ ] **Auth: more types.** OAuth 2.0, Digest, AWS Signature.
+- [ ] **Secrets at rest.** Once requests are persisted, don't store passwords and tokens in plain JSON. Use the OS keychain (`keyring` crate) or environment variables.
 - [ ] **Body: more modes.** `x-www-form-urlencoded`, file fields in form-data, more raw kinds (XML, HTML).
 - [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
 - [ ] **Body: Cmd+Enter to send** from the raw editor (`InputEvent::PressEnter { secondary: true, .. }`).

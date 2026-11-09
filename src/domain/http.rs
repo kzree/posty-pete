@@ -4,12 +4,12 @@ use tokio::{runtime::Runtime, task::JoinHandle};
 
 use anyhow::Context as _;
 use reqwest::{
-    header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
     multipart::Form,
 };
 
 use super::{
-    request::{Body, KeyValue, Request},
+    request::{Auth, Body, KeyValue, Request},
     response::Response,
 };
 
@@ -53,6 +53,20 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
     let start = Instant::now();
     let query: Vec<_> = active(&request.params).collect();
     let mut headers = header_map(&request.headers)?;
+    // An Authorization header set in the Headers tab wins over the Auth tab.
+    let user_set_authorization = headers.contains_key(AUTHORIZATION);
+
+    if let Auth::ApiKey { key, value } = &request.auth
+        && !key.is_empty()
+    {
+        let name = HeaderName::from_bytes(key.as_bytes())
+            .with_context(|| format!("invalid API key header name: {key:?}"))?;
+        if !headers.contains_key(&name) {
+            let value = HeaderValue::from_str(value)
+                .with_context(|| format!("invalid API key value for {key:?}"))?;
+            headers.insert(name, value);
+        }
+    }
 
     match &request.body {
         // reqwest sets multipart/form-data with the boundary; a user value would break it.
@@ -69,6 +83,16 @@ pub async fn send(client: reqwest::Client, request: Request) -> anyhow::Result<R
         .request(request.method.into(), &request.url)
         .query(&query)
         .headers(headers);
+
+    let builder = match &request.auth {
+        Auth::Basic { username, password } if !user_set_authorization && !username.is_empty() => {
+            builder.basic_auth(username, Some(password))
+        }
+        Auth::Bearer { token } if !user_set_authorization && !token.is_empty() => {
+            builder.bearer_auth(token)
+        }
+        _ => builder,
+    };
 
     let builder = match request.body {
         Body::None => builder,

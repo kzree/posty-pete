@@ -1,3 +1,4 @@
+mod auth_editor;
 mod body_editor;
 mod method_item;
 mod tabs;
@@ -16,6 +17,7 @@ use gpui_component::{
 };
 
 use crate::{domain::request::Request, ui::key_value_editor::KeyValueEditor};
+use auth_editor::AuthEditor;
 use body_editor::BodyEditor;
 use method_item::MethodItem;
 use tabs::RequestTab;
@@ -31,6 +33,7 @@ pub struct RequestEditor {
     params: Entity<KeyValueEditor>,
     headers: Entity<KeyValueEditor>,
     body: Entity<BodyEditor>,
+    auth: Entity<AuthEditor>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -56,6 +59,7 @@ impl RequestEditor {
         let params = cx.new(|cx| KeyValueEditor::new(window, cx));
         let headers = cx.new(|cx| KeyValueEditor::new(window, cx));
         let body = cx.new(|cx| BodyEditor::new(window, cx));
+        let auth = cx.new(|cx| AuthEditor::new(window, cx));
 
         Self {
             method,
@@ -64,6 +68,7 @@ impl RequestEditor {
             params,
             headers,
             body,
+            auth,
             _subscriptions: vec![sub],
         }
     }
@@ -92,6 +97,7 @@ impl RequestEditor {
             params: self.params.read(cx).values(cx),
             headers: self.headers.read(cx).values(cx),
             body: self.body.read(cx).body(cx),
+            auth: self.auth.read(cx).auth(cx),
         }
     }
 }
@@ -111,7 +117,7 @@ impl Render for RequestEditor {
                 .into_any_element(),
             // The body editor sizes itself (the raw editor fills the height).
             RequestTab::Body => self.body.clone().into_any_element(),
-            RequestTab::Authorization => div().into_any_element(),
+            RequestTab::Authorization => self.auth.clone().into_any_element(),
         };
 
         v_flex()
