@@ -23,6 +23,11 @@ impl StatusBar {
 
 impl Render for StatusBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let toggle_label = if self.left_panel_open {
+            "Close left panel"
+        } else {
+            "Open left panel"
+        };
         div()
             .flex()
             .flex_none()
@@ -38,15 +43,8 @@ impl Render for StatusBar {
                     .ghost()
                     .xsmall()
                     .icon(IconName::PanelLeft)
-                    .tooltip_with_action(
-                        if self.left_panel_open {
-                            "Close left panel"
-                        } else {
-                            "Open left panel"
-                        },
-                        &ToggleSidebar,
-                        Some(WORKSPACE_CONTEXT),
-                    )
+                    .accessibility_label(toggle_label)
+                    .tooltip_with_action(toggle_label, &ToggleSidebar, Some(WORKSPACE_CONTEXT))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleSidebar), cx)),
             )
             .child(
@@ -54,6 +52,7 @@ impl Render for StatusBar {
                     .ghost()
                     .xsmall()
                     .icon(IconName::Settings)
+                    .accessibility_label("Settings")
                     .tooltip_with_action("Settings", &OpenSettings, Some(WORKSPACE_CONTEXT))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
             )

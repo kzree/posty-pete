@@ -38,13 +38,16 @@ impl Row {
 }
 
 pub struct KeyValueEditor {
+    /// Noun for one row in accessible names, e.g. "header".
+    item_name: &'static str,
     rows: Vec<Row>,
     next_row_id: usize,
 }
 
 impl KeyValueEditor {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(item_name: &'static str, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
+            item_name,
             rows: Vec::new(),
             next_row_id: 0,
         };
@@ -70,6 +73,7 @@ impl KeyValueEditor {
                 cx.subscribe_in(input, window, |this, _, event: &InputEvent, window, cx| {
                     if let InputEvent::Change = event {
                         this.ensure_trailing_empty_row(window, cx);
+                        cx.notify();
                     }
                 })
             })
@@ -119,6 +123,12 @@ impl Render for KeyValueEditor {
             .map(|(ix, row)| {
                 let is_trailing = ix == last;
                 let id = row.id;
+                let key = row.key.read(cx).value();
+                let item = if key.is_empty() {
+                    format!("unnamed {}", self.item_name)
+                } else {
+                    format!("{} {key}", self.item_name)
+                };
                 h_flex()
                     .gap_2()
                     .px_1()
@@ -126,6 +136,7 @@ impl Render for KeyValueEditor {
                         this.child(
                             Checkbox::new(("kv-enabled", id))
                                 .checked(row.enabled)
+                                .accessibility_label(format!("Enable {item}"))
                                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                                     if let Some(row) = this.row_mut(id) {
                                         row.enabled = *checked;
@@ -143,6 +154,7 @@ impl Render for KeyValueEditor {
                                 .xsmall()
                                 .icon(IconName::Close)
                                 .tooltip("Remove")
+                                .accessibility_label(format!("Remove {item}"))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.rows.retain(|row| row.id != id);
                                     cx.notify();

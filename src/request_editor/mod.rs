@@ -57,8 +57,8 @@ impl RequestEditor {
             },
         );
 
-        let params = cx.new(|cx| KeyValueEditor::new(window, cx));
-        let headers = cx.new(|cx| KeyValueEditor::new(window, cx));
+        let params = cx.new(|cx| KeyValueEditor::new("parameter", window, cx));
+        let headers = cx.new(|cx| KeyValueEditor::new("header", window, cx));
         let body = cx.new(|cx| BodyEditor::new(window, cx));
         let auth = cx.new(|cx| AuthEditor::new(window, cx));
 

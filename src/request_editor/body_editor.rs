@@ -76,7 +76,7 @@ impl BodyEditor {
         let raw_kind = cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
         let raw =
             cx.new(|cx| EditorState::new(window, cx).language(editor_language(RawKind::default())));
-        let form_data = cx.new(|cx| KeyValueEditor::new(window, cx));
+        let form_data = cx.new(|cx| KeyValueEditor::new("field", window, cx));
 
         let sub = cx.subscribe(
             &raw_kind,

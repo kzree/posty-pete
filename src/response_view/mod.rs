@@ -94,6 +94,7 @@ impl ResponseView {
             .xsmall()
             .icon(Icon::new(LucideIcon::Trash))
             .tooltip("Clear response")
+            .accessibility_label("Clear response")
             .on_click(cx.listener(|this, _, window, cx| this.clear(window, cx)))
     }
     fn render_tab_content(&self, response: &Response, cx: &Context<Self>) -> AnyElement {
