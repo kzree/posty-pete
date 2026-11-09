@@ -66,22 +66,17 @@ impl ResponseView {
     pub fn set_response(
         &mut self,
         response: Result<Response, String>,
+        body_text: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match &response {
-            Ok(resp) => {
-                let language = editor_language(resp.body_format());
-                let text = resp.pretty_body();
-                self.body.update(cx, |state, cx| {
-                    state.set_highlighter(language, cx);
-                    state.set_value(text, window, cx);
-                });
-            }
-            Err(_) => self
-                .body
-                .update(cx, |state, cx| state.set_value("", window, cx)),
-        }
+        let language = response
+            .as_ref()
+            .map_or(BodyFormat::Text, |resp| resp.body_format());
+        self.body.update(cx, |state, cx| {
+            state.set_highlighter(editor_language(language), cx);
+            state.set_value(body_text, window, cx);
+        });
         self.response = Some(response);
         cx.notify();
     }

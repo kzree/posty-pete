@@ -89,9 +89,20 @@ impl BaseLayout {
                             Ok(Err(e)) => Err(format!("{e:#}")),
                             Err(e) => Err(format!("task failed: {e}")),
                         };
+                        let (result, body_text) = cx
+                            .background_executor()
+                            .spawn(async move {
+                                let text = result
+                                    .as_ref()
+                                    .map(|resp| resp.pretty_body())
+                                    .unwrap_or_default();
+                                (result, text)
+                            })
+                            .await;
                         this.update_in(cx, |this, window, cx| {
-                            this.response_view
-                                .update(cx, |view, cx| view.set_response(result, window, cx));
+                            this.response_view.update(cx, |view, cx| {
+                                view.set_response(result, body_text, window, cx)
+                            });
                             this.request_editor
                                 .update(cx, |editor, cx| editor.set_loading(false, cx));
                             GlobalLoading::end(cx);
