@@ -14,6 +14,7 @@ use gpui_component::{
 use crate::domain::request::KeyValue;
 
 struct Row {
+    id: usize,
     enabled: bool,
     key: Entity<InputState>,
     value: Entity<InputState>,
@@ -38,11 +39,15 @@ impl Row {
 
 pub struct KeyValueEditor {
     rows: Vec<Row>,
+    next_row_id: usize,
 }
 
 impl KeyValueEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let mut this = Self { rows: Vec::new() };
+        let mut this = Self {
+            rows: Vec::new(),
+            next_row_id: 0,
+        };
         this.add_row(window, cx);
         this
     }
@@ -70,13 +75,20 @@ impl KeyValueEditor {
             })
             .collect();
 
+        let id = self.next_row_id;
+        self.next_row_id += 1;
         self.rows.push(Row {
+            id,
             enabled: true,
             key,
             value,
             _subscriptions: subscriptions,
         });
         cx.notify();
+    }
+
+    fn row_mut(&mut self, id: usize) -> Option<&mut Row> {
+        self.rows.iter_mut().find(|row| row.id == id)
     }
 
     fn ensure_trailing_empty_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -106,16 +118,19 @@ impl Render for KeyValueEditor {
             .enumerate()
             .map(|(ix, row)| {
                 let is_trailing = ix == last;
+                let id = row.id;
                 h_flex()
                     .gap_2()
                     .px_1()
                     .child(div().w_6().flex_none().when(!is_trailing, |this| {
                         this.child(
-                            Checkbox::new(("kv-enabled", ix))
+                            Checkbox::new(("kv-enabled", id))
                                 .checked(row.enabled)
                                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                                    this.rows[ix].enabled = *checked;
-                                    cx.notify();
+                                    if let Some(row) = this.row_mut(id) {
+                                        row.enabled = *checked;
+                                        cx.notify();
+                                    }
                                 })),
                         )
                     }))
@@ -123,13 +138,13 @@ impl Render for KeyValueEditor {
                     .child(div().flex_1().child(Input::new(&row.value).small()))
                     .child(div().w_6().flex_none().when(!is_trailing, |this| {
                         this.child(
-                            Button::new(("kv-delete", ix))
+                            Button::new(("kv-delete", id))
                                 .ghost()
                                 .xsmall()
                                 .icon(IconName::Close)
                                 .tooltip("Remove")
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.rows.remove(ix);
+                                    this.rows.retain(|row| row.id != id);
                                     cx.notify();
                                 })),
                         )
