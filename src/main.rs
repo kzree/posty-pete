@@ -1,6 +1,6 @@
 use gpui::{
     App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, WindowOptions, div, px, size,
+    Subscription, Task, Window, WindowOptions, div, px, size,
 };
 use gpui_component::{
     ActiveTheme, Root, Theme, ThemeMode, h_resizable, resizable_panel, v_resizable,
@@ -18,8 +18,9 @@ use sidebar::Sidebar;
 use status_bar::StatusBar;
 
 use crate::{
+    domain::http::{self, Response as HttpResponse},
     request_editor::{RequestEditor, RequestEditorEvent},
-    response::Response,
+    response::ResponseView,
 };
 
 const WINDOW_TITLE: &str = "Posty pete";
@@ -29,6 +30,9 @@ const WINDOW_HEIGHT: f32 = 720.;
 
 struct BaseLayout {
     request_editor: Entity<RequestEditor>,
+    client: reqwest::Client,
+    pending: Option<Task<()>>,
+    last_response: Option<Result<HttpResponse, String>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -36,13 +40,29 @@ impl BaseLayout {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let request_editor = cx.new(|cx| RequestEditor::new(window, cx));
 
-        let sub = cx.subscribe(&request_editor, |_this, _editor, event, _cx| match event {
+        let sub = cx.subscribe(&request_editor, |this, _editor, event, cx| match event {
             RequestEditorEvent::SendRequested(request) => {
-                println!("send: {} {}", request.method.as_str(), request.url);
+                let handle = http::spawn_send(this.client.clone(), request.clone());
+                this.pending = Some(cx.spawn(async move |this, cx| {
+                    let result = match handle.await {
+                        Ok(Ok(resp)) => Ok(resp),
+                        Ok(Err(e)) => Err(format!("{e:#}")),
+                        Err(e) => Err(format!("task failed: {e}")),
+                    };
+                    this.update(cx, |this, cx| {
+                        this.last_response = Some(result);
+                        this.pending = None;
+                        cx.notify();
+                    })
+                    .ok();
+                }));
             }
         });
         Self {
             request_editor,
+            client: reqwest::Client::new(),
+            last_response: None,
+            pending: None,
             _subscriptions: vec![sub],
         }
     }
@@ -70,7 +90,10 @@ impl Render for BaseLayout {
                             resizable_panel().child(
                                 v_resizable("request-response")
                                     .child(resizable_panel().child(self.request_editor.clone()))
-                                    .child(resizable_panel().child(Response::new())),
+                                    .child(
+                                        resizable_panel()
+                                            .child(ResponseView::new(self.last_response.clone())),
+                                    ),
                             ),
                         ),
                 ),
