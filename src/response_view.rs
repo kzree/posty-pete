@@ -3,14 +3,35 @@ use gpui::{
     div, relative,
 };
 use gpui_component::{
-    ActiveTheme, h_flex,
+    ActiveTheme, ColorName, Sizable, h_flex,
     input::{Editor, EditorState},
     scroll::ScrollableElement,
     tab::TabBar,
+    tag::Tag,
     v_flex,
 };
 
-use crate::domain::{body_format::BodyFormat, response::Response};
+use crate::domain::{
+    body_format::BodyFormat,
+    response::{Response, StatusClass},
+};
+
+fn status_tag(response: &Response) -> Tag {
+    let color = match response.status_class() {
+        StatusClass::Success => ColorName::Green,
+        StatusClass::Redirect => ColorName::Blue,
+        StatusClass::ClientError => ColorName::Amber,
+        StatusClass::ServerError => ColorName::Red,
+        StatusClass::Informational => ColorName::Gray,
+    };
+    Tag::custom(
+        color.scale(950),
+        color.scale(200),
+        color.scale(800).opacity(0.6),
+    )
+    .small()
+    .child(response.status_text())
+}
 
 /// gpui-component highlighter language for a body format.
 fn editor_language(format: BodyFormat) -> &'static str {
@@ -83,28 +104,30 @@ impl ResponseView {
                 .p_2()
                 .child(Editor::new(&self.body).readonly(true).h(relative(1.)))
                 .into_any_element(),
-            ResponseTab::Headers => div()
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scrollbar()
-                .p_4()
-                .child(v_flex().gap_1().children(response.headers.iter().map(
-                    |(name, value)| {
-                        h_flex()
-                            .gap_4()
-                            .items_start()
-                            .text_sm()
-                            .child(
-                                div()
-                                    .w_48()
-                                    .flex_none()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(name.clone()),
-                            )
-                            .child(div().flex_1().min_w_0().child(value.clone()))
-                    },
-                )))
-                .into_any_element(),
+            ResponseTab::Headers => {
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .p_4()
+                    .child(v_flex().gap_1().children(response.headers.iter().map(
+                        |(name, value)| {
+                            h_flex()
+                                .gap_4()
+                                .items_start()
+                                .text_sm()
+                                .child(
+                                    div()
+                                        .w_48()
+                                        .flex_none()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(name.clone()),
+                                )
+                                .child(div().flex_1().min_w_0().child(value.clone()))
+                        },
+                    )))
+                    .into_any_element()
+            }
         }
     }
 }
@@ -140,15 +163,12 @@ impl Render for ResponseView {
                         }))
                         .children(ResponseTab::ALL.map(ResponseTab::label))
                         .suffix(
-                            div()
-                                .px_3()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(format!(
-                                    "{} · {} ms",
-                                    response.status,
-                                    response.elapsed.as_millis()
-                                )),
+                            h_flex().px_3().gap_2().child(status_tag(response)).child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("{} ms", response.elapsed.as_millis())),
+                            ),
                         ),
                 )
                 .child(self.render_tab_content(response, cx))

@@ -10,7 +10,37 @@ pub struct Response {
     pub elapsed: Duration,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusClass {
+    Informational,
+    Success,
+    Redirect,
+    ClientError,
+    ServerError,
+}
+
 impl Response {
+    pub fn status_class(&self) -> StatusClass {
+        match self.status {
+            200..=299 => StatusClass::Success,
+            300..=399 => StatusClass::Redirect,
+            400..=499 => StatusClass::ClientError,
+            500..=599 => StatusClass::ServerError,
+            _ => StatusClass::Informational,
+        }
+    }
+
+    /// `200 OK`, `404 Not Found`; just the code when there's no standard reason.
+    pub fn status_text(&self) -> String {
+        let reason = reqwest::StatusCode::from_u16(self.status)
+            .ok()
+            .and_then(|code| code.canonical_reason());
+        match reason {
+            Some(reason) => format!("{} {reason}", self.status),
+            None => self.status.to_string(),
+        }
+    }
+
     pub fn content_type(&self) -> Option<&str> {
         self.headers
             .iter()
