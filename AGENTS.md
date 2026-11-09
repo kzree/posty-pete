@@ -10,7 +10,9 @@ Planned scope:
 - Collections of saved requests, request history
 - Environments with `{{variable}}` substitution
 
-Status: early, just scaffolding.
+Status: early. Composing and sending GET-style requests (method, URL, query params) and viewing responses (body with highlighting, headers) works.
+
+**`ROADMAP.md`** lists planned functionality that has been deferred (URL ↔ params sync, global keybindings, the remaining request tabs, theming, etc.). Check it before suggesting new work, so you don't propose something already planned or contradict a recorded decision.
 
 ## Stack
 
@@ -75,3 +77,4 @@ Consult them for gpui and gpui-component questions, but keep in mind:
 - Do not run commands that modify the project (`cargo add`, `cargo fix`, formatters that write, git commits) unless asked. Read-only commands like `cargo check`, `cargo clippy`, `cargo test`, and `cargo tree` are fine.
 - When citing docs, say which version they're for. gpui changes quickly, so check the pinned version in `Cargo.toml`/`Cargo.lock` before giving API advice.
 - Keep reviews focused: real bugs and meaningful improvements first, nitpicks last (or skip them).
+- When work gets deferred ("later", "not now", "out of scope for this change"), suggest an entry for `ROADMAP.md`. Like any other file, only edit it when told to; remove items there once they're done.
