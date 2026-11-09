@@ -25,6 +25,7 @@ impl RequestEditor {
                 Button::new("send")
                     .primary()
                     .label("Send")
+                    .loading(self.loading)
                     .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
             )
     }

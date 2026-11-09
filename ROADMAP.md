@@ -13,8 +13,8 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Body: Cmd+Enter to send** from the raw editor (`InputEvent::PressEnter { secondary: true, .. }`).
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Friendlier TLS errors.** When the error chain contains rustls `InvalidContentType` (server answered in plain HTTP), show a hint: "The server didn't respond with TLS. Did you mean http://?"
-- [ ] **Loading state.** Show progress on the Send button while `BaseLayout::pending` is `Some`.
-- [ ] **Cancel in-flight requests.** Replacing `pending` drops the gpui task, but the request keeps running on tokio.
+- [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `main.rs`) is hard-coded; make it configurable in the Settings tab and per request.
+- [ ] **Cancel in-flight requests.** Send is disabled while a request runs; a Cancel button could take its place. Dropping `pending` alone doesn't stop the request on tokio (abort the `JoinHandle`).
 
 ## Responses
 

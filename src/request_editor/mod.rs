@@ -34,6 +34,7 @@ pub struct RequestEditor {
     headers: Entity<KeyValueEditor>,
     body: Entity<BodyEditor>,
     auth: Entity<AuthEditor>,
+    loading: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -68,12 +69,18 @@ impl RequestEditor {
             headers,
             body,
             auth,
+            loading: false,
             _subscriptions: vec![sub],
         }
     }
 
+    pub fn set_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
+        self.loading = loading;
+        cx.notify();
+    }
+
     fn send(&mut self, cx: &mut Context<Self>) {
-        if self.input_is_empty(cx) {
+        if self.loading || self.input_is_empty(cx) {
             return;
         }
         let req = self.build_request(cx);

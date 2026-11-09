@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use gpui::{
     App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled,
     Subscription, Task, Window, WindowOptions, div, px, size,
@@ -23,9 +25,11 @@ use crate::{
     domain::http,
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
+    ui::loading_bar::{GlobalLoading, LoadingBar},
 };
 
 const WINDOW_TITLE: &str = "Posty pete";
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 const WINDOW_WIDTH: f32 = 1600.;
 const WINDOW_HEIGHT: f32 = 900.;
@@ -41,6 +45,7 @@ struct BaseLayout {
     response_view: Entity<ResponseView>,
     status_bar: Entity<StatusBar>,
     sidebar: Entity<Sidebar>,
+    loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
@@ -56,12 +61,20 @@ impl BaseLayout {
         let left_panel = LeftPanelState::Open;
         let status_bar = cx.new(|_| StatusBar::new(left_panel == LeftPanelState::Open));
         let sidebar = cx.new(|_| Sidebar::default());
+        let loading_bar = cx.new(LoadingBar::new);
 
         let sub = cx.subscribe_in(
             &request_editor,
             window,
             |this, _editor, event, window, cx| match event {
                 RequestEditorEvent::SendRequested(request) => {
+                    if this.pending.is_some() {
+                        return; // the button is disabled too; this is the backstop
+                    }
+                    GlobalLoading::begin(cx);
+                    this.request_editor
+                        .update(cx, |editor, cx| editor.set_loading(true, cx));
+
                     let handle = http::spawn_send(this.client.clone(), request.clone());
                     this.pending = Some(cx.spawn_in(window, async move |this, cx| {
                         let result = match handle.await {
@@ -72,6 +85,9 @@ impl BaseLayout {
                         this.update_in(cx, |this, window, cx| {
                             this.response_view
                                 .update(cx, |view, cx| view.set_response(result, window, cx));
+                            this.request_editor
+                                .update(cx, |editor, cx| editor.set_loading(false, cx));
+                            GlobalLoading::end(cx);
                             this.pending = None;
                         })
                         .ok();
@@ -90,7 +106,11 @@ impl BaseLayout {
             response_view,
             status_bar,
             sidebar,
-            client: reqwest::Client::new(),
+            loading_bar,
+            client: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("failed to build HTTP client"),
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -128,6 +148,13 @@ impl Render for BaseLayout {
             .with_state(&self.request_response_layout)
             .child(resizable_panel().child(self.request_editor.clone()))
             .child(resizable_panel().child(self.response_view.clone()));
+
+        // The loading bar floats over the top of the main area only (not the sidebar).
+        let main_content = div()
+            .relative()
+            .size_full()
+            .child(main_content)
+            .child(self.loading_bar.clone());
 
         // Only build the horizontal split while the sidebar is open: a hidden
         // panel still leaves the next panel's resize handle in place.
