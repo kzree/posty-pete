@@ -45,6 +45,7 @@ impl RequestEditor {
         let method =
             cx.new(|cx| SelectState::new(MethodItem::all(), Some(IndexPath::new(0)), window, cx));
         let url = cx.new(|cx| InputState::new(window, cx).placeholder("https://..."));
+        url.update(cx, |input, cx| input.focus(window, cx));
 
         let sub = cx.subscribe_in(
             &url,

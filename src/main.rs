@@ -1,11 +1,13 @@
 use std::time::Duration;
 
 use gpui::{
-    App, AppContext, Bounds, Context, Entity, IntoElement, ParentElement, Render, Styled,
-    Subscription, Task, Window, WindowOptions, div, px, size,
+    App, AppContext, Bounds, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    ParentElement, Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window,
+    WindowOptions, div, px, size,
 };
 use gpui_component::{
-    ActiveTheme, ResizableState, Root, Theme, ThemeMode, h_resizable, resizable_panel, v_resizable,
+    ActiveTheme, ResizableState, Root, Theme, ThemeMode, h_resizable, input::Escape,
+    resizable_panel, v_resizable,
 };
 use gpui_platform::application;
 
@@ -51,6 +53,8 @@ struct BaseLayout {
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
     request_response_layout: Entity<ResizableState>,
+    /// Focused when clicking empty space or pressing Escape in an input.
+    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -115,6 +119,7 @@ impl BaseLayout {
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
+            focus_handle: cx.focus_handle(),
             _subscriptions: vec![sub, status_sub],
         }
     }
@@ -175,6 +180,15 @@ impl Render for BaseLayout {
         };
 
         div()
+            .id("workspace")
+            .role(Role::Group)
+            .aria_label("Workspace")
+            .track_focus(&self.focus_handle)
+            .key_context("Workspace")
+            // Escape inside an input bubbles up here: move focus off the input.
+            .on_action(cx.listener(|this, _: &Escape, window, cx| {
+                window.focus(&this.focus_handle, cx);
+            }))
             .flex()
             .flex_col()
             .size_full()

@@ -85,7 +85,8 @@ impl ResponseView {
     /// Back to the empty state; also empties the editor so a large body isn't kept around.
     fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.response = None;
-        self.body.update(cx, |state, cx| state.set_value("", window, cx));
+        self.body
+            .update(cx, |state, cx| state.set_value("", window, cx));
         cx.notify();
     }
 
@@ -139,6 +140,7 @@ impl Render for ResponseView {
             None => div()
                 .p_4()
                 .text_color(cx.theme().muted_foreground)
+                .text_sm()
                 .child("Send a request to see the response.")
                 .into_any_element(),
             Some(Err(error)) => h_flex()
