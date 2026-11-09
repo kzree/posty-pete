@@ -69,13 +69,18 @@ impl ResponseView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(resp) = &response {
-            let language = editor_language(resp.body_format());
-            let text = resp.pretty_body();
-            self.body.update(cx, |state, cx| {
-                state.set_highlighter(language, cx);
-                state.set_value(text, window, cx);
-            });
+        match &response {
+            Ok(resp) => {
+                let language = editor_language(resp.body_format());
+                let text = resp.pretty_body();
+                self.body.update(cx, |state, cx| {
+                    state.set_highlighter(language, cx);
+                    state.set_value(text, window, cx);
+                });
+            }
+            Err(_) => self
+                .body
+                .update(cx, |state, cx| state.set_value("", window, cx)),
         }
         self.response = Some(response);
         cx.notify();
