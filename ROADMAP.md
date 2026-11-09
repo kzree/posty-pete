@@ -6,7 +6,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 - [ ] **URL ↔ Params two-way sync.** Typing `?page=2` in the URL fills the Params table, and editing the table rewrites the URL (Postman-style). Parse with the `url` crate and guard against update loops. Today the table is the source of truth and reqwest appends params at send time, so a query string in the URL *and* table params are both sent.
 - [ ] **Authorization tab.** Content for the tab (e.g. Bearer token, Basic auth).
-- [ ] **Headers tab.** Key/value table like Params.
 - [ ] **Body tab.** Editable `Editor` (JSON etc.), form-encoded and multipart bodies. Cmd+Enter should send from a multi-line editor (`InputEvent::PressEnter { secondary: true, .. }`).
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Loading state.** Show progress on the Send button while `BaseLayout::pending` is `Some`.

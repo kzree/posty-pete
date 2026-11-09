@@ -10,7 +10,7 @@ Planned scope:
 - Collections of saved requests, request history
 - Environments with `{{variable}}` substitution
 
-Status: early. Composing and sending GET-style requests (method, URL, query params) and viewing responses (body with highlighting, headers) works.
+Status: early. Composing and sending GET-style requests (method, URL, query params, headers) and viewing responses (body with highlighting, headers) works.
 
 **`ROADMAP.md`** lists planned functionality that has been deferred (URL ↔ params sync, global keybindings, the remaining request tabs, theming, etc.). Check it before suggesting new work, so you don't propose something already planned or contradict a recorded decision.
 
@@ -38,7 +38,7 @@ src/
 ├── response_view  # ResponseView: viewing a response
 ├── sidebar.rs     # Sidebar: collections, history
 ├── status_bar.rs  # StatusBar
-├── ui/            # small shared RenderOnce pieces (badges, pills, etc.)
+├── ui/            # reusable, feature-agnostic components (stateless or stateful)
 └── domain/        # pure Rust: models, HTTP, persistence, env variables
 ```
 
@@ -48,7 +48,7 @@ Rules:
 - **One feature per module, named after its main type.** The module is the snake_case form of the view or component it contains (`RequestEditor` → `request_editor`, `StatusBar` → `status_bar`), and fields holding it use the same name (`request_editor: Entity<RequestEditor>`). A view's struct, `impl Render`, events (`EventEmitter`) and actions live together in its module. Start as a single file (`request_editor.rs`) and split it into a folder (`request_editor/mod.rs` + sub-files) only when it grows.
 - **Views own UI state; models live in `domain/`.** For example, `RequestEditor` holds `Entity<InputState>`s and builds a `domain::Request` from them. Domain types never depend on widget types.
 - **Children emit events and parents wire them up.** Sibling views don't reach into each other; `Workspace` (`app.rs`) subscribes to child events and coordinates.
-- **Use `Entity` + `Render` for components with lasting state, and `RenderOnce` or plain functions for presentation.** Shared presentational pieces go in `ui/`; ones used by a single feature stay in that feature's folder.
+- **Use `Entity` + `Render` for components with lasting state, and `RenderOnce` or plain functions for presentation.** Components that aren't tied to a feature go in `ui/`, whether they're views or `RenderOnce` (e.g. `ui::key_value_editor::KeyValueEditor`). Anything only one feature uses stays in that feature's folder until a second user shows up. `ui/` must not depend on feature modules (`request_editor`, `response_view`, ...); it may use `domain/` types.
 
 When reviewing, flag violations of these rules, especially gpui imports in `domain/`.
 

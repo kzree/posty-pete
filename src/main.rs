@@ -14,6 +14,7 @@ mod request_editor;
 mod response_view;
 mod sidebar;
 mod status_bar;
+mod ui;
 
 use sidebar::Sidebar;
 use status_bar::{StatusBar, StatusBarEvent};

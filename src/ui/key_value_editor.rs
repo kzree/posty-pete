@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Styled, Subscription, Window,
-    div, prelude::FluentBuilder,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
+    Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     ActiveTheme, IconName, Sizable,
@@ -11,11 +11,9 @@ use gpui_component::{
     v_flex,
 };
 
-use super::RequestEditor;
-use crate::domain::request::QueryParam;
+use crate::domain::request::KeyValue;
 
-/// One editable row in the Params table.
-pub(super) struct ParamRow {
+struct Row {
     enabled: bool,
     key: Entity<InputState>,
     value: Entity<InputState>,
@@ -23,15 +21,15 @@ pub(super) struct ParamRow {
     _subscriptions: Vec<Subscription>,
 }
 
-impl ParamRow {
-    pub(super) fn is_empty(&self, cx: &App) -> bool {
+impl Row {
+    fn is_empty(&self, cx: &App) -> bool {
         [&self.key, &self.value]
             .iter()
             .all(|input| input.read(cx).value().is_empty())
     }
 
-    pub(super) fn to_param(&self, cx: &App) -> QueryParam {
-        QueryParam {
+    fn to_key_value(&self, cx: &App) -> KeyValue {
+        KeyValue {
             enabled: self.enabled,
             key: self.key.read(cx).value().to_string(),
             value: self.value.read(cx).value().to_string(),
@@ -39,8 +37,28 @@ impl ParamRow {
     }
 }
 
-impl RequestEditor {
-    pub(super) fn add_param_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+/// Postman-style editable key/value table. A trailing empty row is always kept.
+pub struct KeyValueEditor {
+    rows: Vec<Row>,
+}
+
+impl KeyValueEditor {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut this = Self { rows: Vec::new() };
+        this.add_row(window, cx);
+        this
+    }
+
+    /// Every non-empty row, disabled ones included (the sender filters those).
+    pub fn values(&self, cx: &App) -> Vec<KeyValue> {
+        self.rows
+            .iter()
+            .filter(|row| !row.is_empty(cx))
+            .map(|row| row.to_key_value(cx))
+            .collect()
+    }
+
+    fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = cx.new(|cx| InputState::new(window, cx).placeholder("Key"));
         let value = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
 
@@ -56,7 +74,7 @@ impl RequestEditor {
             })
             .collect();
 
-        self.params.push(ParamRow {
+        self.rows.push(Row {
             enabled: true,
             key,
             value,
@@ -66,14 +84,15 @@ impl RequestEditor {
     }
 
     fn ensure_trailing_empty_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let needs_row = self.params.last().is_none_or(|row| !row.is_empty(cx));
-        if needs_row {
-            self.add_param_row(window, cx);
+        if self.rows.last().is_none_or(|row| !row.is_empty(cx)) {
+            self.add_row(window, cx);
         }
     }
+}
 
-    pub(super) fn render_params(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let last = self.params.len().saturating_sub(1);
+impl Render for KeyValueEditor {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let last = self.rows.len().saturating_sub(1);
 
         let header = h_flex()
             .gap_2()
@@ -86,7 +105,7 @@ impl RequestEditor {
             .child(div().w_6().flex_none());
 
         let rows = self
-            .params
+            .rows
             .iter()
             .enumerate()
             .map(|(ix, row)| {
@@ -96,10 +115,10 @@ impl RequestEditor {
                     .px_1()
                     .child(div().w_6().flex_none().when(!is_trailing, |this| {
                         this.child(
-                            Checkbox::new(("param-enabled", ix))
+                            Checkbox::new(("kv-enabled", ix))
                                 .checked(row.enabled)
                                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                                    this.params[ix].enabled = *checked;
+                                    this.rows[ix].enabled = *checked;
                                     cx.notify();
                                 })),
                         )
@@ -108,13 +127,13 @@ impl RequestEditor {
                     .child(div().flex_1().child(Input::new(&row.value).small()))
                     .child(div().w_6().flex_none().when(!is_trailing, |this| {
                         this.child(
-                            Button::new(("param-delete", ix))
+                            Button::new(("kv-delete", ix))
                                 .ghost()
                                 .xsmall()
                                 .icon(IconName::Close)
                                 .tooltip("Remove")
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.params.remove(ix);
+                                    this.rows.remove(ix);
                                     cx.notify();
                                 })),
                         )

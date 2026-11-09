@@ -4,11 +4,13 @@ use serde::{Deserialize, Serialize};
 pub struct Request {
     pub method: HttpMethod,
     pub url: String,
-    pub params: Vec<QueryParam>,
+    pub params: Vec<KeyValue>,
+    pub headers: Vec<KeyValue>,
 }
 
+/// One row of a key/value table (query params, headers, ...).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct QueryParam {
+pub struct KeyValue {
     pub enabled: bool,
     pub key: String,
     pub value: String,

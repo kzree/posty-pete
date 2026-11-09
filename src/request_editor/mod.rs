@@ -1,5 +1,4 @@
 mod method_item;
-mod params;
 mod tabs;
 mod url_bar;
 
@@ -15,9 +14,8 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::domain::request::Request;
+use crate::{domain::request::Request, ui::key_value_editor::KeyValueEditor};
 use method_item::MethodItem;
-use params::ParamRow;
 use tabs::RequestTab;
 
 pub enum RequestEditorEvent {
@@ -28,7 +26,8 @@ pub struct RequestEditor {
     method: Entity<SelectState<Vec<MethodItem>>>,
     url: Entity<InputState>,
     active_tab: RequestTab,
-    params: Vec<ParamRow>,
+    params: Entity<KeyValueEditor>,
+    headers: Entity<KeyValueEditor>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -51,15 +50,17 @@ impl RequestEditor {
             },
         );
 
-        let mut this = Self {
+        let params = cx.new(|cx| KeyValueEditor::new(window, cx));
+        let headers = cx.new(|cx| KeyValueEditor::new(window, cx));
+
+        Self {
             method,
             url,
             active_tab: RequestTab::Params,
-            params: Vec::new(),
+            params,
+            headers,
             _subscriptions: vec![sub],
-        };
-        this.add_param_row(window, cx);
-        this
+        }
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
@@ -83,12 +84,8 @@ impl RequestEditor {
                 .copied()
                 .unwrap_or_default(),
             url: self.url.read(cx).value().into(),
-            params: self
-                .params
-                .iter()
-                .filter(|row| !row.is_empty(cx))
-                .map(|row| row.to_param(cx))
-                .collect(),
+            params: self.params.read(cx).values(cx),
+            headers: self.headers.read(cx).values(cx),
         }
     }
 }
@@ -96,7 +93,8 @@ impl RequestEditor {
 impl Render for RequestEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match self.active_tab {
-            RequestTab::Params => self.render_params(cx).into_any_element(),
+            RequestTab::Params => self.params.clone().into_any_element(),
+            RequestTab::Headers => self.headers.clone().into_any_element(),
             // Other tabs come later.
             _ => div().into_any_element(),
         };
