@@ -3,7 +3,9 @@ use gpui::{
     div, relative,
 };
 use gpui_component::{
-    ActiveTheme, h_flex,
+    ActiveTheme, Icon, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
     input::{Editor, EditorState},
     scroll::ScrollableElement,
     tab::TabBar,
@@ -13,6 +15,7 @@ use gpui_component::{
 mod status_tag;
 
 use crate::domain::{body_format::BodyFormat, response::Response};
+use gpui_kit_assets::IconName as LucideIcon;
 use status_tag::status_tag;
 
 /// gpui-component highlighter language for a body format.
@@ -78,6 +81,22 @@ impl ResponseView {
         self.response = Some(response);
         cx.notify();
     }
+
+    /// Back to the empty state; also empties the editor so a large body isn't kept around.
+    fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.response = None;
+        self.body.update(cx, |state, cx| state.set_value("", window, cx));
+        cx.notify();
+    }
+
+    fn clear_button(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("clear-response")
+            .ghost()
+            .xsmall()
+            .icon(Icon::new(LucideIcon::Trash))
+            .tooltip("Clear response")
+            .on_click(cx.listener(|this, _, window, cx| this.clear(window, cx)))
+    }
     fn render_tab_content(&self, response: &Response, cx: &Context<Self>) -> AnyElement {
         match self.active_tab {
             ResponseTab::Body => div()
@@ -122,10 +141,18 @@ impl Render for ResponseView {
                 .text_color(cx.theme().muted_foreground)
                 .child("Send a request to see the response.")
                 .into_any_element(),
-            Some(Err(error)) => div()
+            Some(Err(error)) => h_flex()
+                .items_start()
+                .gap_2()
                 .p_4()
-                .text_color(cx.theme().danger)
-                .child(format!("Request failed: {error}"))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_color(cx.theme().danger)
+                        .child(format!("Request failed: {error}")),
+                )
+                .child(self.clear_button(cx))
                 .into_any_element(),
             Some(Ok(response)) => v_flex()
                 .size_full()
@@ -144,14 +171,25 @@ impl Render for ResponseView {
                             cx.notify();
                         }))
                         .children(ResponseTab::ALL.map(ResponseTab::label))
-                        .suffix(
-                            h_flex().px_3().gap_2().child(status_tag(response)).child(
-                                div()
-                                    .text_sm()
+                        .suffix({
+                            let separator = || {
+                                Icon::new(LucideIcon::Dot)
+                                    .xsmall()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(format!("{} ms", response.elapsed.as_millis())),
-                            ),
-                        ),
+                            };
+                            h_flex()
+                                .gap_1()
+                                .child(status_tag(response))
+                                .child(separator())
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(format!("{} ms", response.elapsed.as_millis())),
+                                )
+                                .child(separator())
+                                .child(self.clear_button(cx))
+                        }),
                 )
                 .child(self.render_tab_content(response, cx))
                 .into_any_element(),
