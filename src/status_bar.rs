@@ -1,5 +1,8 @@
 use gpui::{App, IntoElement, ParentElement, RenderOnce, Styled, Window, div};
-use gpui_component::ActiveTheme;
+use gpui_component::{
+    ActiveTheme, IconName, Sizable,
+    button::{Button, ButtonVariants},
+};
 
 /// The bar along the bottom of the window.
 #[derive(IntoElement)]
@@ -23,5 +26,16 @@ impl RenderOnce for StatusBar {
             .border_color(cx.theme().status_bar_border)
             .bg(cx.theme().status_bar)
             .child("Status bar")
+            .child(div().flex_1())
+            .child(
+                Button::new("settings")
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Settings)
+                    .tooltip("Settings")
+                    .on_click(|_, _, _| {
+                        println!("open settings");
+                    }),
+            )
     }
 }

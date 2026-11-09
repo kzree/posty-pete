@@ -1,12 +1,12 @@
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Window, div, px,
+    SharedString, Styled, Subscription, Window, div, px,
 };
 use gpui_component::{
     IndexPath,
     button::{Button, ButtonVariants},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     searchable_list::SearchableListItem,
     select::{Select, SelectState},
     v_flex,
@@ -36,6 +36,7 @@ impl SearchableListItem for MethodItem {
 pub struct RequestEditor {
     method: Entity<SelectState<Vec<MethodItem>>>,
     url: Entity<InputState>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<RequestEditorEvent> for RequestEditor {}
@@ -46,7 +47,26 @@ impl RequestEditor {
         let method = cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
         let url = cx.new(|cx| InputState::new(window, cx).placeholder("https://..."));
 
-        Self { method, url }
+        let sub = cx.subscribe_in(
+            &url,
+            window,
+            |this, _url, event: &InputEvent, _window, cx| {
+                if let InputEvent::PressEnter { .. } = event {
+                    this.send(cx);
+                }
+            },
+        );
+
+        Self {
+            method,
+            url,
+            _subscriptions: vec![sub],
+        }
+    }
+
+    fn send(&mut self, cx: &mut Context<Self>) {
+        let req = self.build_request(cx);
+        cx.emit(RequestEditorEvent::SendRequested(req));
     }
 
     fn build_request(&self, cx: &App) -> Request {
@@ -79,10 +99,7 @@ impl Render for RequestEditor {
                     Button::new("send")
                         .primary()
                         .label("Send")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            let req = this.build_request(cx);
-                            cx.emit(RequestEditorEvent::SendRequested(req));
-                        })),
+                        .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
                 ),
         )
     }
