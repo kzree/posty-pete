@@ -3,7 +3,7 @@ use std::{borrow::Cow, net::IpAddr};
 /// Adds a scheme when the URL has none: `http://` for local addresses, `https://` otherwise.
 pub fn with_default_scheme(input: &str) -> Cow<'_, str> {
     let input = input.trim();
-    if input.contains("://") {
+    if has_scheme(input) {
         return Cow::Borrowed(input);
     }
     let scheme = if is_local(authority(input)) {
@@ -12,6 +12,15 @@ pub fn with_default_scheme(input: &str) -> Cow<'_, str> {
         "https"
     };
     Cow::Owned(format!("{scheme}://{input}"))
+}
+
+fn has_scheme(input: &str) -> bool {
+    let Some((scheme, _)) = input.split_once("://") else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
 fn authority(input: &str) -> &str {
@@ -89,6 +98,35 @@ mod tests {
                 format!("https://{input}"),
                 "{input}"
             );
+        }
+    }
+
+    #[test]
+    fn nested_urls_do_not_count_as_scheme() {
+        for (input, scheme) in [
+            ("localhost:4000/?next=https://example.com", "http"),
+            ("example.com/callback?next=https://other.example", "https"),
+            ("example.com/proxy/https://other.example/x", "https"),
+            ("127.0.0.1:8080/redirect/http://example.com", "http"),
+            ("example.com/page#https://other.example", "https"),
+            ("user:pass@localhost:4000/?u=ftp://x", "http"),
+        ] {
+            assert_eq!(
+                with_default_scheme(input),
+                format!("{scheme}://{input}"),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_other_valid_schemes() {
+        for input in [
+            "HTTPS://example.com",
+            "ws://localhost:4000",
+            "svn+ssh://host/x",
+        ] {
+            assert_eq!(with_default_scheme(input), input, "{input}");
         }
     }
 
