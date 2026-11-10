@@ -1,17 +1,22 @@
+use std::rc::Rc;
+
 use gpui::{
-    App, ClickEvent, HighlightStyle, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, RenderOnce, SharedString, Styled, StyledText, Window, div, prelude::FluentBuilder, px,
+    AnyElement, App, ClickEvent, ElementId, HighlightStyle, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, RenderOnce, SharedString, Styled, StyledText, Window, div,
+    prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, TITLE_BAR_HEIGHT, TitleBar,
     button::{Button, ButtonVariants},
     h_flex,
+    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
 use crate::actions::{GoBack, GoForward, NewRequest, WORKSPACE_CONTEXT};
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+type SelectHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
 const CONTEXT_SEPARATOR: &str = " / ";
 
@@ -34,6 +39,14 @@ impl WindowTitle {
         Self {
             context: Some(context.into()),
             name: name.into(),
+        }
+    }
+
+    /// The title as plain text, e.g. "My API / Get users".
+    pub fn label(&self) -> String {
+        match &self.context {
+            Some(context) => format!("{context}{CONTEXT_SEPARATOR}{}", self.name),
+            None => self.name.to_string(),
         }
     }
 
@@ -117,6 +130,39 @@ pub struct WindowTitleBar {
     on_back: Option<ClickHandler>,
     on_forward: Option<ClickHandler>,
     on_new_request: Option<ClickHandler>,
+    back_menu: Option<HistoryMenu>,
+    forward_menu: Option<HistoryMenu>,
+}
+
+/// The entries a right-click on back or forward lists.
+struct HistoryMenu {
+    labels: Vec<SharedString>,
+    on_select: SelectHandler,
+}
+
+impl HistoryMenu {
+    fn new(
+        labels: Vec<SharedString>,
+        on_select: impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            labels,
+            on_select: Rc::new(on_select),
+        }
+    }
+
+    fn build(&self, menu: PopupMenu) -> PopupMenu {
+        self.labels
+            .iter()
+            .enumerate()
+            .fold(menu.scrollable(true), |menu, (ix, label)| {
+                let on_select = self.on_select.clone();
+                menu.item(
+                    PopupMenuItem::new(label.clone())
+                        .on_click(move |_, window, cx| on_select(ix, window, cx)),
+                )
+            })
+    }
 }
 
 impl WindowTitleBar {
@@ -129,6 +175,8 @@ impl WindowTitleBar {
             on_back: None,
             on_forward: None,
             on_new_request: None,
+            back_menu: None,
+            forward_menu: None,
         }
     }
 
@@ -164,6 +212,26 @@ impl WindowTitleBar {
         self
     }
 
+    /// Entries listed on a right-click on back; `on_select` gets the chosen index.
+    pub fn back_menu(
+        mut self,
+        labels: Vec<SharedString>,
+        on_select: impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.back_menu = Some(HistoryMenu::new(labels, on_select));
+        self
+    }
+
+    /// Entries listed on a right-click on forward; `on_select` gets the chosen index.
+    pub fn forward_menu(
+        mut self,
+        labels: Vec<SharedString>,
+        on_select: impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.forward_menu = Some(HistoryMenu::new(labels, on_select));
+        self
+    }
+
     pub fn on_new_request(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -177,6 +245,23 @@ fn with_click(button: Button, handler: Option<ClickHandler>) -> Button {
     match handler {
         Some(handler) => button.on_click(handler),
         None => button,
+    }
+}
+
+/// Wraps `button` rather than attaching the menu to it: an open menu becomes a
+/// child of its element, which would cost an icon button its square size.
+fn with_history_menu(
+    id: impl Into<ElementId>,
+    button: Button,
+    menu: Option<HistoryMenu>,
+) -> AnyElement {
+    match menu.filter(|menu| !menu.labels.is_empty()) {
+        Some(menu) => div()
+            .id(id)
+            .child(button)
+            .context_menu(move |popup, _, _| menu.build(popup))
+            .into_any_element(),
+        None => button.into_any_element(),
     }
 }
 
@@ -246,10 +331,20 @@ impl RenderOnce for WindowTitleBar {
                         .id("title-bar-nav")
                         .h_full()
                         .gap_1()
-                        // Keeps a click on a button from starting a window drag.
+                        // Keeps a click on a button from starting a window drag, and
+                        // a right-click from opening the Linux window menu.
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(with_click(back, self.on_back))
-                        .child(with_click(forward, self.on_forward))
+                        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                        .child(with_history_menu(
+                            "go-back-menu",
+                            with_click(back, self.on_back),
+                            self.back_menu,
+                        ))
+                        .child(with_history_menu(
+                            "go-forward-menu",
+                            with_click(forward, self.on_forward),
+                            self.forward_menu,
+                        ))
                         .child(with_click(home, self.on_new_request)),
                 ),
         )
@@ -279,6 +374,15 @@ mod tests {
     #[test]
     fn nav_width_matches_small_icon_buttons() {
         assert_eq!(nav_width(px(16.)), px(80.));
+    }
+
+    #[test]
+    fn label_joins_context_and_name() {
+        assert_eq!(
+            WindowTitle::with_context("My API", "Get users").label(),
+            "My API / Get users"
+        );
+        assert_eq!(WindowTitle::new("Settings").label(), "Settings");
     }
 
     #[test]

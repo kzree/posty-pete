@@ -775,6 +775,8 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let main_content = self.routes(cx);
+        let (back_labels, on_back_select) = self.history_menu(Direction::Back, cx);
+        let (forward_labels, on_forward_select) = self.history_menu(Direction::Forward, cx);
 
         // A hidden panel would still leave its resize handle behind.
         let body = if self.left_panel == LeftPanelState::Open {
@@ -861,6 +863,8 @@ impl Render for Workspace {
                     .on_forward(
                         cx.listener(|this, _, window, cx| this.go(Direction::Forward, window, cx)),
                     )
+                    .back_menu(back_labels, on_back_select)
+                    .forward_menu(forward_labels, on_forward_select)
                     .on_new_request(
                         cx.listener(|this, _, window, cx| this.new_request(window, cx)),
                     ),

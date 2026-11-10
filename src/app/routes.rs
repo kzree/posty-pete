@@ -82,6 +82,8 @@ impl EditorContent {
     }
 }
 
+const HISTORY_MENU_LIMIT: usize = 15;
+
 pub(super) type RouteHistory = NavHistory<AppRoute>;
 
 impl Workspace {
@@ -144,6 +146,21 @@ impl Workspace {
         else {
             return;
         };
+        self.go_to(direction, steps, target, window, cx);
+    }
+
+    /// Moves `steps` entries in `direction`, if that still leads to `target`.
+    fn go_to(
+        &mut self,
+        direction: Direction,
+        steps: usize,
+        target: AppRoute,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.leads_to(direction, steps, target, cx) {
+            return;
+        }
         if !self.loads_into_editor(target) {
             self.move_in_history(direction, steps, window, cx);
             return;
@@ -153,17 +170,54 @@ impl Workspace {
         }
         self.confirm_discard(
             move |this, window, cx| {
-                let still = this
-                    .route_history
-                    .peek(direction, |route| this.route_exists(*route, cx))
-                    .map(|(steps, route)| (steps, *route));
-                if still == Some((steps, target)) {
+                if this.leads_to(direction, steps, target, cx) {
                     this.move_in_history(direction, steps, window, cx);
                 }
             },
             window,
             cx,
         );
+    }
+
+    fn leads_to(&self, direction: Direction, steps: usize, target: AppRoute, cx: &App) -> bool {
+        self.route_history
+            .targets(direction, |route| self.route_exists(*route, cx))
+            .any(|entry| entry == (steps, &target))
+    }
+
+    /// Labels for the right-click menu on back or forward, and a handler that
+    /// jumps to the chosen entry.
+    pub(super) fn history_menu(
+        &self,
+        direction: Direction,
+        cx: &mut Context<Self>,
+    ) -> (
+        Vec<SharedString>,
+        impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) {
+        let collections = self.collections.read(cx).all();
+        let targets: Vec<(usize, AppRoute)> = self
+            .route_history
+            .list(
+                direction,
+                |route| self.route_exists(*route, cx),
+                HISTORY_MENU_LIMIT,
+            )
+            .into_iter()
+            .map(|(steps, route)| (steps, *route))
+            .collect();
+        let labels = targets
+            .iter()
+            .map(|(_, route)| route_title(*route, collections).label().into())
+            .collect();
+        let select = cx.listener(move |this, ix: &usize, window, cx| {
+            if let Some(&(steps, target)) = targets.get(*ix) {
+                this.go_to(direction, steps, target, window, cx);
+            }
+        });
+        (labels, move |ix, window: &mut Window, cx: &mut App| {
+            select(&ix, window, cx)
+        })
     }
 
     fn move_in_history(

@@ -68,28 +68,46 @@ impl<T: PartialEq> NavHistory<T> {
         self.entries[self.index] = entry;
     }
 
-    /// Finds the nearest entry in `direction` that is `usable` and differs from
-    /// the current one, and returns how many steps away it is.
+    /// The entries in `direction` that are `usable` and differ from the current
+    /// one, nearest first, with how many steps away each is.
+    pub(super) fn targets(
+        &self,
+        direction: Direction,
+        usable: impl Fn(&T) -> bool,
+    ) -> impl Iterator<Item = (usize, &T)> {
+        let current = self.current();
+        let available = match direction {
+            Direction::Back => self.index,
+            Direction::Forward => self.entries.len() - 1 - self.index,
+        };
+        (1..=available)
+            .map(move |steps| {
+                let index = match direction {
+                    Direction::Back => self.index - steps,
+                    Direction::Forward => self.index + steps,
+                };
+                (steps, &self.entries[index])
+            })
+            .filter(move |(_, entry)| *entry != current && usable(entry))
+    }
+
+    /// Up to `limit` of the `targets` in `direction`.
+    pub(super) fn list(
+        &self,
+        direction: Direction,
+        usable: impl Fn(&T) -> bool,
+        limit: usize,
+    ) -> Vec<(usize, &T)> {
+        self.targets(direction, usable).take(limit).collect()
+    }
+
+    /// The nearest of the `targets` in `direction`.
     pub(super) fn peek(
         &self,
         direction: Direction,
         usable: impl Fn(&T) -> bool,
     ) -> Option<(usize, &T)> {
-        let current = self.current();
-        let is_target = |entry: &&T| *entry != current && usable(entry);
-        match direction {
-            Direction::Back => self.entries[..self.index]
-                .iter()
-                .rev()
-                .enumerate()
-                .find(|(_, entry)| is_target(entry))
-                .map(|(i, entry)| (i + 1, entry)),
-            Direction::Forward => self.entries[self.index + 1..]
-                .iter()
-                .enumerate()
-                .find(|(_, entry)| is_target(entry))
-                .map(|(i, entry)| (i + 1, entry)),
-        }
+        self.targets(direction, usable).next()
     }
 
     pub(super) fn can_go(&self, direction: Direction, usable: impl Fn(&T) -> bool) -> bool {
@@ -210,6 +228,59 @@ mod tests {
 
         assert_eq!(*history.current(), "/");
         assert!(!history.can_go(Direction::Back, any));
+    }
+
+    #[test]
+    fn list_orders_entries_nearest_first() {
+        let mut history = NavHistory::new("/");
+        for entry in ["a", "b", "c", "d"] {
+            history.push(entry);
+        }
+        history.go(Direction::Back, 2);
+
+        assert_eq!(
+            history.list(Direction::Back, any, 15),
+            vec![(1, &"a"), (2, &"/")]
+        );
+        assert_eq!(
+            history.list(Direction::Forward, any, 15),
+            vec![(1, &"c"), (2, &"d")]
+        );
+    }
+
+    #[test]
+    fn list_skips_unusable_entries_and_the_current_one() {
+        let mut history = NavHistory::new("/");
+        for entry in ["gone", "a", "b", "/", "also-gone", "c"] {
+            history.push(entry);
+        }
+        history.go(Direction::Back, 2);
+        let usable = |entry: &&str| !entry.ends_with("gone");
+
+        assert_eq!(*history.current(), "/");
+        assert_eq!(
+            history.list(Direction::Back, usable, 15),
+            vec![(1, &"b"), (2, &"a")]
+        );
+        assert_eq!(
+            history.list(Direction::Forward, usable, 15),
+            vec![(2, &"c")]
+        );
+    }
+
+    #[test]
+    fn list_stops_at_the_limit() {
+        let mut history = NavHistory::new(0);
+        for i in 1..=20 {
+            history.push(i);
+        }
+
+        let listed = history.list(Direction::Back, |_| true, 15);
+        assert_eq!(listed.len(), 15);
+        assert_eq!(listed[0], (1, &19));
+        assert_eq!(listed[14], (15, &5));
+        assert!(history.list(Direction::Forward, |_| true, 15).is_empty());
+        assert!(history.list(Direction::Back, |_| true, 0).is_empty());
     }
 
     #[test]
