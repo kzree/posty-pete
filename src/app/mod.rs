@@ -62,6 +62,7 @@ pub struct Workspace {
     client: reqwest::Client,
     history: Entity<History>,
     collections: Entity<Collections>,
+    current_route: AppRoute,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -121,6 +122,7 @@ impl Workspace {
                 .expect("failed to build HTTP client"),
             history,
             collections,
+            current_route: AppRoute::Request,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -218,6 +220,14 @@ impl Workspace {
                 self.collections.update(cx, |collections, cx| {
                     collections.rename(collection_id, item_id, name, cx)
                 });
+            }
+            LibraryPanelEvent::DeleteCollection(id) => {
+                let id = *id;
+                if self.current_route == AppRoute::Collection(id) {
+                    self.navigate(AppRoute::Request, window, cx);
+                }
+                self.collections
+                    .update(cx, |collections, cx| collections.delete(id, cx));
             }
         }
     }

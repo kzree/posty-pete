@@ -22,7 +22,10 @@ use crate::{
         collection::{Collection, Item},
         request::HttpMethod,
     },
-    ui::{method_label::method_label, rename_dialog::open_rename_dialog},
+    ui::{
+        confirm_dialog::open_confirm_dialog, method_label::method_label,
+        rename_dialog::open_rename_dialog,
+    },
 };
 
 pub enum LibraryPanelEvent {
@@ -34,6 +37,7 @@ pub enum LibraryPanelEvent {
         item_id: Uuid,
         name: String,
     },
+    DeleteCollection(Uuid),
 }
 
 pub struct LibraryPanel {
@@ -99,6 +103,27 @@ impl LibraryPanel {
                             name,
                         })
                     })
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn delete_collection(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.list.read(cx).delegate().collection_name(id) else {
+            return;
+        };
+        let panel = cx.weak_entity();
+        open_confirm_dialog(
+            "Delete collection?",
+            format!(
+                "“{name}” and all of its folders and requests will be deleted. This can't be undone."
+            ),
+            "Delete",
+            move |_, cx| {
+                panel
+                    .update(cx, |_, cx| cx.emit(LibraryPanelEvent::DeleteCollection(id)))
                     .ok();
             },
             window,
@@ -188,20 +213,28 @@ fn context_menu(
         })
         .detach();
 
-    let panel = panel.clone();
+    let (rename_panel, delete_panel) = (panel.clone(), panel.clone());
     menu.item(PopupMenuItem::new("Add request").disabled(true))
         .item(PopupMenuItem::new("Add folder").disabled(true))
         .separator()
         .item(
             PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
-                panel
+                rename_panel
                     .update(cx, |panel, cx| {
                         panel.rename_collection(collection_id, window, cx)
                     })
                     .ok();
             }),
         )
-        .item(PopupMenuItem::new("Delete…").disabled(true))
+        .item(
+            PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
+                delete_panel
+                    .update(cx, |panel, cx| {
+                        panel.delete_collection(collection_id, window, cx)
+                    })
+                    .ok();
+            }),
+        )
 }
 
 struct LibraryDelegate {

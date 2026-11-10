@@ -164,7 +164,6 @@ impl Collections {
         }
     }
 
-    #[expect(dead_code, reason = "used by delete collection (task 12)")]
     pub fn delete(&mut self, collection_id: Uuid, cx: &mut Context<Self>) {
         let Some(index) = self.collections.iter().position(|c| c.id == collection_id) else {
             return;

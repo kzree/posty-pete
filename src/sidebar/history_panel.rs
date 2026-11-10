@@ -7,8 +7,8 @@ use gpui::{
     WeakEntity, Window, div,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, IconName, IndexPath, Sizable, StyledExt, WindowExt,
-    button::{Button, ButtonVariant, ButtonVariants},
+    ActiveTheme, Disableable, Icon, IconName, IndexPath, Sizable, StyledExt,
+    button::{Button, ButtonVariants},
     h_flex,
     list::{List, ListDelegate, ListEvent, ListItem, ListState},
     menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
@@ -22,7 +22,10 @@ use super::panel_header;
 use crate::{
     actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
     domain::history::{self, HistorySummary, OpenMode, Outcome},
-    ui::{clipboard::copy_with_notification, method_label::method_label, status_tag::status_tag},
+    ui::{
+        clipboard::copy_with_notification, confirm_dialog::open_confirm_dialog,
+        method_label::method_label, status_tag::status_tag,
+    },
 };
 
 pub enum HistoryPanelEvent {
@@ -145,25 +148,22 @@ impl HistoryPanel {
 
     fn confirm_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.list.read(cx).delegate().entries.len();
-        let panel = cx.entity().downgrade();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let panel = panel.clone();
-            alert
-                .title("Clear history?")
-                .description(format!(
-                    "{} will be deleted. This can't be undone.",
-                    request_count(count)
-                ))
-                .show_cancel(true)
-                .ok_text("Clear")
-                .ok_variant(ButtonVariant::Danger)
-                .on_ok(move |_, _, cx| {
-                    panel
-                        .update(cx, |_, cx| cx.emit(HistoryPanelEvent::Clear))
-                        .ok();
-                    true
-                })
-        });
+        let panel = cx.weak_entity();
+        open_confirm_dialog(
+            "Clear history?",
+            format!(
+                "{} will be deleted. This can't be undone.",
+                request_count(count)
+            ),
+            "Clear",
+            move |_, cx| {
+                panel
+                    .update(cx, |_, cx| cx.emit(HistoryPanelEvent::Clear))
+                    .ok();
+            },
+            window,
+            cx,
+        );
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
