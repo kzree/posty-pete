@@ -65,38 +65,44 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            CollectionsEvent::Changed => {
-                let collections = self.collections.read(cx).all().to_vec();
-                self.library_panel.update(cx, |panel, cx| {
-                    panel.set_collections(collections, window, cx)
-                });
-                if !self.route_exists(self.editor_route(), cx) {
-                    // What was in the editor stays there, as the draft.
-                    self.responses
-                        .rekey(self.editor_content, EditorContent::Draft);
-                    self.editor_content = EditorContent::Draft;
-                    self.draft = None;
-                    self.baseline = None;
-                }
-                self.drop_deleted_responses(cx);
-                if !self.route_exists(self.current_route(), cx) {
-                    self.replace_route(self.editor_route(), window, cx);
-                } else {
-                    self.sync_editor_name(window, cx);
-                }
-                if let Some(id) = self.collection_view.read(cx).id() {
-                    let collection = self.collections.read(cx).get(id).cloned();
-                    self.collection_view
-                        .update(cx, |view, cx| view.show(id, collection, window, cx));
-                }
-                self.refresh_dirty(window, cx);
-                self.sync_window_title(window, cx);
-                self.schedule_navigation_save(cx);
-                cx.notify();
-            }
+            CollectionsEvent::Changed => self.on_collections_changed(window, cx),
             CollectionsEvent::Loaded => self.restore_navigation(window, cx),
             CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
         }
+    }
+
+    fn on_collections_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let collections = self.collections.read(cx).all().to_vec();
+        self.library_panel.update(cx, |panel, cx| {
+            panel.set_collections(collections, window, cx)
+        });
+        if !self.route_exists(self.editor_route(), cx) {
+            self.keep_deleted_request_as_draft();
+        }
+        self.drop_deleted_responses(cx);
+        if !self.route_exists(self.current_route(), cx) {
+            self.replace_route(self.editor_route(), window, cx);
+        } else {
+            self.sync_editor_name(window, cx);
+        }
+        if let Some(id) = self.collection_view.read(cx).id() {
+            let collection = self.collections.read(cx).get(id).cloned();
+            self.collection_view
+                .update(cx, |view, cx| view.show(id, collection, window, cx));
+        }
+        self.refresh_dirty(window, cx);
+        self.sync_window_title(window, cx);
+        self.schedule_navigation_save(cx);
+        cx.notify();
+    }
+
+    /// The editor's saved request is gone; what the editor shows stays, as the draft.
+    fn keep_deleted_request_as_draft(&mut self) {
+        self.responses
+            .rekey(self.editor_content, EditorContent::Draft);
+        self.editor_content = EditorContent::Draft;
+        self.draft = None;
+        self.baseline = None;
     }
 
     pub(super) fn on_library_panel_event(
@@ -106,14 +112,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            LibraryPanelEvent::CreateCollection => {
-                let id = self.collections.update(cx, |collections, cx| {
-                    collections.create(NEW_COLLECTION_NAME, cx)
-                });
-                self.navigate(AppRoute::Collection(id), window, cx);
-                self.collection_view
-                    .update(cx, |view, cx| view.focus_name(window, cx));
-            }
+            LibraryPanelEvent::CreateCollection => self.create_collection(window, cx),
             LibraryPanelEvent::OpenCollection(id) => {
                 self.navigate(AppRoute::Collection(*id), window, cx)
             }
@@ -125,34 +124,25 @@ impl Workspace {
                 collection_id,
                 item_id,
                 name,
-            } => {
-                let (collection_id, item_id, name) = (*collection_id, *item_id, name.clone());
-                self.collections.update(cx, |collections, cx| {
-                    collections.rename(collection_id, item_id, name, cx)
-                });
-            }
-            LibraryPanelEvent::DeleteCollection(id) => {
-                let id = *id;
-                self.collections
-                    .update(cx, |collections, cx| collections.delete(id, cx));
-            }
+            } => self.collections.update(cx, |collections, cx| {
+                collections.rename(*collection_id, *item_id, name.clone(), cx)
+            }),
+            LibraryPanelEvent::DeleteCollection(id) => self
+                .collections
+                .update(cx, |collections, cx| collections.delete(*id, cx)),
             LibraryPanelEvent::DeleteItem {
                 collection_id,
                 item_id,
-            } => {
-                let (collection_id, item_id) = (*collection_id, *item_id);
-                self.collections.update(cx, |collections, cx| {
-                    collections.remove_item(collection_id, item_id, cx)
-                });
-            }
+            } => self.collections.update(cx, |collections, cx| {
+                collections.remove_item(*collection_id, *item_id, cx)
+            }),
             LibraryPanelEvent::AddFolder {
                 collection_id,
                 parent,
                 name,
             } => {
-                let (collection_id, parent, name) = (*collection_id, *parent, name.clone());
                 self.collections.update(cx, |collections, cx| {
-                    collections.add_folder(collection_id, parent, name, cx)
+                    collections.add_folder(*collection_id, *parent, name.clone(), cx)
                 });
             }
             LibraryPanelEvent::AddRequest {
@@ -172,6 +162,15 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    fn create_collection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self.collections.update(cx, |collections, cx| {
+            collections.create(NEW_COLLECTION_NAME, cx)
+        });
+        self.navigate(AppRoute::Collection(id), window, cx);
+        self.collection_view
+            .update(cx, |view, cx| view.focus_name(window, cx));
     }
 
     pub(super) fn on_collection_view_event(

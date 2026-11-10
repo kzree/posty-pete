@@ -249,27 +249,8 @@ impl Workspace {
             window.focus(&self.focus_handle, cx);
         }
         match route {
-            AppRoute::Request => {
-                if self.loads_into_editor(route) {
-                    let draft = self.draft.take().unwrap_or_default();
-                    self.load_editor(EditorContent::Draft, &draft, window, cx);
-                }
-            }
-            AppRoute::SavedRequest {
-                collection_id,
-                request_id,
-            } => {
-                if self.loads_into_editor(route)
-                    && let Some(request) = self
-                        .find_saved_request(collection_id, request_id, cx)
-                        .map(|saved| saved.request.clone())
-                {
-                    let content = EditorContent::Saved {
-                        collection_id,
-                        request_id,
-                    };
-                    self.load_editor(content, &request, window, cx);
-                }
+            AppRoute::Request | AppRoute::SavedRequest { .. } => {
+                self.load_route_into_editor(route, window, cx)
             }
             AppRoute::Collection(id) => {
                 let collection = self.collections.read(cx).get(id).cloned();
@@ -283,6 +264,41 @@ impl Workspace {
         self.sync_window_title(window, cx);
         self.schedule_navigation_save(cx);
         cx.notify();
+    }
+
+    /// Loads the draft or saved request of `route`, unless the editor already holds it.
+    fn load_route_into_editor(
+        &mut self,
+        route: AppRoute,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.loads_into_editor(route) {
+            return;
+        }
+        match route {
+            AppRoute::Request => {
+                let draft = self.draft.take().unwrap_or_default();
+                self.load_editor(EditorContent::Draft, &draft, window, cx);
+            }
+            AppRoute::SavedRequest {
+                collection_id,
+                request_id,
+            } => {
+                let Some(request) = self
+                    .find_saved_request(collection_id, request_id, cx)
+                    .map(|saved| saved.request.clone())
+                else {
+                    return;
+                };
+                let content = EditorContent::Saved {
+                    collection_id,
+                    request_id,
+                };
+                self.load_editor(content, &request, window, cx);
+            }
+            AppRoute::Settings | AppRoute::Collection(_) => {}
+        }
     }
 
     pub(super) fn routes(&self, cx: &mut Context<Self>) -> Routes {

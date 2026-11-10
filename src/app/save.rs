@@ -4,7 +4,10 @@ use uuid::Uuid;
 
 use super::{EditorContent, Workspace, dirty::Baseline, show_error};
 use crate::{
-    domain::{self, collection::Location},
+    domain::{
+        self,
+        collection::{Location, NEW_REQUEST_NAME, save_as_defaults},
+    },
     save_as_dialog::{self, open_save_as_dialog},
 };
 
@@ -31,38 +34,16 @@ impl Workspace {
         if self.refuse_while_pending(window, cx) {
             return;
         }
-        let collections = self.collections.read(cx).all();
-        let (name, location) = match self.editor_content {
+        let linked = match self.editor_content {
             EditorContent::Saved {
                 collection_id,
                 request_id,
-            } => {
-                let name = self.request_editor.read(cx).name(cx).or_else(|| {
-                    self.editor_saved_request(cx)
-                        .map(|saved| saved.name.clone())
-                });
-                let folder_id = collections
-                    .iter()
-                    .find(|collection| collection.id == collection_id)
-                    .and_then(|collection| collection.ancestors(request_id))
-                    .and_then(|ancestors| ancestors.last().copied());
-                let location = Location::Folder {
-                    collection_id,
-                    folder_id,
-                };
-                (name, location)
-            }
-            EditorContent::Draft => {
-                let location = collections
-                    .first()
-                    .map_or(Location::NewCollection, |collection| Location::Folder {
-                        collection_id: collection.id,
-                        folder_id: None,
-                    });
-                (None, location)
-            }
+            } => Some((collection_id, request_id)),
+            EditorContent::Draft => None,
         };
-        let name = name.unwrap_or_else(|| "New Request".to_string());
+        let typed_name = linked.and_then(|_| self.request_editor.read(cx).name(cx));
+        let collections = self.collections.read(cx).all();
+        let (name, location) = save_as_defaults(collections, linked, typed_name);
         let locations = save_as_dialog::locations(collections);
         let this = cx.weak_entity();
         open_save_as_dialog(
@@ -107,16 +88,7 @@ impl Workspace {
             collection_id,
             request_id,
         };
-        if self.editor_content == EditorContent::Draft {
-            self.responses.rekey(self.editor_content, content);
-            self.draft = None;
-        } else {
-            self.responses.copy(self.editor_content, content);
-        }
-        self.editor_content = content;
-        self.baseline = Some(Baseline::new(request.clone(), request));
-        self.request_editor
-            .update(cx, |editor, cx| editor.link(name, window, cx));
+        self.relink_editor(content, name, request, window, cx);
         self.refresh_dirty(window, cx);
 
         let ancestors = self
@@ -130,6 +102,28 @@ impl Workspace {
         });
         self.replace_route(content.route(), window, cx);
         window.push_notification(Notification::success("Saved"), cx);
+    }
+
+    /// Points the editor at the just-saved `content`. A draft's response moves
+    /// along; a saved request's is copied, since that request stays.
+    fn relink_editor(
+        &mut self,
+        content: EditorContent,
+        name: String,
+        request: domain::request::Request,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.editor_content == EditorContent::Draft {
+            self.responses.rekey(self.editor_content, content);
+            self.draft = None;
+        } else {
+            self.responses.copy(self.editor_content, content);
+        }
+        self.editor_content = content;
+        self.baseline = Some(Baseline::new(request.clone(), request));
+        self.request_editor
+            .update(cx, |editor, cx| editor.link(name, window, cx));
     }
 
     /// Saves the editor's request to its collection. Returns `false` if it
@@ -176,7 +170,7 @@ impl Workspace {
                     collections.add_request(
                         collection_id,
                         parent,
-                        "New Request",
+                        NEW_REQUEST_NAME,
                         domain::request::Request::default(),
                         cx,
                     )

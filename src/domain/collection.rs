@@ -33,6 +33,7 @@ pub struct SavedRequest {
 }
 
 pub const NEW_COLLECTION_NAME: &str = "New Collection";
+pub const NEW_REQUEST_NAME: &str = "New Request";
 
 /// Where a new request goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +76,49 @@ pub fn add_request_at(
             .add_item(folder_id, item)
             .then_some((collection_id, request_id)),
     }
+}
+
+/// The name and location Save As starts with. A saved request (`linked`, as
+/// collection and request ids) goes next to itself, named `typed_name` or
+/// else its stored name; a draft goes to the first collection's root.
+pub fn save_as_defaults(
+    collections: &[Collection],
+    linked: Option<(Uuid, Uuid)>,
+    typed_name: Option<String>,
+) -> (String, Location) {
+    let (name, location) = match linked {
+        Some((collection_id, request_id)) => {
+            let collection = collections
+                .iter()
+                .find(|collection| collection.id == collection_id);
+            let name = typed_name.or_else(|| {
+                collection
+                    .and_then(|collection| collection.find_request(request_id))
+                    .map(|saved| saved.name.clone())
+            });
+            let folder_id = collection
+                .and_then(|collection| collection.ancestors(request_id))
+                .and_then(|ancestors| ancestors.last().copied());
+            let location = Location::Folder {
+                collection_id,
+                folder_id,
+            };
+            (name, location)
+        }
+        None => {
+            let location = collections
+                .first()
+                .map_or(Location::NewCollection, |collection| Location::Folder {
+                    collection_id: collection.id,
+                    folder_id: None,
+                });
+            (None, location)
+        }
+    };
+    (
+        name.unwrap_or_else(|| NEW_REQUEST_NAME.to_string()),
+        location,
+    )
 }
 
 impl Collection {
@@ -532,5 +576,63 @@ mod tests {
         }
 
         assert_eq!(serde_json::to_value(&collections).unwrap(), before);
+    }
+
+    #[test]
+    fn save_as_defaults_put_a_nested_request_in_its_folder_under_its_stored_name() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let (name, location) =
+            save_as_defaults(&[f.collection], Some((collection_id, f.deep_request)), None);
+        assert_eq!(name, "Deep");
+        assert_eq!(
+            location,
+            Location::Folder {
+                collection_id,
+                folder_id: Some(f.inner),
+            }
+        );
+    }
+
+    #[test]
+    fn save_as_defaults_prefer_the_typed_name_and_root_for_a_root_request() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let (name, location) = save_as_defaults(
+            &[f.collection],
+            Some((collection_id, f.root_request)),
+            Some("Edited".into()),
+        );
+        assert_eq!(name, "Edited");
+        assert_eq!(
+            location,
+            Location::Folder {
+                collection_id,
+                folder_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn save_as_defaults_put_a_draft_at_the_first_collection_root() {
+        let first = fixture().collection;
+        let second = Collection::new("Other");
+        let first_id = first.id;
+        let (name, location) = save_as_defaults(&[first, second], None, Some("Ignored".into()));
+        assert_eq!(name, NEW_REQUEST_NAME);
+        assert_eq!(
+            location,
+            Location::Folder {
+                collection_id: first_id,
+                folder_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn save_as_defaults_without_collections_offer_a_new_collection() {
+        let (name, location) = save_as_defaults(&[], None, None);
+        assert_eq!(name, NEW_REQUEST_NAME);
+        assert_eq!(location, Location::NewCollection);
     }
 }

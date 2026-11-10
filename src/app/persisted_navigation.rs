@@ -148,6 +148,19 @@ impl From<NavEntry> for AppRoute {
     }
 }
 
+/// Rebuilds gpui-router's history to match `history`, which it can't be handed directly.
+fn replay_in_router(history: &RouteHistory, window: &mut Window, cx: &mut App) {
+    let entries = history.entries();
+    let mut navigator = use_navigate(window, cx);
+    navigator.replace(entries[0].path());
+    for route in &entries[1..] {
+        navigator.push(route.path());
+    }
+    for _ in history.index() + 1..entries.len() {
+        navigator.back();
+    }
+}
+
 impl Workspace {
     /// Reads `navigation.json` off the UI thread and restores it once the
     /// collections are loaded too.
@@ -207,15 +220,7 @@ impl Workspace {
             self.route_history.replace_current(AppRoute::Request);
         }
 
-        let entries = self.route_history.entries();
-        let mut navigator = use_navigate(window, cx);
-        navigator.replace(entries[0].path());
-        for route in &entries[1..] {
-            navigator.push(route.path());
-        }
-        for _ in self.route_history.index() + 1..entries.len() {
-            navigator.back();
-        }
+        replay_in_router(&self.route_history, window, cx);
 
         self.show_current_route(AppRoute::Request, window, cx);
         match self.editor_content {

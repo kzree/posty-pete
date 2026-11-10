@@ -128,41 +128,6 @@ impl Workspace {
         let history = cx.new(History::new);
         let collections = cx.new(Collections::new);
 
-        let subscriptions = vec![
-            cx.subscribe_in(&history, window, |this, _, event, window, cx| {
-                this.on_history_event(event, window, cx)
-            }),
-            cx.subscribe_in(&collections, window, |this, _, event, window, cx| {
-                this.on_collections_event(event, window, cx)
-            }),
-            cx.subscribe_in(&library_panel, window, |this, _, event, window, cx| {
-                this.on_library_panel_event(event, window, cx)
-            }),
-            cx.subscribe_in(&collection_view, window, |this, _, event, window, cx| {
-                this.on_collection_view_event(event, window, cx)
-            }),
-            cx.subscribe_in(&history_panel, window, |this, _, event, window, cx| {
-                this.on_history_panel_event(event, window, cx)
-            }),
-            cx.subscribe_in(&request_editor, window, |this, _, event, window, cx| {
-                this.on_editor_event(event, window, cx)
-            }),
-            cx.subscribe(&response_view, |this, _, event, _| match event {
-                ResponseViewEvent::Cleared => this.responses.remove(this.editor_content),
-            }),
-            cx.on_app_quit(|this, cx| {
-                this.save_navigation_now(cx);
-                async {}
-            }),
-        ];
-        let workspace = cx.weak_entity();
-        window.on_window_should_close(cx, move |window, cx| {
-            workspace
-                .update(cx, |this, cx| this.should_close_window(window, cx))
-                .unwrap_or(true)
-        });
-        Self::load_navigation(window, cx);
-
         let mut workspace = Self {
             request_editor,
             response_view,
@@ -197,10 +162,52 @@ impl Workspace {
             os_window_title: String::new(),
             os_window_edited: false,
             focus_handle: cx.focus_handle(),
-            _subscriptions: subscriptions,
+            _subscriptions: Vec::new(),
         };
+        workspace._subscriptions = workspace.subscribe(window, cx);
+        let handle = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            handle
+                .update(cx, |this, cx| this.should_close_window(window, cx))
+                .unwrap_or(true)
+        });
+        Self::load_navigation(window, cx);
         workspace.sync_window_title(window, cx);
         workspace
+    }
+
+    fn subscribe(&self, window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
+        vec![
+            cx.subscribe_in(&self.history, window, |this, _, event, window, cx| {
+                this.on_history_event(event, window, cx)
+            }),
+            cx.subscribe_in(&self.collections, window, |this, _, event, window, cx| {
+                this.on_collections_event(event, window, cx)
+            }),
+            cx.subscribe_in(&self.library_panel, window, |this, _, event, window, cx| {
+                this.on_library_panel_event(event, window, cx)
+            }),
+            cx.subscribe_in(
+                &self.collection_view,
+                window,
+                |this, _, event, window, cx| this.on_collection_view_event(event, window, cx),
+            ),
+            cx.subscribe_in(&self.history_panel, window, |this, _, event, window, cx| {
+                this.on_history_panel_event(event, window, cx)
+            }),
+            cx.subscribe_in(
+                &self.request_editor,
+                window,
+                |this, _, event, window, cx| this.on_editor_event(event, window, cx),
+            ),
+            cx.subscribe(&self.response_view, |this, _, event, _| match event {
+                ResponseViewEvent::Cleared => this.responses.remove(this.editor_content),
+            }),
+            cx.on_app_quit(|this, cx| {
+                this.save_navigation_now(cx);
+                async {}
+            }),
+        ]
     }
 
     /// The Workspace shown in `window`, if any.
