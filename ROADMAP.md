@@ -25,9 +25,14 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## Collections
 
 - [ ] **Collection variables.** The collection view's Variables tab is a placeholder. Decide the requirements (scope, secret values, how they combine with environments) and build the editor, likely on top of `ui::key_value_editor`.
-- [ ] **Manage requests in collections.** Rename, delete, duplicate and move requests (and move folders) in the library tree, including drag and drop.
+- [ ] **Manage requests in collections.** Duplicate and move requests (and move folders) in the library tree, including drag and drop.
 - [ ] **Unsaved changes.** Show a dirty marker for an edited saved request and prompt before switching to another request.
 - [ ] **Save as.** Save a request that isn't linked to a collection (a fresh one or one from history) into a chosen collection or folder.
+- [ ] **Unsaved collection name edits.** `CollectionView::show` keeps a typed but unsaved name when you leave a collection and come back to it. Decide whether it should be discarded instead.
+- [ ] **Keep the open request highlighted.** Clicking a collection or folder row moves the library list's selection to it, so the open request loses its highlight until the next tree refresh. Re-sync the selection (`sync_selection`) after a collection/folder click.
+- [ ] **Highlight new collections.** A newly created collection isn't selected in the tree, and stays hidden if the "Collections" section is collapsed.
+- [ ] **Cheaper library refresh.** Every `CollectionsEvent::Changed` clones all collections into `LibraryPanel::set_collections`. Fine at current sizes; revisit if collections get large.
+- [ ] **Single source for the editor's saved-request link.** `Workspace.open_request` and `RequestEditor.saved_name` both hold the link, kept in sync only because every caller runs `load_request` then `set_open_request`. Pass the saved name into `load_request` (or let `Workspace` unlink explicitly) so they can't drift apart.
 
 ## App
 
