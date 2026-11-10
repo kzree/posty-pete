@@ -27,6 +27,7 @@ use tabs::RequestTab;
 
 pub enum RequestEditorEvent {
     SendRequested(Request),
+    CopyAsCurl(Request),
     Save,
     /// A field of the request or its name changed.
     Edited,

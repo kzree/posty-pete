@@ -223,7 +223,7 @@ impl Workspace {
             HistoryPanelEvent::Open { id, mode } => self
                 .history
                 .update(cx, |history, cx| history.open(id, mode, cx)),
-            HistoryPanelEvent::CopyAsCurl(id) => self.copy_as_curl(id, window, cx),
+            HistoryPanelEvent::CopyAsCurl(id) => self.copy_history_as_curl(id, window, cx),
             HistoryPanelEvent::Delete(id) => self
                 .history
                 .update(cx, |history, cx| history.delete(id, cx)),
@@ -240,6 +240,9 @@ impl Workspace {
         match event {
             RequestEditorEvent::SendRequested(request) => {
                 self.send_request(request.clone(), window, cx)
+            }
+            RequestEditorEvent::CopyAsCurl(request) => {
+                self.copy_editor_as_curl(request.clone(), window, cx)
             }
             RequestEditorEvent::Save => self.save_request(window, cx),
             RequestEditorEvent::Edited => {

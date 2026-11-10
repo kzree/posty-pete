@@ -71,6 +71,7 @@ impl Variables {
         self.values.get(name).map(String::as_str)
     }
 
+    #[allow(dead_code, reason = "not used yet (task 49)")]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -195,6 +196,7 @@ impl Request {
     }
 
     /// The names [`Request::with_variables`] would report, without building the copy.
+    #[allow(dead_code, reason = "not used yet (task 49)")]
     pub fn unresolved_variables(&self, variables: &Variables) -> Vec<String> {
         let mut unresolved = Vec::new();
         for text in sent_texts(self) {
