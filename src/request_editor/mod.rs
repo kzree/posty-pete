@@ -107,7 +107,7 @@ impl RequestEditor {
     }
 
     pub fn send(&mut self, cx: &mut Context<Self>) {
-        if self.loading || self.input_is_empty(cx) {
+        if self.input_is_empty(cx) {
             return;
         }
         let req = self.build_request(cx);

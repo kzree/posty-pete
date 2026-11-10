@@ -30,10 +30,7 @@ use crate::{
         history_panel::{HistoryPanel, HistoryPanelEvent},
     },
     status_bar::StatusBar,
-    ui::{
-        clipboard::copy_with_notification,
-        loading_bar::{GlobalLoading, LoadingBar},
-    },
+    ui::{clipboard::copy_with_notification, loading_bar::LoadingBar},
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -88,7 +85,7 @@ impl Workspace {
         let status_bar = cx.new(|_| StatusBar::new(left_panel == LeftPanelState::Open));
         let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
         let sidebar = cx.new(|_| Sidebar::new(history_panel.clone()));
-        let loading_bar = cx.new(LoadingBar::new);
+        let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
 
         let subscriptions = vec![
@@ -220,9 +217,7 @@ impl Workspace {
         if self.pending.is_some() {
             return;
         }
-        GlobalLoading::begin(cx);
-        self.request_editor
-            .update(cx, |editor, cx| editor.set_loading(true, cx));
+        self.set_sending(true, cx);
 
         let sent_at = Utc::now();
         let handle = http::spawn_send(self.client.clone(), request.clone());
@@ -262,15 +257,21 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.pending = None;
+        self.set_sending(false, cx);
         self.response_view.update(cx, |view, cx| {
             view.set_response(result, body_text, window, cx)
         });
-        self.request_editor
-            .update(cx, |editor, cx| editor.set_loading(false, cx));
-        GlobalLoading::end(cx);
         self.history
             .update(cx, |history, cx| history.record(record, cx));
-        self.pending = None;
+    }
+
+    /// `pending` is the source of truth; this mirrors it in the UI.
+    fn set_sending(&mut self, sending: bool, cx: &mut Context<Self>) {
+        self.request_editor
+            .update(cx, |editor, cx| editor.set_loading(sending, cx));
+        self.loading_bar
+            .update(cx, |bar, cx| bar.set_active(sending, cx));
     }
 
     fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {

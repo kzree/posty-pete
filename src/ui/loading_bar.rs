@@ -1,44 +1,21 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, App, Context, Global, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, div, ease_in_out, px, relative,
+    Animation, AnimationExt, Context, IntoElement, ParentElement, Render, Styled, Window, div,
+    ease_in_out, px, relative,
 };
 use gpui_component::ActiveTheme;
 
-#[derive(Default)]
-pub struct GlobalLoading {
-    active: usize,
-}
-
-impl Global for GlobalLoading {}
-
-impl GlobalLoading {
-    pub fn begin(cx: &mut App) {
-        cx.default_global::<Self>().active += 1;
-    }
-
-    pub fn end(cx: &mut App) {
-        let loading = cx.default_global::<Self>();
-        loading.active = loading.active.saturating_sub(1);
-    }
-
-    pub fn is_active(cx: &App) -> bool {
-        cx.try_global::<Self>()
-            .is_some_and(|loading| loading.active > 0)
-    }
-}
-
 /// Render as the last child of a `relative()` container.
+#[derive(Default)]
 pub struct LoadingBar {
-    _observe: Subscription,
+    active: bool,
 }
 
 impl LoadingBar {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            _observe: cx.observe_global::<GlobalLoading>(|_, cx| cx.notify()),
-        }
+    pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        self.active = active;
+        cx.notify();
     }
 }
 
@@ -52,7 +29,7 @@ impl Render for LoadingBar {
             .h(px(2.))
             .overflow_hidden();
 
-        if !GlobalLoading::is_active(cx) {
+        if !self.active {
             return bar;
         }
 
