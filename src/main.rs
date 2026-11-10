@@ -24,6 +24,7 @@ const WINDOW_HEIGHT: f32 = 900.;
 fn run() {
     application().with_assets(AppAssets).run(|cx: &mut App| {
         gpui_component::init(cx);
+        gpui_router::init(cx);
         actions::bind_keys(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
