@@ -598,7 +598,16 @@ fn render_node(node: &Node, cx: &App) -> ListItem {
                 .pl(px((node.depth + 1) as f32 * INDENT))
                 .child(h_flex().w_3().flex_none().children(chevron))
                 .when_some(method, |row, method| row.child(method_label(method, cx)))
-                .child(div().flex_1().min_w_0().truncate().child(name)),
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .when(method.is_some(), |name| {
+                            name.text_color(cx.theme().foreground)
+                        })
+                        .child(name),
+                ),
         )
 }
 
