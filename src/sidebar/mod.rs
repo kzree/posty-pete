@@ -1,6 +1,6 @@
 use gpui::{
-    Context, Entity, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Window, div,
+    App, Context, Div, Entity, IntoElement, ParentElement, Render, StatefulInteractiveElement,
+    Styled, Window, div,
 };
 use gpui_component::{
     ActiveTheme, Colorize, Icon, IconName,
@@ -85,18 +85,8 @@ impl Render for Sidebar {
         let content = div().flex_1().min_h_0();
         let content = match self.active_tab {
             SidebarTab::History => content.child(self.history_panel.clone()),
-            SidebarTab::Library | SidebarTab::Settings => {
-                let empty_text = if self.active_tab == SidebarTab::Library {
-                    "Your library is empty."
-                } else {
-                    "Settings coming soon."
-                };
-                content
-                    .p_3()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(empty_text)
-            }
+            SidebarTab::Library => content.child(placeholder("Your library is empty.", cx)),
+            SidebarTab::Settings => content.child(placeholder("Settings coming soon.", cx)),
         };
 
         v_flex()
@@ -105,4 +95,12 @@ impl Render for Sidebar {
             .child(tabs)
             .child(content)
     }
+}
+
+fn placeholder(text: &'static str, cx: &App) -> Div {
+    div()
+        .p_3()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
 }

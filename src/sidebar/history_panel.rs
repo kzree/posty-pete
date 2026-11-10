@@ -149,11 +149,7 @@ impl ListDelegate for HistoryDelegate {
         _window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
-        div()
-            .p_3()
-            .text_sm()
-            .text_color(cx.theme().muted_foreground)
-            .child("Requests you send show up here.")
+        super::placeholder("Requests you send show up here.", cx)
     }
 
     fn set_selected_index(
