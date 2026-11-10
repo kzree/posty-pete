@@ -3,12 +3,14 @@ use std::time::Duration;
 use chrono::Utc;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-    Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window,
+    div, px,
 };
 use gpui_component::{
     ActiveTheme, ResizableState, WindowExt, h_resizable, input::Escape, notification::Notification,
     resizable_panel, v_resizable,
 };
+use gpui_router::{Route, Routes, use_navigate};
 use tokio::task::JoinError;
 
 use crate::{
@@ -284,6 +286,31 @@ impl Workspace {
         cx.notify();
     }
 
+    #[expect(dead_code, reason = "used once the main pane has more routes")]
+    fn navigate(&mut self, path: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+        use_navigate(window, cx).push(path);
+    }
+
+    fn request_response_route(&self) -> Route {
+        let request_editor = self.request_editor.clone();
+        let response_view = self.response_view.clone();
+        let loading_bar = self.loading_bar.clone();
+        let layout = self.request_response_layout.clone();
+
+        Route::new().index().element(move |_, _| {
+            let split = v_resizable("request-response")
+                .with_state(&layout)
+                .child(resizable_panel().child(request_editor.clone()))
+                .child(resizable_panel().child(response_view.clone()));
+
+            div()
+                .relative()
+                .size_full()
+                .child(split)
+                .child(loading_bar.clone())
+        })
+    }
+
     fn open_sidebar_tab(&mut self, tab: SidebarTab, cx: &mut Context<Self>) {
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_active_tab(tab, cx));
@@ -295,16 +322,7 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let main_content = v_resizable("request-response")
-            .with_state(&self.request_response_layout)
-            .child(resizable_panel().child(self.request_editor.clone()))
-            .child(resizable_panel().child(self.response_view.clone()));
-
-        let main_content = div()
-            .relative()
-            .size_full()
-            .child(main_content)
-            .child(self.loading_bar.clone());
+        let main_content = Routes::new().child(self.request_response_route());
 
         // A hidden panel would still leave its resize handle behind.
         let body = if self.left_panel == LeftPanelState::Open {
