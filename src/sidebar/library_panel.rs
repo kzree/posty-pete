@@ -75,13 +75,16 @@ impl LibraryPanel {
             list.set_item_to_measure_index(IndexPath::new(1), window, cx);
             list
         });
-        let list_sub = cx.subscribe(&list, |this, _, event, cx| {
+        let list_sub = cx.subscribe_in(&list, window, |this, _, event, window, cx| {
             if let ListEvent::Confirm(ix) = event {
                 let delegate = this.list.read(cx).delegate();
                 let (collection, request) =
                     (delegate.collection_at(ix.row), delegate.request_at(ix.row));
-                // Rows above a toggled row don't move, so its row stays selected.
                 this.update_rows(cx, |delegate| delegate.toggle_at(ix.row));
+                // The selection marks the open request, not the clicked collection or folder.
+                if request.is_none() {
+                    this.sync_selection(window, cx);
+                }
                 if let Some(id) = collection {
                     cx.emit(LibraryPanelEvent::OpenCollection(id));
                 }
