@@ -105,7 +105,6 @@ impl Collections {
         }
     }
 
-    #[expect(dead_code, reason = "used by add folder (task 13)")]
     pub fn add_folder(
         &mut self,
         collection_id: Uuid,
