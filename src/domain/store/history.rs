@@ -1,19 +1,34 @@
 use std::{ops::Range, path::Path, time::Duration};
 
 use chrono::{DateTime, Days, NaiveDate, NaiveTime, TimeZone, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Row, params};
 
 use crate::domain::request::Request;
 
 pub const RETENTION_DAYS: u64 = 14;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Outcome {
+    pub status: u16,
+    pub elapsed: Duration,
+}
+
+/// A sent request, before it's saved. `outcome` is `None` when no response arrived.
 #[derive(Clone, Debug)]
-pub struct HistoryEntry {
-    pub id: i64,
+pub struct HistoryRecord {
     pub sent_at: DateTime<Utc>,
     pub request: Request,
-    pub status: Option<u16>,
-    pub elapsed: Option<Duration>,
+    pub outcome: Option<Outcome>,
+}
+
+/// What the history list shows; the full request stays in the database.
+#[derive(Clone, Debug)]
+pub struct HistorySummary {
+    pub id: i64,
+    pub sent_at: DateTime<Utc>,
+    pub method: String,
+    pub url: String,
+    pub outcome: Option<Outcome>,
 }
 
 pub struct HistoryStore {
@@ -51,19 +66,20 @@ impl HistoryStore {
         Ok(Self { conn })
     }
 
-    pub fn insert(
-        &self,
-        sent_at: DateTime<Utc>,
-        request: &Request,
-        status: Option<u16>,
-        elapsed: Option<Duration>,
-    ) -> anyhow::Result<HistoryEntry> {
-        let elapsed_ms = elapsed.map(|d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
+    pub fn insert(&self, record: &HistoryRecord) -> anyhow::Result<HistorySummary> {
+        let request = &record.request;
+        let (status, elapsed_ms) = match record.outcome {
+            Some(outcome) => (
+                Some(outcome.status),
+                Some(i64::try_from(outcome.elapsed.as_millis()).unwrap_or(i64::MAX)),
+            ),
+            None => (None, None),
+        };
         self.conn.execute(
             "INSERT INTO history (sent_at, method, url, status, elapsed_ms, request)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
-                sent_at.timestamp_millis(),
+                record.sent_at.timestamp_millis(),
                 request.method.as_str(),
                 request.url,
                 status,
@@ -72,55 +88,33 @@ impl HistoryStore {
             ],
         )?;
 
-        Ok(HistoryEntry {
+        Ok(HistorySummary {
             id: self.conn.last_insert_rowid(),
-            sent_at,
-            request: request.clone(),
-            status,
-            elapsed,
+            sent_at: record.sent_at,
+            method: request.method.as_str().to_owned(),
+            url: request.url.clone(),
+            outcome: record.outcome,
         })
     }
 
-    /// Newest first. Rows whose request no longer deserializes are skipped.
-    pub fn since(&self, cutoff: DateTime<Utc>) -> anyhow::Result<Vec<HistoryEntry>> {
+    /// Newest first. Rows that can't be decoded are skipped with a warning.
+    pub fn since(&self, cutoff: DateTime<Utc>) -> anyhow::Result<Vec<HistorySummary>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, sent_at, status, elapsed_ms, request FROM history
+            "SELECT id, sent_at, method, url, status, elapsed_ms FROM history
              WHERE sent_at >= ?1
              ORDER BY sent_at DESC, id DESC",
         )?;
-        let rows = stmt.query_map([cutoff.timestamp_millis()], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, Option<u16>>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        })?;
+        let rows = stmt.query_map([cutoff.timestamp_millis()], RawRow::read)?;
 
-        let mut entries = Vec::new();
-        for row in rows {
-            let (id, sent_at, status, elapsed_ms, request) = row?;
-            let Some(sent_at) = DateTime::from_timestamp_millis(sent_at) else {
-                tracing::warn!(id, sent_at, "skipping history entry with invalid timestamp");
-                continue;
-            };
-            let request = match serde_json::from_str(&request) {
-                Ok(request) => request,
+        Ok(rows
+            .filter_map(|row| match row {
+                Ok(row) => row.into_summary(),
                 Err(e) => {
-                    tracing::warn!(id, "skipping unreadable history entry: {e}");
-                    continue;
+                    tracing::warn!("skipping unreadable history row: {e}");
+                    None
                 }
-            };
-            entries.push(HistoryEntry {
-                id,
-                sent_at,
-                request,
-                status,
-                elapsed: elapsed_ms.map(|ms| Duration::from_millis(ms.max(0) as u64)),
-            });
-        }
-        Ok(entries)
+            })
+            .collect())
     }
 
     pub fn prune(&self, cutoff: DateTime<Utc>) -> anyhow::Result<usize> {
@@ -131,23 +125,79 @@ impl HistoryStore {
     }
 }
 
+struct RawRow {
+    id: i64,
+    sent_at: i64,
+    method: String,
+    url: String,
+    status: Option<i64>,
+    elapsed_ms: Option<i64>,
+}
+
+impl RawRow {
+    fn read(row: &Row) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            sent_at: row.get(1)?,
+            method: row.get(2)?,
+            url: row.get(3)?,
+            status: row.get(4)?,
+            elapsed_ms: row.get(5)?,
+        })
+    }
+
+    fn into_summary(self) -> Option<HistorySummary> {
+        let id = self.id;
+        let Some(sent_at) = DateTime::from_timestamp_millis(self.sent_at) else {
+            tracing::warn!(id, "skipping history row with invalid timestamp");
+            return None;
+        };
+        let outcome = match (self.status, self.elapsed_ms) {
+            (None, _) => None,
+            (Some(status), elapsed_ms) => {
+                let Ok(status) = u16::try_from(status) else {
+                    tracing::warn!(id, status, "skipping history row with invalid status");
+                    return None;
+                };
+                let elapsed_ms = elapsed_ms.unwrap_or(0).max(0) as u64;
+                Some(Outcome {
+                    status,
+                    elapsed: Duration::from_millis(elapsed_ms),
+                })
+            }
+        };
+        Some(HistorySummary {
+            id,
+            sent_at,
+            method: self.method,
+            url: self.url,
+            outcome,
+        })
+    }
+}
+
 /// Start of the oldest day to keep: local midnight `RETENTION_DAYS - 1` days before `now`.
+/// Where a DST change skips midnight, the day starts at its first valid hour.
 pub fn retention_cutoff<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Utc> {
-    let first_day = (now.date_naive() - Days::new(RETENTION_DAYS - 1)).and_time(NaiveTime::MIN);
-    first_day
-        .and_local_timezone(now.timezone())
-        .earliest()
+    let first_day = now.date_naive() - Days::new(RETENTION_DAYS - 1);
+    (0..24)
+        .find_map(|hour| {
+            first_day
+                .and_hms_opt(hour, 0, 0)?
+                .and_local_timezone(now.timezone())
+                .earliest()
+        })
         .map(|t| t.with_timezone(&Utc))
-        .unwrap_or_else(|| first_day.and_utc())
+        .unwrap_or_else(|| first_day.and_time(NaiveTime::MIN).and_utc())
 }
 
 /// Index ranges into `entries`, one per local day. Expects `entries` newest first,
 /// as returned by [`HistoryStore::since`].
 pub fn group_by_day<Tz: TimeZone>(
-    entries: &[HistoryEntry],
+    entries: &[HistorySummary],
     tz: &Tz,
 ) -> Vec<(NaiveDate, Range<usize>)> {
-    let day = |e: &HistoryEntry| e.sent_at.with_timezone(tz).date_naive();
+    let day = |e: &HistorySummary| e.sent_at.with_timezone(tz).date_naive();
     let mut start = 0;
     entries
         .chunk_by(|a, b| day(a) == day(b))
@@ -166,32 +216,56 @@ mod tests {
     use super::*;
     use crate::domain::request::HttpMethod;
 
-    fn request(url: &str) -> Request {
-        Request {
-            method: HttpMethod::Get,
-            url: url.into(),
-            params: Vec::new(),
-            headers: Vec::new(),
-            body: Default::default(),
-            auth: Default::default(),
+    fn record(sent_at: DateTime<Utc>, url: &str, outcome: Option<Outcome>) -> HistoryRecord {
+        HistoryRecord {
+            sent_at,
+            request: Request {
+                method: HttpMethod::Get,
+                url: url.into(),
+                params: Vec::new(),
+                headers: Vec::new(),
+                body: Default::default(),
+                auth: Default::default(),
+            },
+            outcome,
         }
+    }
+
+    fn ok(sent_at: DateTime<Utc>, url: &str) -> HistoryRecord {
+        let outcome = Outcome {
+            status: 200,
+            elapsed: Duration::ZERO,
+        };
+        record(sent_at, url, Some(outcome))
     }
 
     fn at(rfc3339: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(rfc3339).unwrap().to_utc()
     }
 
+    fn insert_raw(store: &HistoryStore, sent_at: i64, status: &str) {
+        store
+            .conn
+            .execute(
+                &format!(
+                    "INSERT INTO history (sent_at, method, url, status, request)
+                     VALUES (?1, 'GET', 'bad', {status}, '{{}}')"
+                ),
+                [sent_at],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn insert_and_read_back() {
         let store = HistoryStore::open_in_memory().unwrap();
         let sent_at = at("2026-11-10T12:00:00Z");
+        let outcome = Outcome {
+            status: 201,
+            elapsed: Duration::from_millis(42),
+        };
         let inserted = store
-            .insert(
-                sent_at,
-                &request("https://a.test"),
-                Some(200),
-                Some(Duration::from_millis(42)),
-            )
+            .insert(&record(sent_at, "https://a.test", Some(outcome)))
             .unwrap();
 
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
@@ -199,26 +273,20 @@ mod tests {
         let entry = &entries[0];
         assert_eq!(entry.id, inserted.id);
         assert_eq!(entry.sent_at, sent_at);
-        assert_eq!(entry.request.url, "https://a.test");
-        assert_eq!(entry.status, Some(200));
-        assert_eq!(entry.elapsed, Some(Duration::from_millis(42)));
+        assert_eq!(entry.method, "GET");
+        assert_eq!(entry.url, "https://a.test");
+        assert_eq!(entry.outcome, Some(outcome));
     }
 
     #[test]
-    fn failed_request_has_no_status() {
+    fn failed_request_has_no_outcome() {
         let store = HistoryStore::open_in_memory().unwrap();
         store
-            .insert(
-                at("2026-11-10T12:00:00Z"),
-                &request("https://a.test"),
-                None,
-                None,
-            )
+            .insert(&record(at("2026-11-10T12:00:00Z"), "https://a.test", None))
             .unwrap();
 
         let entry = &store.since(DateTime::UNIX_EPOCH).unwrap()[0];
-        assert_eq!(entry.status, None);
-        assert_eq!(entry.elapsed, None);
+        assert_eq!(entry.outcome, None);
     }
 
     #[test]
@@ -230,16 +298,14 @@ mod tests {
             ("2026-11-10T10:00:00Z", "c"),
             ("2026-11-09T12:00:00Z", "a"),
         ] {
-            store
-                .insert(at(time), &request(url), Some(200), None)
-                .unwrap();
+            store.insert(&ok(at(time), url)).unwrap();
         }
 
         let urls: Vec<_> = store
             .since(at("2026-11-09T00:00:00Z"))
             .unwrap()
             .into_iter()
-            .map(|e| e.request.url)
+            .map(|e| e.url)
             .collect();
         assert_eq!(urls, ["c", "b", "a"]);
     }
@@ -249,35 +315,30 @@ mod tests {
         let store = HistoryStore::open_in_memory().unwrap();
         let now = at("2026-11-10T12:00:00Z");
         store
-            .insert(now - TimeDelta::days(13), &request("keep"), Some(200), None)
+            .insert(&ok(now - TimeDelta::days(13), "keep"))
             .unwrap();
         store
-            .insert(now - TimeDelta::days(15), &request("drop"), Some(200), None)
+            .insert(&ok(now - TimeDelta::days(15), "drop"))
             .unwrap();
 
         assert_eq!(store.prune(retention_cutoff(&now)).unwrap(), 1);
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].request.url, "keep");
+        assert_eq!(entries[0].url, "keep");
     }
 
     #[test]
-    fn unreadable_rows_are_skipped() {
+    fn undecodable_rows_are_skipped() {
         let store = HistoryStore::open_in_memory().unwrap();
-        store
-            .insert(at("2026-11-10T12:00:00Z"), &request("ok"), Some(200), None)
-            .unwrap();
-        store
-            .conn
-            .execute(
-                "INSERT INTO history (sent_at, method, url, request) VALUES (?1, 'GET', 'bad', '{')",
-                [at("2026-11-10T13:00:00Z").timestamp_millis()],
-            )
-            .unwrap();
+        let sent_at = at("2026-11-10T12:00:00Z");
+        store.insert(&ok(sent_at, "ok")).unwrap();
+        let later = sent_at.timestamp_millis() + 1;
+        insert_raw(&store, later, "70000");
+        insert_raw(&store, later, "'not a number'");
 
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].request.url, "ok");
+        assert_eq!(entries[0].url, "ok");
     }
 
     #[test]
@@ -296,9 +357,7 @@ mod tests {
             "2026-11-09T22:30:00Z", // 00:30 local, Nov 10
             "2026-11-10T08:00:00Z",
         ] {
-            store
-                .insert(at(time), &request(time), Some(200), None)
-                .unwrap();
+            store.insert(&ok(at(time), time)).unwrap();
         }
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
 

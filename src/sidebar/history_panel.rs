@@ -13,7 +13,7 @@ use gpui_component::{
 };
 
 use crate::{
-    domain::store::history::{self, HistoryEntry},
+    domain::store::history::{self, HistorySummary, Outcome},
     ui::status_tag::status_tag,
 };
 
@@ -28,14 +28,14 @@ impl HistoryPanel {
         Self { list }
     }
 
-    pub fn set_entries(&mut self, entries: Vec<HistoryEntry>, cx: &mut Context<Self>) {
+    pub fn set_entries(&mut self, entries: Vec<HistorySummary>, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| {
             list.delegate_mut().set_entries(entries);
             cx.notify();
         });
     }
 
-    pub fn push(&mut self, entry: HistoryEntry, cx: &mut Context<Self>) {
+    pub fn push(&mut self, entry: HistorySummary, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| {
             list.delegate_mut().push(entry);
             cx.notify();
@@ -51,17 +51,17 @@ impl Render for HistoryPanel {
 
 #[derive(Default)]
 struct HistoryDelegate {
-    entries: Vec<HistoryEntry>,
+    entries: Vec<HistorySummary>,
     days: Vec<(NaiveDate, Range<usize>)>,
 }
 
 impl HistoryDelegate {
-    fn set_entries(&mut self, entries: Vec<HistoryEntry>) {
+    fn set_entries(&mut self, entries: Vec<HistorySummary>) {
         self.entries = entries;
         self.regroup();
     }
 
-    fn push(&mut self, entry: HistoryEntry) {
+    fn push(&mut self, entry: HistorySummary) {
         self.entries.insert(0, entry);
         self.regroup();
     }
@@ -70,7 +70,7 @@ impl HistoryDelegate {
         self.days = history::group_by_day(&self.entries, &Local);
     }
 
-    fn entry(&self, ix: IndexPath) -> Option<&HistoryEntry> {
+    fn entry(&self, ix: IndexPath) -> Option<&HistorySummary> {
         let (_, range) = self.days.get(ix.section)?;
         self.entries.get(range.start + ix.row)
     }
@@ -113,15 +113,15 @@ impl ListDelegate for HistoryDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         let entry = self.entry(ix)?;
-        let method = entry.request.method.as_str();
-        let url = entry.request.url.clone();
-        let (status, mut summary) = match entry.status {
-            Some(code) => (status_tag(code, code.to_string()), code.to_string()),
+        let method = entry.method.clone();
+        let url = entry.url.clone();
+        let (status, summary) = match entry.outcome {
+            Some(Outcome { status, elapsed }) => (
+                status_tag(status, status.to_string()),
+                format!("{status} · {} ms", elapsed.as_millis()),
+            ),
             None => (Tag::danger().small().child("Error"), "Error".to_string()),
         };
-        if let Some(elapsed) = entry.elapsed {
-            summary.push_str(&format!(" · {} ms", elapsed.as_millis()));
-        }
         let sent_at = entry.sent_at.with_timezone(&Local).format("%H:%M");
         let tooltip: SharedString = format!("{method} {url}\n{sent_at} · {summary}").into();
 

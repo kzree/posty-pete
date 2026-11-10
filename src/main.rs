@@ -1,9 +1,6 @@
-use std::{
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-    time::Duration,
-};
+use std::time::Duration;
 
-use chrono::{DateTime, Local, Utc};
+use chrono::Utc;
 use gpui::{
     App, AppContext, Bounds, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window,
@@ -18,6 +15,7 @@ use gpui_platform::application;
 mod actions;
 mod assets;
 mod domain;
+mod history;
 mod request_editor;
 mod response_view;
 mod sidebar;
@@ -28,14 +26,14 @@ use actions::{
     FocusUrl, OpenHistory, OpenLibrary, OpenSettings, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
 };
 use assets::AppAssets;
+use history::{History, HistoryEvent};
 use sidebar::{Sidebar, SidebarTab, history_panel::HistoryPanel};
 use status_bar::StatusBar;
 
 use crate::{
     domain::{
         http,
-        request::Request,
-        store::history::{self, HistoryStore},
+        store::history::{HistoryRecord, Outcome},
     },
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
@@ -62,7 +60,7 @@ struct BaseLayout {
     history_panel: Entity<HistoryPanel>,
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
-    history: Option<Arc<Mutex<HistoryStore>>>,
+    history: Entity<History>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -80,6 +78,14 @@ impl BaseLayout {
         let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
         let sidebar = cx.new(|_| Sidebar::new(history_panel.clone()));
         let loading_bar = cx.new(LoadingBar::new);
+        let history = cx.new(History::new);
+
+        let history_sub = cx.subscribe(&history, |this, _, event: &HistoryEvent, cx| {
+            this.history_panel.update(cx, |panel, cx| match event {
+                HistoryEvent::Loaded(entries) => panel.set_entries(entries.clone(), cx),
+                HistoryEvent::Recorded(summary) => panel.push(summary.clone(), cx),
+            });
+        });
 
         let sub = cx.subscribe_in(
             &request_editor,
@@ -102,7 +108,10 @@ impl BaseLayout {
                             Ok(Err(e)) => Err(format!("{e:#}")),
                             Err(e) => Err(format!("task failed: {e}")),
                         };
-                        let outcome = result.as_ref().ok().map(|r| (r.status, r.elapsed));
+                        let outcome = result.as_ref().ok().map(|r| Outcome {
+                            status: r.status,
+                            elapsed: r.elapsed,
+                        });
                         let (result, body_text) = cx
                             .background_executor()
                             .spawn(async move {
@@ -120,7 +129,16 @@ impl BaseLayout {
                             this.request_editor
                                 .update(cx, |editor, cx| editor.set_loading(false, cx));
                             GlobalLoading::end(cx);
-                            this.record_history(sent_at, request, outcome, cx);
+                            this.history.update(cx, |history, cx| {
+                                history.record(
+                                    HistoryRecord {
+                                        sent_at,
+                                        request,
+                                        outcome,
+                                    },
+                                    cx,
+                                )
+                            });
                             this.pending = None;
                         })
                         .ok();
@@ -129,7 +147,7 @@ impl BaseLayout {
             },
         );
 
-        let this = Self {
+        Self {
             request_editor,
             response_view,
             status_bar,
@@ -141,76 +159,14 @@ impl BaseLayout {
                 .redirect(domain::http::redirect_policy())
                 .build()
                 .expect("failed to build HTTP client"),
-            history: open_history(),
+            history,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
             focus_handle: cx.focus_handle(),
-            _subscriptions: vec![sub],
-        };
-        this.load_history(cx);
-        this
-    }
-
-    fn load_history(&self, cx: &mut Context<Self>) {
-        let Some(store) = self.history.clone() else {
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            let entries = cx
-                .background_spawn(async move {
-                    let store = lock(&store);
-                    let cutoff = history::retention_cutoff(&Local::now());
-                    if let Err(e) = store.prune(cutoff) {
-                        tracing::warn!("failed to prune history: {e:#}");
-                    }
-                    store.since(cutoff)
-                })
-                .await;
-            match entries {
-                Ok(entries) => {
-                    this.update(cx, |this, cx| {
-                        this.history_panel
-                            .update(cx, |panel, cx| panel.set_entries(entries, cx));
-                    })
-                    .ok();
-                }
-                Err(e) => tracing::error!("failed to load history: {e:#}"),
-            }
-        })
-        .detach();
-    }
-
-    fn record_history(
-        &self,
-        sent_at: DateTime<Utc>,
-        request: Request,
-        outcome: Option<(u16, Duration)>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(store) = self.history.clone() else {
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            let entry = cx
-                .background_spawn(async move {
-                    let (status, elapsed) = outcome.unzip();
-                    lock(&store).insert(sent_at, &request, status, elapsed)
-                })
-                .await;
-            match entry {
-                Ok(entry) => {
-                    this.update(cx, |this, cx| {
-                        this.history_panel
-                            .update(cx, |panel, cx| panel.push(entry, cx));
-                    })
-                    .ok();
-                }
-                Err(e) => tracing::warn!("failed to save request to history: {e:#}"),
-            }
-        })
-        .detach();
+            _subscriptions: vec![sub, history_sub],
+        }
     }
 
     fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
@@ -300,25 +256,6 @@ impl Render for BaseLayout {
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .child(self.status_bar.clone())
     }
-}
-
-fn open_history() -> Option<Arc<Mutex<HistoryStore>>> {
-    let Some(dirs) = directories::ProjectDirs::from("", "", "posty-pete") else {
-        tracing::error!("no home directory found; history is disabled");
-        return None;
-    };
-    let path = dirs.data_dir().join("history.db");
-    match HistoryStore::open(&path) {
-        Ok(store) => Some(Arc::new(Mutex::new(store))),
-        Err(e) => {
-            tracing::error!("failed to open history at {}: {e:#}", path.display());
-            None
-        }
-    }
-}
-
-fn lock(store: &Mutex<HistoryStore>) -> MutexGuard<'_, HistoryStore> {
-    store.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn run() {
