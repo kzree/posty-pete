@@ -1,10 +1,11 @@
-use std::{
-    mem,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
-};
+use std::mem;
 
 use anyhow::{Context as _, anyhow};
 use chrono::Local;
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+};
 use gpui::{App, AppContext, Context, EventEmitter, Task};
 
 use crate::domain::{
@@ -38,16 +39,22 @@ pub enum OpenMode {
 
 /// Owns the history database: opens it off the UI thread, prunes and loads it,
 /// and saves sent requests.
+///
+/// Database jobs run one at a time, in the order they were requested, and each
+/// job's event is emitted before the next starts. So events always match the
+/// database, e.g. a save can't land after a later Clear.
 pub struct History {
     state: State,
 }
+
+type Job = Box<dyn FnOnce(&HistoryStore) -> Option<HistoryEvent> + Send>;
 
 enum State {
     /// Records that arrive before the database is open are saved once it is.
     Opening {
         queued: Vec<HistoryRecord>,
     },
-    Ready(Arc<Mutex<HistoryStore>>),
+    Ready(mpsc::UnboundedSender<Job>),
     Unavailable,
 }
 
@@ -84,10 +91,15 @@ impl History {
 
     /// Loads an entry's full request; `None` if it's no longer in history.
     pub fn request(&self, id: i64, cx: &App) -> Task<anyhow::Result<Option<Request>>> {
-        match self.store() {
-            Some(store) => cx.background_spawn(async move { lock(&store).get(id) }),
-            None => Task::ready(Err(unavailable())),
+        let (sender, receiver) = oneshot::channel();
+        let queued = self.enqueue(Box::new(move |store| {
+            sender.send(store.get(id)).ok();
+            None
+        }));
+        if !queued {
+            return Task::ready(Err(unavailable()));
         }
+        cx.background_spawn(async move { receiver.await.unwrap_or_else(|_| Err(unavailable())) })
     }
 
     pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
@@ -139,32 +151,49 @@ impl History {
         }
     }
 
-    /// Runs `work` on the background executor and emits the event
-    /// `to_event` makes from its result.
-    fn run<T: Send + 'static>(
+    /// Queues `work` and emits the event `to_event` makes from its result.
+    fn run<T: 'static>(
         &self,
         cx: &mut Context<Self>,
         work: impl FnOnce(&HistoryStore) -> anyhow::Result<T> + Send + 'static,
-        to_event: impl FnOnce(anyhow::Result<T>) -> HistoryEvent + 'static,
+        to_event: impl FnOnce(anyhow::Result<T>) -> HistoryEvent + Send + 'static,
     ) {
-        let Some(store) = self.store() else {
+        if matches!(self.state, State::Ready(_)) {
+            self.enqueue(Box::new(move |store| Some(to_event(work(store)))));
+        } else {
             cx.emit(to_event(Err(unavailable())));
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move { work(&lock(&store)) })
-                .await;
-            this.update(cx, |_, cx| cx.emit(to_event(result))).ok();
-        })
-        .detach();
+        }
     }
 
-    fn store(&self) -> Option<Arc<Mutex<HistoryStore>>> {
-        match &self.state {
-            State::Ready(store) => Some(store.clone()),
-            State::Opening { .. } | State::Unavailable => None,
-        }
+    /// Returns `false` if the database isn't open.
+    fn enqueue(&self, job: Job) -> bool {
+        let State::Ready(jobs) = &self.state else {
+            return false;
+        };
+        jobs.unbounded_send(job).is_ok()
+    }
+
+    fn start_worker(store: HistoryStore, cx: &mut Context<Self>) -> mpsc::UnboundedSender<Job> {
+        let (sender, mut jobs) = mpsc::unbounded::<Job>();
+        cx.spawn(async move |this, cx| {
+            let mut store = store;
+            while let Some(job) = jobs.next().await {
+                let (returned, event) = cx
+                    .background_spawn(async move {
+                        let event = job(&store);
+                        (store, event)
+                    })
+                    .await;
+                store = returned;
+                if let Some(event) = event
+                    && this.update(cx, |_, cx| cx.emit(event)).is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+        sender
     }
 
     fn finish_opening(
@@ -179,7 +208,7 @@ impl History {
 
         match opened {
             Ok((store, entries)) => {
-                self.state = State::Ready(Arc::new(Mutex::new(store)));
+                self.state = State::Ready(Self::start_worker(store, cx));
                 cx.emit(HistoryEvent::Loaded(entries));
                 for record in queued {
                     self.record(record, cx);
@@ -216,8 +245,4 @@ fn open_and_load() -> anyhow::Result<(HistoryStore, Vec<HistorySummary>)> {
 
 fn unavailable() -> anyhow::Error {
     anyhow!("history is unavailable")
-}
-
-fn lock(store: &Mutex<HistoryStore>) -> MutexGuard<'_, HistoryStore> {
-    store.lock().unwrap_or_else(PoisonError::into_inner)
 }
