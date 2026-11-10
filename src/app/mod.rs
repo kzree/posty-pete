@@ -1,3 +1,4 @@
+mod navigation;
 mod routes;
 mod send;
 
@@ -13,11 +14,14 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
-use self::routes::AppRoute;
+use self::{
+    navigation::Direction,
+    routes::{AppRoute, RouteHistory},
+};
 use crate::{
     actions::{
-        FocusUrl, NewRequest, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SaveRequest,
-        SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
+        FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings, OpenTests,
+        SaveRequest, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
     collection_view::{CollectionView, CollectionViewEvent},
     collections::{Collections, CollectionsEvent},
@@ -46,6 +50,17 @@ fn show_error(title: &str, error: &anyhow::Error, window: &mut Window, cx: &mut 
     );
 }
 
+/// What the request editor holds. It matches the route whenever the route is
+/// `/` or a saved request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EditorContent {
+    Draft,
+    Saved {
+        collection_id: Uuid,
+        request_id: Uuid,
+    },
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LeftPanelState {
     Closed,
@@ -64,9 +79,10 @@ pub struct Workspace {
     client: reqwest::Client,
     history: Entity<History>,
     collections: Entity<Collections>,
-    current_route: AppRoute,
-    /// The saved request in the editor, as `(collection_id, request_id)`.
-    open_request: Option<(Uuid, Uuid)>,
+    route_history: RouteHistory,
+    editor_content: EditorContent,
+    /// The draft, kept while the editor holds a saved request.
+    draft: Option<domain::request::Request>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -126,8 +142,9 @@ impl Workspace {
                 .expect("failed to build HTTP client"),
             history,
             collections,
-            current_route: AppRoute::Request,
-            open_request: None,
+            route_history: RouteHistory::new(AppRoute::Request),
+            editor_content: EditorContent::Draft,
+            draft: None,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -158,11 +175,8 @@ impl Workspace {
                 );
             }
             HistoryEvent::Opened { request, mode } => {
-                self.set_open_request(None, window, cx);
-                self.request_editor
-                    .update(cx, |editor, cx| editor.load_request(request, window, cx));
-                self.response_view
-                    .update(cx, |view, cx| view.clear(window, cx));
+                self.load_editor(EditorContent::Draft, request, window, cx);
+                self.navigate(AppRoute::Request, window, cx);
                 if *mode == OpenMode::Send {
                     self.request_editor.update(cx, |editor, cx| editor.send(cx));
                 }
@@ -189,12 +203,13 @@ impl Workspace {
                 self.library_panel.update(cx, |panel, cx| {
                     panel.set_collections(collections, window, cx)
                 });
-                if let Some((collection_id, request_id)) = self.open_request
-                    && self
-                        .find_saved_request(collection_id, request_id, cx)
-                        .is_none()
-                {
-                    self.set_open_request(None, window, cx);
+                if !self.route_exists(self.editor_route(), cx) {
+                    // What was in the editor stays there, as the draft.
+                    self.editor_content = EditorContent::Draft;
+                    self.draft = None;
+                }
+                if !self.route_exists(self.current_route(), cx) {
+                    self.replace_route(self.editor_route(), window, cx);
                 } else {
                     self.sync_editor_name(window, cx);
                 }
@@ -203,6 +218,7 @@ impl Workspace {
                     self.collection_view
                         .update(cx, |view, cx| view.show(id, collection, window, cx));
                 }
+                cx.notify();
             }
             CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
         }
@@ -242,9 +258,6 @@ impl Workspace {
             }
             LibraryPanelEvent::DeleteCollection(id) => {
                 let id = *id;
-                if self.current_route == AppRoute::Collection(id) {
-                    self.navigate(AppRoute::Request, window, cx);
-                }
                 self.collections
                     .update(cx, |collections, cx| collections.delete(id, cx));
             }
@@ -314,14 +327,19 @@ impl Workspace {
         else {
             return;
         };
-        if self.current_route != AppRoute::Request {
-            self.navigate(AppRoute::Request, window, cx);
-        }
-        self.request_editor
-            .update(cx, |editor, cx| editor.load_request(&request, window, cx));
-        self.response_view
-            .update(cx, |view, cx| view.clear(window, cx));
-        self.set_open_request(Some((collection_id, request_id)), window, cx);
+        let content = EditorContent::Saved {
+            collection_id,
+            request_id,
+        };
+        self.load_editor(content, &request, window, cx);
+        self.navigate(
+            AppRoute::SavedRequest {
+                collection_id,
+                request_id,
+            },
+            window,
+            cx,
+        );
     }
 
     /// Opens a blank, unlinked request on `/`, discarding unsaved edits.
@@ -329,17 +347,35 @@ impl Workspace {
         if self.refuse_while_pending(window, cx) {
             return;
         }
-        if self.current_route != AppRoute::Request {
-            self.navigate(AppRoute::Request, window, cx);
-        }
-        self.request_editor.update(cx, |editor, cx| {
-            editor.load_request(&domain::request::Request::default(), window, cx)
-        });
-        self.response_view
-            .update(cx, |view, cx| view.clear(window, cx));
-        self.set_open_request(None, window, cx);
+        let blank = domain::request::Request::default();
+        self.load_editor(EditorContent::Draft, &blank, window, cx);
+        self.navigate(AppRoute::Request, window, cx);
         self.request_editor
             .update(cx, |editor, cx| editor.focus_url(window, cx));
+    }
+
+    /// Loads `request` into the editor and clears the response. Loading a draft
+    /// replaces it; loading a saved request over the draft keeps a snapshot of it.
+    fn load_editor(
+        &mut self,
+        content: EditorContent,
+        request: &domain::request::Request,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.draft = match (self.editor_content, content) {
+            (EditorContent::Draft, EditorContent::Saved { .. }) => {
+                Some(self.request_editor.read(cx).build_request(cx))
+            }
+            (_, EditorContent::Draft) => None,
+            _ => self.draft.take(),
+        };
+        self.editor_content = content;
+        self.request_editor
+            .update(cx, |editor, cx| editor.load_request(request, window, cx));
+        self.response_view
+            .update(cx, |view, cx| view.clear(window, cx));
+        self.sync_editor_name(window, cx);
     }
 
     /// Shows a toast and returns `true` while a request is in flight.
@@ -353,7 +389,7 @@ impl Workspace {
             cx,
         );
         // A click may have selected another row; put the selection back.
-        self.set_open_request(self.open_request, window, cx);
+        self.sync_library_selection(window, cx);
         true
     }
 
@@ -369,45 +405,38 @@ impl Workspace {
             .find_request(request_id)
     }
 
-    fn set_open_request(
-        &mut self,
-        open_request: Option<(Uuid, Uuid)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.open_request = open_request;
-        self.sync_library_selection(window, cx);
-        self.sync_editor_name(window, cx);
-    }
-
     /// Selects the library row for what the main pane shows.
     fn sync_library_selection(&mut self, window: &mut Window, cx: &mut App) {
-        let selected = match self.current_route {
-            AppRoute::Request => self.open_request.map(|(_, request_id)| request_id),
+        let selected = match self.current_route() {
+            AppRoute::SavedRequest { request_id, .. } => Some(request_id),
             AppRoute::Collection(id) => Some(id),
-            AppRoute::Settings => None,
+            AppRoute::Request | AppRoute::Settings => None,
         };
         self.library_panel
             .update(cx, |panel, cx| panel.set_selected(selected, window, cx));
     }
 
-    /// Hands the editor the stored name of the open request.
+    /// Hands the editor the stored name of the saved request it holds.
     fn sync_editor_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self
-            .open_request
-            .and_then(|(collection_id, request_id)| {
-                self.find_saved_request(collection_id, request_id, cx)
-            })
-            .map(|saved| saved.name.clone());
+        let name = match self.editor_content {
+            EditorContent::Saved {
+                collection_id,
+                request_id,
+            } => self
+                .find_saved_request(collection_id, request_id, cx)
+                .map(|saved| saved.name.clone()),
+            EditorContent::Draft => None,
+        };
         self.request_editor
             .update(cx, |editor, cx| editor.set_saved_name(name, window, cx));
     }
 
     fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.current_route != AppRoute::Request {
-            return;
-        }
-        let Some((collection_id, request_id)) = self.open_request else {
+        let AppRoute::SavedRequest {
+            collection_id,
+            request_id,
+        } = self.current_route()
+        else {
             return;
         };
         let (request, name) = self.request_editor.update(cx, |editor, cx| {
@@ -432,7 +461,7 @@ impl Workspace {
                 self.collections
                     .update(cx, |collections, cx| collections.rename(id, id, name, cx));
             }
-            CollectionViewEvent::Back => self.navigate(AppRoute::Request, window, cx),
+            CollectionViewEvent::Back => self.go_back_or_to_editor(window, cx),
         }
     }
 
@@ -525,6 +554,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
                 this.new_request(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &GoBack, window, cx| {
+                this.go(Direction::Back, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &GoForward, window, cx| {
+                this.go(Direction::Forward, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.toggle_left_panel(cx);
             }))
@@ -553,9 +588,18 @@ impl Render for Workspace {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
-                WindowTitleBar::new("Posty pete").on_new_request(
-                    cx.listener(|this, _, window, cx| this.new_request(window, cx)),
-                ),
+                WindowTitleBar::new("Posty pete")
+                    .can_go_back(self.can_go(Direction::Back, cx))
+                    .can_go_forward(self.can_go(Direction::Forward, cx))
+                    .on_back(
+                        cx.listener(|this, _, window, cx| this.go(Direction::Back, window, cx)),
+                    )
+                    .on_forward(
+                        cx.listener(|this, _, window, cx| this.go(Direction::Forward, window, cx)),
+                    )
+                    .on_new_request(
+                        cx.listener(|this, _, window, cx| this.new_request(window, cx)),
+                    ),
             )
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .child(self.status_bar.clone())
