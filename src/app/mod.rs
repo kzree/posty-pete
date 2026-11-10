@@ -11,7 +11,7 @@ use std::time::Duration;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, NavigationDirection, ParentElement, Render, Role, StatefulInteractiveElement,
-    Styled, Subscription, Task, Window, div, px,
+    Styled, Subscription, Task, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, ResizableState, WindowExt, h_resizable, input::Escape, notification::Notification,
@@ -777,6 +777,10 @@ impl Render for Workspace {
         let main_content = self.routes(cx);
         let (back_labels, on_back_select) = self.history_menu(Direction::Back, cx);
         let (forward_labels, on_forward_select) = self.history_menu(Direction::Forward, cx);
+        let title_collection = match self.current_route() {
+            AppRoute::SavedRequest { collection_id, .. } => Some(collection_id),
+            _ => None,
+        };
 
         // A hidden panel would still leave its resize handle behind.
         let body = if self.left_panel == LeftPanelState::Open {
@@ -865,9 +869,12 @@ impl Render for Workspace {
                     )
                     .back_menu(back_labels, on_back_select)
                     .forward_menu(forward_labels, on_forward_select)
-                    .on_new_request(
-                        cx.listener(|this, _, window, cx| this.new_request(window, cx)),
-                    ),
+                    .on_new_request(cx.listener(|this, _, window, cx| this.new_request(window, cx)))
+                    .when_some(title_collection, |this, id| {
+                        this.on_context_click(cx.listener(move |this, _, window, cx| {
+                            this.navigate(AppRoute::Collection(id), window, cx)
+                        }))
+                    }),
             )
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .child(self.status_bar.clone())

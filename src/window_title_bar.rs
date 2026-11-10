@@ -1,9 +1,9 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, HighlightStyle, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, RenderOnce, SharedString, Styled, StyledText, Window, div,
-    prelude::FluentBuilder, px,
+    AnyElement, App, ClickEvent, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Pixels, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled,
+    Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, TITLE_BAR_HEIGHT, TitleBar,
@@ -52,21 +52,6 @@ impl WindowTitle {
 
     pub fn os_title(&self) -> String {
         format!("{} — {}", self.name, crate::WINDOW_TITLE)
-    }
-
-    fn styled_text(&self, context_color: gpui::Hsla) -> StyledText {
-        match &self.context {
-            Some(context) => {
-                let prefix = format!("{context}{CONTEXT_SEPARATOR}");
-                let muted = HighlightStyle {
-                    color: Some(context_color),
-                    ..Default::default()
-                };
-                StyledText::new(format!("{prefix}{}", self.name))
-                    .with_highlights([(0..prefix.len(), muted)])
-            }
-            None => StyledText::new(self.name.clone()),
-        }
     }
 }
 
@@ -130,6 +115,7 @@ pub struct WindowTitleBar {
     on_back: Option<ClickHandler>,
     on_forward: Option<ClickHandler>,
     on_new_request: Option<ClickHandler>,
+    on_context_click: Option<ClickHandler>,
     back_menu: Option<HistoryMenu>,
     forward_menu: Option<HistoryMenu>,
 }
@@ -175,6 +161,7 @@ impl WindowTitleBar {
             on_back: None,
             on_forward: None,
             on_new_request: None,
+            on_context_click: None,
             back_menu: None,
             forward_menu: None,
         }
@@ -239,6 +226,60 @@ impl WindowTitleBar {
         self.on_new_request = Some(Box::new(handler));
         self
     }
+
+    /// Makes the title's context (e.g. the collection name) clickable.
+    pub fn on_context_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_context_click = Some(Box::new(handler));
+        self
+    }
+}
+
+/// The context shrinks first (to nothing, with its own ellipsis) so the name
+/// stays readable; the name truncates only once it alone is too wide.
+fn title_text(
+    title: WindowTitle,
+    on_context_click: Option<ClickHandler>,
+    muted: Hsla,
+    foreground: Hsla,
+) -> AnyElement {
+    let Some(context) = title.context else {
+        return div()
+            .min_w_0()
+            .truncate()
+            .child(title.name)
+            .into_any_element();
+    };
+
+    let context = div()
+        .id("title-context")
+        .min_w_0()
+        .truncate()
+        .text_color(muted)
+        .child(context)
+        .when_some(on_context_click, |this, on_click| {
+            this.role(Role::Link)
+                .cursor_pointer()
+                .hover(|style| style.text_color(foreground))
+                // Only this part stops the mouse-down, so the rest of the title still drags.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(on_click)
+        });
+
+    h_flex()
+        .min_w_0()
+        .child(
+            h_flex()
+                .min_w_0()
+                .overflow_hidden()
+                .gap_1()
+                .child(context)
+                .child(div().flex_none().mr_1().text_color(muted).child("/")),
+        )
+        .child(div().flex_none().max_w_full().truncate().child(title.name))
+        .into_any_element()
 }
 
 fn with_click(button: Button, handler: Option<ClickHandler>) -> Button {
@@ -311,12 +352,12 @@ impl RenderOnce for WindowTitleBar {
                         .pr(title_right)
                         .gap_1p5()
                         .text_sm()
-                        .child(
-                            div()
-                                .min_w_0()
-                                .truncate()
-                                .child(self.title.styled_text(cx.theme().muted_foreground)),
-                        )
+                        .child(title_text(
+                            self.title,
+                            self.on_context_click,
+                            cx.theme().muted_foreground,
+                            cx.theme().foreground,
+                        ))
                         .when(self.edited, |this| {
                             this.child(
                                 div()
