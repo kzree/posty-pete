@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -51,7 +53,7 @@ pub enum Location {
 /// `Location::NewCollection`. Returns the collection and request ids, or
 /// `None` (changing nothing) if the collection or folder doesn't exist.
 pub fn add_request_at(
-    collections: &mut Vec<Collection>,
+    collections: &mut Vec<Arc<Collection>>,
     location: Location,
     name: impl Into<String>,
     request: Request,
@@ -64,25 +66,37 @@ pub fn add_request_at(
             let mut collection = Collection::new(NEW_COLLECTION_NAME);
             collection.items.push(item);
             let collection_id = collection.id;
-            collections.push(collection);
+            collections.push(Arc::new(collection));
             Some((collection_id, request_id))
         }
         Location::Folder {
             collection_id,
             folder_id,
-        } => collections
-            .iter_mut()
-            .find(|collection| collection.id == collection_id)?
-            .add_item(folder_id, item)
-            .then_some((collection_id, request_id)),
+        } => modify(collections, collection_id, |collection| {
+            collection.add_item(folder_id, item)
+        })
+        .then_some((collection_id, request_id)),
     }
+}
+
+/// Runs `f` on the collection, copying it first if it's shared. Returns what
+/// `f` returns, or `false` if there's no such collection.
+pub fn modify(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    f: impl FnOnce(&mut Collection) -> bool,
+) -> bool {
+    collections
+        .iter_mut()
+        .find(|collection| collection.id == collection_id)
+        .is_some_and(|collection| f(Arc::make_mut(collection)))
 }
 
 /// The name and location Save As starts with. A saved request (`linked`, as
 /// collection and request ids) goes next to itself, named `typed_name` or
 /// else its stored name; a draft goes to the first collection's root.
 pub fn save_as_defaults(
-    collections: &[Collection],
+    collections: &[Arc<Collection>],
     linked: Option<(Uuid, Uuid)>,
     typed_name: Option<String>,
 ) -> (String, Location) {
@@ -330,6 +344,13 @@ mod tests {
         }
     }
 
+    fn json(collections: &[Arc<Collection>]) -> Vec<serde_json::Value> {
+        collections
+            .iter()
+            .map(|collection| serde_json::to_value(&**collection).unwrap())
+            .collect()
+    }
+
     fn folder(collection: &Collection, path: &[usize]) -> Folder {
         let mut items = &collection.items;
         let mut found = None;
@@ -491,7 +512,7 @@ mod tests {
     fn add_request_at_a_folder() {
         let f = fixture();
         let collection_id = f.collection.id;
-        let mut collections = vec![f.collection];
+        let mut collections = vec![Arc::new(f.collection)];
         let location = Location::Folder {
             collection_id,
             folder_id: Some(f.inner),
@@ -517,7 +538,7 @@ mod tests {
     fn add_request_at_the_root() {
         let f = fixture();
         let collection_id = f.collection.id;
-        let mut collections = vec![f.collection];
+        let mut collections = vec![Arc::new(f.collection)];
         let location = Location::Folder {
             collection_id,
             folder_id: None,
@@ -532,7 +553,7 @@ mod tests {
 
     #[test]
     fn add_request_at_a_new_collection() {
-        let mut collections = vec![fixture().collection];
+        let mut collections = vec![Arc::new(fixture().collection)];
 
         let (collection_id, id) = add_request_at(
             &mut collections,
@@ -554,8 +575,8 @@ mod tests {
     fn add_request_at_a_missing_location_changes_nothing() {
         let f = fixture();
         let collection_id = f.collection.id;
-        let mut collections = vec![f.collection];
-        let before = serde_json::to_value(&collections).unwrap();
+        let mut collections = vec![Arc::new(f.collection)];
+        let before = json(&collections);
 
         let missing_folder = Location::Folder {
             collection_id,
@@ -575,15 +596,18 @@ mod tests {
             );
         }
 
-        assert_eq!(serde_json::to_value(&collections).unwrap(), before);
+        assert_eq!(json(&collections), before);
     }
 
     #[test]
     fn save_as_defaults_put_a_nested_request_in_its_folder_under_its_stored_name() {
         let f = fixture();
         let collection_id = f.collection.id;
-        let (name, location) =
-            save_as_defaults(&[f.collection], Some((collection_id, f.deep_request)), None);
+        let (name, location) = save_as_defaults(
+            &[Arc::new(f.collection)],
+            Some((collection_id, f.deep_request)),
+            None,
+        );
         assert_eq!(name, "Deep");
         assert_eq!(
             location,
@@ -599,7 +623,7 @@ mod tests {
         let f = fixture();
         let collection_id = f.collection.id;
         let (name, location) = save_as_defaults(
-            &[f.collection],
+            &[Arc::new(f.collection)],
             Some((collection_id, f.root_request)),
             Some("Edited".into()),
         );
@@ -618,7 +642,11 @@ mod tests {
         let first = fixture().collection;
         let second = Collection::new("Other");
         let first_id = first.id;
-        let (name, location) = save_as_defaults(&[first, second], None, Some("Ignored".into()));
+        let (name, location) = save_as_defaults(
+            &[Arc::new(first), Arc::new(second)],
+            None,
+            Some("Ignored".into()),
+        );
         assert_eq!(name, NEW_REQUEST_NAME);
         assert_eq!(
             location,
@@ -634,5 +662,46 @@ mod tests {
         let (name, location) = save_as_defaults(&[], None, None);
         assert_eq!(name, NEW_REQUEST_NAME);
         assert_eq!(location, Location::NewCollection);
+    }
+
+    #[test]
+    fn modify_copies_a_shared_collection_and_keeps_the_others_shared() {
+        let f = fixture();
+        let changed_id = f.collection.id;
+        let mut collections = vec![Arc::new(f.collection), Arc::new(Collection::new("Other"))];
+        let held = collections.clone();
+
+        assert!(modify(&mut collections, changed_id, |collection| {
+            collection.rename(f.root_request, "Renamed")
+        }));
+
+        assert_eq!(
+            collections[0].find_request(f.root_request).unwrap().name,
+            "Renamed"
+        );
+        assert_eq!(held[0].find_request(f.root_request).unwrap().name, "Root");
+        assert!(!Arc::ptr_eq(&collections[0], &held[0]));
+        assert!(Arc::ptr_eq(&collections[1], &held[1]));
+    }
+
+    #[test]
+    fn modify_an_unshared_collection_in_place() {
+        let mut collections = vec![Arc::new(fixture().collection)];
+        let id = collections[0].id;
+        let before = Arc::as_ptr(&collections[0]);
+
+        assert!(modify(&mut collections, id, |collection| {
+            collection.name = "Renamed".into();
+            true
+        }));
+
+        assert_eq!(Arc::as_ptr(&collections[0]), before);
+        assert_eq!(collections[0].name, "Renamed");
+    }
+
+    #[test]
+    fn modify_a_missing_collection_does_nothing() {
+        let mut collections = vec![Arc::new(Collection::new("API"))];
+        assert!(!modify(&mut collections, Uuid::new_v4(), |_| true));
     }
 }

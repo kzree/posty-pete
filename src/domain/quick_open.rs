@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use uuid::Uuid;
 
 use super::{
@@ -51,7 +53,7 @@ impl Entry {
 }
 
 /// Every collection followed by its requests, in tree order.
-pub fn entries(collections: &[Collection]) -> Vec<Entry> {
+pub fn entries(collections: &[Arc<Collection>]) -> Vec<Entry> {
     let mut entries = Vec::new();
     for collection in collections {
         entries.push(Entry::new(
@@ -177,7 +179,7 @@ mod tests {
         ))
     }
 
-    fn sample() -> Vec<Collection> {
+    fn sample() -> Vec<Arc<Collection>> {
         let mut users = Folder::new("Users");
         users.items = vec![
             request("Get user", HttpMethod::Get),
@@ -187,7 +189,7 @@ mod tests {
         api.items = vec![request("Health", HttpMethod::Get), Item::Folder(users)];
         let mut billing = Collection::new("Billing");
         billing.items = vec![request("List invoices", HttpMethod::Get)];
-        vec![api, billing]
+        vec![Arc::new(api), Arc::new(billing)]
     }
 
     fn names(entries: &[Entry], query: &str) -> Vec<String> {
@@ -268,7 +270,7 @@ mod tests {
             request("Orders", HttpMethod::Get),
             request("Order", HttpMethod::Get),
         ];
-        let entries = entries(&[collection]);
+        let entries = entries(&[Arc::new(collection)]);
         assert_eq!(
             names(&entries, "order"),
             ["Order", "Orders", "Place order", "Reorder"]

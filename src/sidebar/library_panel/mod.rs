@@ -2,6 +2,8 @@ mod delegate;
 mod menu;
 mod tree;
 
+use std::sync::Arc;
+
 use gpui::{
     Anchor, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Subscription, Window, div,
@@ -104,7 +106,7 @@ impl LibraryPanel {
 
     pub fn set_collections(
         &mut self,
-        collections: Vec<Collection>,
+        collections: Vec<Arc<Collection>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -203,6 +205,8 @@ impl Render for LibraryPanel {
 
 #[cfg(test)]
 mod test_support {
+    use std::sync::Arc;
+
     use uuid::Uuid;
 
     use super::tree::Row;
@@ -231,7 +235,7 @@ mod test_support {
     }
 
     /// API: Root request, Outer > Inner > Deep request.
-    pub(super) fn fixture() -> (Vec<Collection>, Ids) {
+    pub(super) fn fixture() -> (Vec<Arc<Collection>>, Ids) {
         let mut collection = Collection::new("API");
         let outer = Folder::new("Outer");
         let inner = Folder::new("Inner");
@@ -248,7 +252,10 @@ mod test_support {
         collection.add_item(None, Item::Folder(outer));
         collection.add_item(Some(ids.outer), Item::Folder(inner));
         collection.add_item(Some(ids.inner), Item::Request(deep));
-        (vec![collection, Collection::new("Empty")], ids)
+        (
+            vec![Arc::new(collection), Arc::new(Collection::new("Empty"))],
+            ids,
+        )
     }
 
     /// Each row as "<depth>:<name>", with "Collections" for the section header.

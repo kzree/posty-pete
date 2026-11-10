@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use gpui::{
     App, Context, IntoElement, ParentElement, Styled, Window, div, prelude::FluentBuilder as _, px,
@@ -16,7 +16,7 @@ use super::{
 use crate::{domain::collection::Collection, sidebar::placeholder, ui::method_label::method_label};
 
 pub(super) struct LibraryDelegate {
-    collections: Vec<Collection>,
+    collections: Vec<Arc<Collection>>,
     pub(super) section_expanded: bool,
     /// Expanded collections and folders.
     expanded: HashSet<Uuid>,
@@ -37,7 +37,7 @@ impl Default for LibraryDelegate {
 }
 
 impl LibraryDelegate {
-    pub(super) fn set_collections(&mut self, collections: Vec<Collection>) {
+    pub(super) fn set_collections(&mut self, collections: Vec<Arc<Collection>>) {
         let existing = container_ids(&collections);
         self.expanded.retain(|id| existing.contains(id));
         self.collections = collections;
@@ -405,7 +405,7 @@ mod tests {
             expanded: HashSet::from([ids.collection, ids.outer, ids.inner]),
             ..Default::default()
         };
-        collections[0].remove(ids.outer);
+        Arc::make_mut(&mut collections[0]).remove(ids.outer);
         delegate.set_collections(collections);
         assert_eq!(delegate.expanded, HashSet::from([ids.collection]));
     }

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use gpui::SharedString;
 use uuid::Uuid;
@@ -37,7 +37,7 @@ pub(super) enum NodeKind {
 
 /// No rows at all when there are no collections, so the empty state shows.
 pub(super) fn flatten(
-    collections: &[Collection],
+    collections: &[Arc<Collection>],
     section_expanded: bool,
     expanded: &HashSet<Uuid>,
 ) -> Vec<Row> {
@@ -103,7 +103,7 @@ fn flatten_items(
     }
 }
 
-pub(super) fn container_ids(collections: &[Collection]) -> HashSet<Uuid> {
+pub(super) fn container_ids(collections: &[Arc<Collection>]) -> HashSet<Uuid> {
     fn walk(items: &[Item], ids: &mut HashSet<Uuid>) {
         for item in items {
             if let Item::Folder(folder) = item {

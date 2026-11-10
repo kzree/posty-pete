@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use gpui::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
@@ -37,7 +37,7 @@ impl SearchableListItem for LocationItem {
 type LocationSelect = SelectState<SearchableVec<LocationItem>>;
 
 /// "New collection", then every collection and folder.
-pub fn locations(collections: &[Collection]) -> Vec<LocationItem> {
+pub fn locations(collections: &[Arc<Collection>]) -> Vec<LocationItem> {
     let new_collection = LocationItem {
         location: Location::NewCollection,
         label: "New collection".into(),
@@ -183,7 +183,7 @@ mod tests {
         api.add_item(None, Item::Folder(users));
         let other = Collection::new("Other");
 
-        let items = locations(&[api.clone(), other.clone()]);
+        let items = locations(&[Arc::new(api.clone()), Arc::new(other.clone())]);
         let labels: Vec<_> = items.iter().map(|item| item.label.to_string()).collect();
         assert_eq!(labels, ["New collection", "API", "API / Users", "Other"]);
         assert_eq!(items[0].location, Location::NewCollection);

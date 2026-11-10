@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use futures::{
     StreamExt,
@@ -37,7 +39,7 @@ pub enum CollectionsEvent {
 /// with the initial load. So saves of a collection can't land out of order.
 pub struct Collections {
     /// Sorted by name, case-insensitively.
-    collections: Vec<Collection>,
+    collections: Vec<Arc<Collection>>,
     load_state: LoadState,
     jobs: mpsc::UnboundedSender<Job>,
 }
@@ -79,7 +81,7 @@ impl Collections {
         }
     }
 
-    pub fn all(&self) -> &[Collection] {
+    pub fn all(&self) -> &[Arc<Collection>] {
         &self.collections
     }
 
@@ -88,13 +90,17 @@ impl Collections {
     }
 
     pub fn get(&self, id: Uuid) -> Option<&Collection> {
-        self.collections.iter().find(|c| c.id == id)
+        self.collections.iter().find(|c| c.id == id).map(|c| &**c)
+    }
+
+    pub fn shared(&self, id: Uuid) -> Option<Arc<Collection>> {
+        self.collections.iter().find(|c| c.id == id).cloned()
     }
 
     pub fn create(&mut self, name: impl Into<String>, cx: &mut Context<Self>) -> Uuid {
         let collection = Collection::new(name);
         let id = collection.id;
-        self.collections.push(collection);
+        self.collections.push(Arc::new(collection));
         self.sort();
         self.changed(id, cx);
         id
@@ -243,18 +249,14 @@ impl Collections {
         }
     }
 
-    /// Runs `f` on the collection; returns what it returns, or `false` if there's no such collection.
     fn modify(&mut self, collection_id: Uuid, f: impl FnOnce(&mut Collection) -> bool) -> bool {
-        self.collections
-            .iter_mut()
-            .find(|c| c.id == collection_id)
-            .is_some_and(f)
+        collection::modify(&mut self.collections, collection_id, f)
     }
 
     fn changed(&mut self, collection_id: Uuid, cx: &mut Context<Self>) {
         cx.emit(CollectionsEvent::Changed);
         cx.notify();
-        let Some(collection) = self.get(collection_id).cloned() else {
+        let Some(collection) = self.shared(collection_id) else {
             return;
         };
         self.enqueue("Couldn't save collection", cx, move |store| {
@@ -308,7 +310,7 @@ impl Collections {
         match loaded {
             Ok(loaded) => {
                 self.load_state = LoadState::Loaded;
-                self.collections.extend(loaded);
+                self.collections.extend(loaded.into_iter().map(Arc::new));
                 self.sort();
                 cx.emit(CollectionsEvent::Changed);
                 cx.notify();

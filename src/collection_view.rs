@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
@@ -44,7 +46,7 @@ impl CollectionTab {
 pub struct CollectionView {
     /// The id last passed to `show`, kept when the collection is missing.
     id: Option<Uuid>,
-    collection: Option<Collection>,
+    collection: Option<Arc<Collection>>,
     active_tab: CollectionTab,
     name: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
@@ -78,7 +80,7 @@ impl CollectionView {
     pub fn show(
         &mut self,
         id: Uuid,
-        collection: Option<Collection>,
+        collection: Option<Arc<Collection>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

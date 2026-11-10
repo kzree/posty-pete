@@ -82,7 +82,7 @@ impl Workspace {
             self.sync_editor_name(window, cx);
         }
         if let Some(id) = self.collection_view.read(cx).id() {
-            let collection = self.collections.read(cx).get(id).cloned();
+            let collection = self.collections.read(cx).shared(id);
             self.collection_view
                 .update(cx, |view, cx| view.show(id, collection, window, cx));
         }

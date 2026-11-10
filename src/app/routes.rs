@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use gpui::{App, Context, Div, ParentElement, SharedString, Styled, Window, div};
 use gpui_component::{resizable_panel, v_resizable};
@@ -44,7 +44,7 @@ impl AppRoute {
 }
 
 /// The title for `route`, from the stored names in `collections`.
-pub(super) fn route_title(route: AppRoute, collections: &[Collection]) -> WindowTitle {
+pub(super) fn route_title(route: AppRoute, collections: &[Arc<Collection>]) -> WindowTitle {
     let find = |id| collections.iter().find(|collection| collection.id == id);
     match route {
         AppRoute::Request => WindowTitle::new("Untitled request"),
@@ -253,7 +253,7 @@ impl Workspace {
                 self.load_route_into_editor(route, window, cx)
             }
             AppRoute::Collection(id) => {
-                let collection = self.collections.read(cx).get(id).cloned();
+                let collection = self.collections.read(cx).shared(id);
                 self.collection_view
                     .update(cx, |view, cx| view.show(id, collection, window, cx));
             }
@@ -366,13 +366,13 @@ mod tests {
         request::Request,
     };
 
-    fn library() -> (Vec<Collection>, Uuid, Uuid) {
+    fn library() -> (Vec<Arc<Collection>>, Uuid, Uuid) {
         let mut collection = Collection::new("My API");
         let saved = SavedRequest::new("Get users", Request::default());
         let request_id = saved.id;
         collection.add_item(None, Item::Request(saved));
         let collection_id = collection.id;
-        (vec![collection], collection_id, request_id)
+        (vec![Arc::new(collection)], collection_id, request_id)
     }
 
     #[test]
@@ -413,7 +413,7 @@ mod tests {
     #[test]
     fn renamed_items_use_the_stored_name() {
         let (mut collections, collection_id, request_id) = library();
-        collections[0].rename(request_id, "List users");
+        Arc::make_mut(&mut collections[0]).rename(request_id, "List users");
         let route = AppRoute::SavedRequest {
             collection_id,
             request_id,
