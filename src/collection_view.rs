@@ -233,7 +233,7 @@ impl Render for CollectionView {
                     .truncate()
                     .child(collection.name.clone()),
             )
-            .child(tabs)
+            .child(div().px_4().child(tabs))
             .child(content)
             .into_any_element()
     }

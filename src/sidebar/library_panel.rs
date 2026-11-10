@@ -262,7 +262,8 @@ fn render_node(node: &Node, cx: &App) -> ListItem {
 
     ListItem::new(node.id)
         .accessibility_label(label)
-        .text_sm()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
         .child(
             h_flex()
                 .w_full()
