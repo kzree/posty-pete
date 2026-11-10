@@ -68,99 +68,103 @@ impl History {
     }
 
     pub fn open(&mut self, id: i64, mode: OpenMode, cx: &mut Context<Self>) {
-        let request = self.request(id, cx);
-        cx.spawn(async move |this, cx| {
-            let event = match request.await {
+        self.run(
+            cx,
+            move |store| store.get(id),
+            move |result| match result {
                 Ok(Some(request)) => HistoryEvent::Opened { request, mode },
                 Ok(None) => HistoryEvent::Deleted(id),
                 Err(error) => HistoryEvent::Failed {
                     title: "Couldn't open request",
                     error,
                 },
-            };
-            this.update(cx, |_, cx| cx.emit(event)).ok();
-        })
-        .detach();
+            },
+        );
     }
 
     /// Loads an entry's full request; `None` if it's no longer in history.
     pub fn request(&self, id: i64, cx: &App) -> Task<anyhow::Result<Option<Request>>> {
-        let State::Ready(store) = &self.state else {
-            return Task::ready(Err(anyhow!("history is unavailable")));
-        };
-        let store = store.clone();
-        cx.background_spawn(async move { lock(&store).get(id) })
+        match self.store() {
+            Some(store) => cx.background_spawn(async move { lock(&store).get(id) }),
+            None => Task::ready(Err(unavailable())),
+        }
     }
 
     pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
-        let State::Ready(store) = &self.state else {
-            return;
-        };
-        let store = store.clone();
-
-        cx.spawn(async move |this, cx| {
-            let deleted = cx
-                .background_spawn(async move { lock(&store).delete(id) })
-                .await;
-            let event = match deleted {
+        self.run(
+            cx,
+            move |store| store.delete(id),
+            move |result| match result {
                 // Already gone counts as deleted, so the panel drops the row.
                 Ok(_) => HistoryEvent::Deleted(id),
                 Err(error) => HistoryEvent::Failed {
                     title: "Couldn't delete request",
                     error,
                 },
-            };
-            this.update(cx, |_, cx| cx.emit(event)).ok();
-        })
-        .detach();
+            },
+        );
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        let State::Ready(store) = &self.state else {
-            return;
-        };
-        let store = store.clone();
-
-        cx.spawn(async move |this, cx| {
-            let cleared = cx
-                .background_spawn(async move { lock(&store).clear() })
-                .await;
-            let event = match cleared {
+        self.run(
+            cx,
+            |store| store.clear(),
+            |result| match result {
                 Ok(_) => HistoryEvent::Cleared,
                 Err(error) => HistoryEvent::Failed {
                     title: "Couldn't clear history",
                     error,
                 },
-            };
-            this.update(cx, |_, cx| cx.emit(event)).ok();
+            },
+        );
+    }
+
+    /// Records sent while the database opens are saved once it's ready.
+    pub fn record(&mut self, record: HistoryRecord, cx: &mut Context<Self>) {
+        match &mut self.state {
+            State::Opening { queued } => queued.push(record),
+            // Already reported once when opening failed.
+            State::Unavailable => {}
+            State::Ready(_) => self.run(
+                cx,
+                move |store| store.insert(&record),
+                |result| match result {
+                    Ok(summary) => HistoryEvent::Recorded(summary),
+                    Err(error) => HistoryEvent::Failed {
+                        title: "Couldn't save request to history",
+                        error,
+                    },
+                },
+            ),
+        }
+    }
+
+    /// Runs `work` on the background executor and emits the event
+    /// `to_event` makes from its result.
+    fn run<T: Send + 'static>(
+        &self,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(&HistoryStore) -> anyhow::Result<T> + Send + 'static,
+        to_event: impl FnOnce(anyhow::Result<T>) -> HistoryEvent + 'static,
+    ) {
+        let Some(store) = self.store() else {
+            cx.emit(to_event(Err(unavailable())));
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { work(&lock(&store)) })
+                .await;
+            this.update(cx, |_, cx| cx.emit(to_event(result))).ok();
         })
         .detach();
     }
 
-    pub fn record(&mut self, record: HistoryRecord, cx: &mut Context<Self>) {
-        let store = match &mut self.state {
-            State::Opening { queued } => {
-                queued.push(record);
-                return;
-            }
-            State::Ready(store) => store.clone(),
-            State::Unavailable => return,
-        };
-
-        cx.spawn(async move |this, cx| {
-            let saved = cx
-                .background_spawn(async move { lock(&store).insert(&record) })
-                .await;
-            let event = match saved {
-                Ok(summary) => HistoryEvent::Recorded(summary),
-                Err(error) => HistoryEvent::Failed {
-                    title: "Couldn't save request to history",
-                    error,
-                },
-            };
-            this.update(cx, |_, cx| cx.emit(event)).ok();
-        })
-        .detach();
+    fn store(&self) -> Option<Arc<Mutex<HistoryStore>>> {
+        match &self.state {
+            State::Ready(store) => Some(store.clone()),
+            State::Opening { .. } | State::Unavailable => None,
+        }
     }
 
     fn finish_opening(
@@ -208,6 +212,10 @@ fn open_and_load() -> anyhow::Result<(HistoryStore, Vec<HistorySummary>)> {
         Vec::new()
     });
     Ok((store, entries))
+}
+
+fn unavailable() -> anyhow::Error {
+    anyhow!("history is unavailable")
 }
 
 fn lock(store: &Mutex<HistoryStore>) -> MutexGuard<'_, HistoryStore> {
