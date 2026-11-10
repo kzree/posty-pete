@@ -107,7 +107,6 @@ impl CollectionView {
         cx.notify();
     }
 
-    #[expect(dead_code, reason = "used by create collection (task 09)")]
     pub fn focus_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_tab = CollectionTab::Settings;
         self.name.update(cx, |input, cx| {

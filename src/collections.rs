@@ -73,7 +73,6 @@ impl Collections {
         self.collections.iter().find(|c| c.id == id)
     }
 
-    #[expect(dead_code, reason = "used by create collection (task 09)")]
     pub fn create(&mut self, name: impl Into<String>, cx: &mut Context<Self>) -> Uuid {
         let collection = Collection::new(name);
         let id = collection.id;

@@ -198,7 +198,14 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match *event {
-            LibraryPanelEvent::CreateCollection => tracing::info!("create collection requested"),
+            LibraryPanelEvent::CreateCollection => {
+                let id = self.collections.update(cx, |collections, cx| {
+                    collections.create("New Collection", cx)
+                });
+                self.navigate(AppRoute::Collection(id), window, cx);
+                self.collection_view
+                    .update(cx, |view, cx| view.focus_name(window, cx));
+            }
             LibraryPanelEvent::OpenCollection(id) => {
                 self.navigate(AppRoute::Collection(id), window, cx)
             }
