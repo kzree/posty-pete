@@ -12,6 +12,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Friendlier TLS errors.** When the error chain contains rustls `InvalidContentType` (server answered in plain HTTP), show a hint: "The server didn't respond with TLS. Did you mean http://?"
+- [ ] **Structured send errors.** Send failures travel as `Result<Response, String>` (`flatten_send_result` and `finish_request` in `app.rs`, `ResponseView::set_response`), so the error chain is flattened to text before the UI sees it. Keep an `anyhow::Error` (or a small `SendError { message, hint }` in `domain/`) so hints like the TLS one above can inspect the chain. Do it together with that item.
 - [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `app.rs`) is hard-coded; make it configurable on the Settings page and per request.
 - [ ] **Cancel in-flight requests.** Send is disabled while a request runs; a Cancel button could take its place. Dropping `pending` alone doesn't stop the request on tokio (abort the `JoinHandle`).
 
@@ -27,7 +28,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Settings page.** Settings moved out of the sidebar; the status bar button and cmd+, only log for now (`OpenSettings` in `app.rs`). Needs a router to show it as its own page (theme, request timeout, history retention, ...).
 - [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
-- [ ] **History retention setting.** 14 days is hard-coded (`RETENTION_DAYS` in `domain/store/history.rs`); make it configurable on the Settings page.
+- [ ] **History retention setting.** 14 days is hard-coded (`RETENTION_DAYS` in `domain/history.rs`); make it configurable on the Settings page.
 - [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
 - [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
