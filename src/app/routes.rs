@@ -9,7 +9,9 @@ use super::{
     EditorContent, Workspace,
     navigation::{Direction, NavHistory},
 };
-use crate::settings_page::SettingsPage;
+use crate::{
+    domain::collection::Collection, settings_page::SettingsPage, window_title_bar::WindowTitle,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AppRoute {
@@ -41,11 +43,49 @@ impl AppRoute {
     }
 }
 
+/// The title for `route`, from the stored names in `collections`.
+pub(super) fn route_title(route: AppRoute, collections: &[Collection]) -> WindowTitle {
+    let find = |id| collections.iter().find(|collection| collection.id == id);
+    match route {
+        AppRoute::Request => WindowTitle::new("Untitled request"),
+        AppRoute::SavedRequest {
+            collection_id,
+            request_id,
+        } => find(collection_id)
+            .and_then(|collection| {
+                let saved = collection.find_request(request_id)?;
+                Some(WindowTitle::with_context(
+                    collection.name.clone(),
+                    saved.name.clone(),
+                ))
+            })
+            .unwrap_or_else(|| WindowTitle::new(crate::WINDOW_TITLE)),
+        AppRoute::Collection(id) => find(id)
+            .map(|collection| WindowTitle::new(collection.name.clone()))
+            .unwrap_or_else(|| WindowTitle::new(crate::WINDOW_TITLE)),
+        AppRoute::Settings => WindowTitle::new("Settings"),
+    }
+}
+
 pub(super) type RouteHistory = NavHistory<AppRoute>;
 
 impl Workspace {
     pub(super) fn current_route(&self) -> AppRoute {
         *self.route_history.current()
+    }
+
+    pub(super) fn title(&self, cx: &App) -> WindowTitle {
+        route_title(self.current_route(), self.collections.read(cx).all())
+    }
+
+    /// Keeps the OS window title in step with the title bar. Setting it is an
+    /// AppKit call on macOS, so it only happens when the title changes.
+    pub(super) fn sync_window_title(&mut self, window: &mut Window, cx: &App) {
+        let title = self.title(cx).os_title();
+        if self.os_window_title != title {
+            window.set_window_title(&title);
+            self.os_window_title = title;
+        }
     }
 
     /// Shows `route` and records it in the history.
@@ -203,6 +243,7 @@ impl Workspace {
         }
         self.sync_library_selection(window, cx);
         self.sync_editor_name(window, cx);
+        self.sync_window_title(window, cx);
         cx.notify();
     }
 
@@ -260,5 +301,81 @@ impl Workspace {
         Route::new()
             .path("collections/:id")
             .element(move |_, _| collection_view.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{
+        collection::{Item, SavedRequest},
+        request::Request,
+    };
+
+    fn library() -> (Vec<Collection>, Uuid, Uuid) {
+        let mut collection = Collection::new("My API");
+        let saved = SavedRequest::new("Get users", Request::default());
+        let request_id = saved.id;
+        collection.add_item(None, Item::Request(saved));
+        let collection_id = collection.id;
+        (vec![collection], collection_id, request_id)
+    }
+
+    #[test]
+    fn draft_and_settings_have_fixed_titles() {
+        let (collections, _, _) = library();
+        assert_eq!(
+            route_title(AppRoute::Request, &collections),
+            WindowTitle::new("Untitled request")
+        );
+        assert_eq!(
+            route_title(AppRoute::Settings, &collections),
+            WindowTitle::new("Settings")
+        );
+    }
+
+    #[test]
+    fn saved_request_shows_its_collection_as_context() {
+        let (collections, collection_id, request_id) = library();
+        let route = AppRoute::SavedRequest {
+            collection_id,
+            request_id,
+        };
+        assert_eq!(
+            route_title(route, &collections),
+            WindowTitle::with_context("My API", "Get users")
+        );
+    }
+
+    #[test]
+    fn collection_shows_its_name() {
+        let (collections, collection_id, _) = library();
+        assert_eq!(
+            route_title(AppRoute::Collection(collection_id), &collections),
+            WindowTitle::new("My API")
+        );
+    }
+
+    #[test]
+    fn renamed_items_use_the_stored_name() {
+        let (mut collections, collection_id, request_id) = library();
+        collections[0].rename(request_id, "List users");
+        let route = AppRoute::SavedRequest {
+            collection_id,
+            request_id,
+        };
+        assert_eq!(route_title(route, &collections).name, "List users");
+    }
+
+    #[test]
+    fn missing_items_fall_back_to_the_app_name() {
+        let route = AppRoute::SavedRequest {
+            collection_id: Uuid::new_v4(),
+            request_id: Uuid::new_v4(),
+        };
+        assert_eq!(
+            route_title(route, &[]),
+            WindowTitle::new(crate::WINDOW_TITLE)
+        );
     }
 }

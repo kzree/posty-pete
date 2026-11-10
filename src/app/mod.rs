@@ -87,6 +87,8 @@ pub struct Workspace {
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
     request_response_layout: Entity<ResizableState>,
+    /// The OS window title last set.
+    os_window_title: String,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -126,7 +128,7 @@ impl Workspace {
             }),
         ];
 
-        Self {
+        let mut workspace = Self {
             request_editor,
             response_view,
             status_bar,
@@ -149,9 +151,12 @@ impl Workspace {
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
+            os_window_title: String::new(),
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
-        }
+        };
+        workspace.sync_window_title(window, cx);
+        workspace
     }
 
     fn on_history_event(
@@ -218,6 +223,7 @@ impl Workspace {
                     self.collection_view
                         .update(cx, |view, cx| view.show(id, collection, window, cx));
                 }
+                self.sync_window_title(window, cx);
                 cx.notify();
             }
             CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
@@ -588,7 +594,7 @@ impl Render for Workspace {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
-                WindowTitleBar::new("Posty pete")
+                WindowTitleBar::new(self.title(cx))
                     .can_go_back(self.can_go(Direction::Back, cx))
                     .can_go_forward(self.can_go(Direction::Forward, cx))
                     .on_back(
