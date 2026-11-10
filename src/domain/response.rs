@@ -233,6 +233,28 @@ mod tests {
     }
 
     #[test]
+    fn status_classes() {
+        for (status, expected) in [
+            (100, StatusClass::Informational),
+            (200, StatusClass::Success),
+            (299, StatusClass::Success),
+            (301, StatusClass::Redirect),
+            (404, StatusClass::ClientError),
+            (503, StatusClass::ServerError),
+            (999, StatusClass::Informational),
+        ] {
+            assert_eq!(StatusClass::from_status(status), expected, "{status}");
+        }
+    }
+
+    #[test]
+    fn status_text_includes_reason_when_known() {
+        let response = |status| Response::new(status, Vec::new(), Vec::new(), Duration::ZERO);
+        assert_eq!(response(404).status_text(), "404 Not Found");
+        assert_eq!(response(599).status_text(), "599");
+    }
+
+    #[test]
     fn display_body_marks_binary() {
         let mut response = Response::new(
             200,

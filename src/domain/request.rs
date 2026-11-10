@@ -121,3 +121,34 @@ impl From<HttpMethod> for reqwest::Method {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// History stores requests in this format, so a change here breaks
+    /// opening older entries. Update it only together with a migration.
+    const STORED_FORMAT: &str = r#"[
+        {"method": "Get", "url": "example.com", "params": [{"enabled": true, "key": "q", "value": "1"}],
+         "headers": [], "body": "None", "auth": "None"},
+        {"method": "Post", "url": "", "params": [], "headers": [{"enabled": false, "key": "A", "value": "b"}],
+         "body": {"Raw": {"kind": "Json", "text": "{}"}}, "auth": {"ApiKey": {"key": "X-Key", "value": "v"}}},
+        {"method": "Put", "url": "", "params": [], "headers": [],
+         "body": {"Raw": {"kind": "Text", "text": "hi"}}, "auth": {"Basic": {"username": "u", "password": "p"}}},
+        {"method": "Patch", "url": "", "params": [], "headers": [],
+         "body": {"FormData": [{"enabled": true, "key": "f", "value": "v"}]}, "auth": {"Bearer": {"token": "t"}}},
+        {"method": "Delete", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
+        {"method": "Head", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
+        {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"}
+    ]"#;
+
+    #[test]
+    fn stored_format_is_stable() {
+        let requests: Vec<Request> = serde_json::from_str(STORED_FORMAT).unwrap();
+        let methods: Vec<_> = requests.iter().map(|r| r.method).collect();
+        assert_eq!(methods, HttpMethod::ALL);
+
+        let expected: serde_json::Value = serde_json::from_str(STORED_FORMAT).unwrap();
+        assert_eq!(serde_json::to_value(&requests).unwrap(), expected);
+    }
+}

@@ -37,3 +37,35 @@ impl BodyFormat {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_from_content_type() {
+        for (content_type, expected) in [
+            (None, BodyFormat::Text),
+            (Some("not a mime"), BodyFormat::Text),
+            (Some("application/json; charset=utf-8"), BodyFormat::Json),
+            (Some("application/problem+json"), BodyFormat::Json),
+            (Some("application/xml"), BodyFormat::Xml),
+            (Some("text/xml"), BodyFormat::Xml),
+            (Some("image/svg+xml"), BodyFormat::Xml),
+            (Some("text/html"), BodyFormat::Html),
+            (Some("text/css"), BodyFormat::Css),
+            (Some("application/javascript"), BodyFormat::JavaScript),
+            (Some("text/javascript"), BodyFormat::JavaScript),
+            (Some("application/yaml"), BodyFormat::Yaml),
+            (Some("application/x-yaml"), BodyFormat::Yaml),
+            (Some("text/plain"), BodyFormat::Text),
+            (Some("application/octet-stream"), BodyFormat::Text),
+        ] {
+            assert_eq!(
+                BodyFormat::from_content_type(content_type),
+                expected,
+                "{content_type:?}"
+            );
+        }
+    }
+}
