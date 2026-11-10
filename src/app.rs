@@ -8,6 +8,7 @@ use gpui::{
 use gpui_component::{
     ActiveTheme, ResizableState, h_resizable, input::Escape, resizable_panel, v_resizable,
 };
+use tokio::task::JoinError;
 
 use crate::{
     actions::{
@@ -16,6 +17,8 @@ use crate::{
     },
     domain::{
         self, http,
+        request::Request,
+        response::Response,
         store::history::{HistoryRecord, Outcome},
     },
     history::{History, HistoryEvent},
@@ -27,6 +30,16 @@ use crate::{
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn flatten_send_result(
+    joined: Result<anyhow::Result<Response>, JoinError>,
+) -> Result<Response, String> {
+    match joined {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(e)) => Err(format!("{e:#}")),
+        Err(e) => Err(format!("task failed: {e}")),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LeftPanelState {
@@ -74,57 +87,7 @@ impl Workspace {
             window,
             |this, _editor, event, window, cx| match event {
                 RequestEditorEvent::SendRequested(request) => {
-                    if this.pending.is_some() {
-                        return;
-                    }
-                    GlobalLoading::begin(cx);
-                    this.request_editor
-                        .update(cx, |editor, cx| editor.set_loading(true, cx));
-
-                    let sent_at = Utc::now();
-                    let request = request.clone();
-                    let handle = http::spawn_send(this.client.clone(), request.clone());
-                    this.pending = Some(cx.spawn_in(window, async move |this, cx| {
-                        let result = match handle.await {
-                            Ok(Ok(resp)) => Ok(resp),
-                            Ok(Err(e)) => Err(format!("{e:#}")),
-                            Err(e) => Err(format!("task failed: {e}")),
-                        };
-                        let outcome = result.as_ref().ok().map(|r| Outcome {
-                            status: r.status,
-                            elapsed: r.elapsed,
-                        });
-                        let (result, body_text) = cx
-                            .background_executor()
-                            .spawn(async move {
-                                let text = result
-                                    .as_ref()
-                                    .map(|resp| resp.pretty_body())
-                                    .unwrap_or_default();
-                                (result, text)
-                            })
-                            .await;
-                        this.update_in(cx, |this, window, cx| {
-                            this.response_view.update(cx, |view, cx| {
-                                view.set_response(result, body_text, window, cx)
-                            });
-                            this.request_editor
-                                .update(cx, |editor, cx| editor.set_loading(false, cx));
-                            GlobalLoading::end(cx);
-                            this.history.update(cx, |history, cx| {
-                                history.record(
-                                    HistoryRecord {
-                                        sent_at,
-                                        request,
-                                        outcome,
-                                    },
-                                    cx,
-                                )
-                            });
-                            this.pending = None;
-                        })
-                        .ok();
-                    }));
+                    this.send_request(request.clone(), window, cx)
                 }
             },
         );
@@ -149,6 +112,62 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             _subscriptions: vec![sub, history_sub],
         }
+    }
+
+    fn send_request(&mut self, request: Request, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending.is_some() {
+            return;
+        }
+        GlobalLoading::begin(cx);
+        self.request_editor
+            .update(cx, |editor, cx| editor.set_loading(true, cx));
+
+        let sent_at = Utc::now();
+        let handle = http::spawn_send(self.client.clone(), request.clone());
+        self.pending = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = flatten_send_result(handle.await);
+            let outcome = result.as_ref().ok().map(|r| Outcome {
+                status: r.status,
+                elapsed: r.elapsed,
+            });
+            let (result, body_text) = cx
+                .background_spawn(async move {
+                    let text = result
+                        .as_ref()
+                        .map(|resp| resp.pretty_body())
+                        .unwrap_or_default();
+                    (result, text)
+                })
+                .await;
+            let record = HistoryRecord {
+                sent_at,
+                request,
+                outcome,
+            };
+            this.update_in(cx, |this, window, cx| {
+                this.finish_request(result, body_text, record, window, cx)
+            })
+            .ok();
+        }));
+    }
+
+    fn finish_request(
+        &mut self,
+        result: Result<Response, String>,
+        body_text: String,
+        record: HistoryRecord,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.response_view.update(cx, |view, cx| {
+            view.set_response(result, body_text, window, cx)
+        });
+        self.request_editor
+            .update(cx, |editor, cx| editor.set_loading(false, cx));
+        GlobalLoading::end(cx);
+        self.history
+            .update(cx, |history, cx| history.record(record, cx));
+        self.pending = None;
     }
 
     fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
