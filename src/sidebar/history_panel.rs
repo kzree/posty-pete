@@ -115,13 +115,7 @@ impl ListDelegate for HistoryDelegate {
         let entry = self.entry(ix)?;
         let method = entry.method.clone();
         let url = entry.url.clone();
-        let (status, summary) = match entry.outcome {
-            Some(Outcome { status, elapsed }) => (
-                status_tag(status, status.to_string()),
-                format!("{status} · {} ms", elapsed.as_millis()),
-            ),
-            None => (Tag::danger().small().child("Error"), "Error".to_string()),
-        };
+        let summary = outcome_summary(entry.outcome);
         let sent_at = entry.sent_at.with_timezone(&Local).format("%H:%M");
         let tooltip: SharedString = format!("{method} {url}\n{sent_at} · {summary}").into();
 
@@ -145,7 +139,7 @@ impl ListDelegate for HistoryDelegate {
                                 .child(method),
                         )
                         .child(div().flex_1().min_w_0().truncate().child(url))
-                        .child(status.flex_none()),
+                        .child(outcome_tag(entry.outcome).flex_none()),
                 ),
         )
     }
@@ -171,6 +165,22 @@ impl ListDelegate for HistoryDelegate {
     }
 }
 
+const FAILED_LABEL: &str = "Error";
+
+fn outcome_tag(outcome: Option<Outcome>) -> Tag {
+    match outcome {
+        Some(Outcome { status, .. }) => status_tag(status, status.to_string()),
+        None => Tag::danger().small().child(FAILED_LABEL),
+    }
+}
+
+fn outcome_summary(outcome: Option<Outcome>) -> String {
+    match outcome {
+        Some(Outcome { status, elapsed }) => format!("{status} · {} ms", elapsed.as_millis()),
+        None => FAILED_LABEL.to_string(),
+    }
+}
+
 fn day_label(day: NaiveDate, today: NaiveDate) -> String {
     match (today - day).num_days() {
         0 => "Today".into(),
@@ -182,10 +192,22 @@ fn day_label(day: NaiveDate, today: NaiveDate) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn outcome_summaries() {
+        let outcome = Outcome {
+            status: 404,
+            elapsed: Duration::from_millis(42),
+        };
+        assert_eq!(outcome_summary(Some(outcome)), "404 · 42 ms");
+        assert_eq!(outcome_summary(None), "Error");
     }
 
     #[test]
