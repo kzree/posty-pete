@@ -6,11 +6,15 @@ use gpui::{
     SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme, IndexPath, Sizable, StyledExt, h_flex,
+    ActiveTheme, Disableable, Icon, IndexPath, Sizable, StyledExt, WindowExt,
+    button::{Button, ButtonVariant, ButtonVariants},
+    h_flex,
     list::{List, ListDelegate, ListEvent, ListItem, ListState},
     tag::Tag,
     tooltip::Tooltip,
+    v_flex,
 };
+use gpui_kit_assets::IconName as LucideIcon;
 
 use crate::{
     domain::store::history::{self, HistorySummary, Outcome},
@@ -19,6 +23,8 @@ use crate::{
 
 pub enum HistoryPanelEvent {
     Open(i64),
+    /// The user confirmed clearing all history.
+    Clear,
 }
 
 pub struct HistoryPanel {
@@ -51,6 +57,16 @@ impl HistoryPanel {
             list.delegate_mut().set_entries(entries);
             cx.notify();
         });
+        cx.notify();
+    }
+
+    pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.list.update(cx, |list, cx| {
+            list.delegate_mut().set_entries(Vec::new());
+            list.set_selected_index(None, window, cx);
+            cx.notify();
+        });
+        cx.notify();
     }
 
     /// Clears the selection, since every row below the new entry shifts down one.
@@ -60,12 +76,62 @@ impl HistoryPanel {
             list.set_selected_index(None, window, cx);
             cx.notify();
         });
+        cx.notify();
+    }
+
+    fn confirm_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.list.read(cx).delegate().entries.len();
+        let panel = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let panel = panel.clone();
+            alert
+                .title("Clear history?")
+                .description(format!(
+                    "{} will be deleted. This can't be undone.",
+                    request_count(count)
+                ))
+                .show_cancel(true)
+                .ok_text("Clear")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, _, cx| {
+                    panel
+                        .update(cx, |_, cx| cx.emit(HistoryPanelEvent::Clear))
+                        .ok();
+                    true
+                })
+        });
+    }
+
+    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let count = self.list.read(cx).delegate().entries.len();
+        h_flex()
+            .flex_none()
+            .justify_between()
+            .pl_3()
+            .pr_1()
+            .py_1()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(request_count(count))
+            .child(
+                Button::new("clear-history")
+                    .ghost()
+                    .xsmall()
+                    .icon(Icon::new(LucideIcon::Trash))
+                    .tooltip("Clear history")
+                    .accessibility_label("Clear history")
+                    .disabled(count == 0)
+                    .on_click(cx.listener(|this, _, window, cx| this.confirm_clear(window, cx))),
+            )
     }
 }
 
 impl Render for HistoryPanel {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        List::new(&self.list).size_full()
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .child(self.render_header(cx))
+            .child(List::new(&self.list).flex_1().min_h_0())
     }
 }
 
@@ -183,6 +249,14 @@ impl ListDelegate for HistoryDelegate {
 
 const FAILED_LABEL: &str = "Error";
 
+fn request_count(count: usize) -> String {
+    match count {
+        0 => "No requests".to_string(),
+        1 => "1 request".to_string(),
+        n => format!("{n} requests"),
+    }
+}
+
 fn outcome_tag(outcome: Option<Outcome>) -> Tag {
     match outcome {
         Some(Outcome { status, .. }) => status_tag(status, status.to_string()),
@@ -214,6 +288,13 @@ mod tests {
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn request_counts() {
+        assert_eq!(request_count(0), "No requests");
+        assert_eq!(request_count(1), "1 request");
+        assert_eq!(request_count(42), "42 requests");
     }
 
     #[test]

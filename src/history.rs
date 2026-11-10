@@ -17,6 +17,7 @@ pub enum HistoryEvent {
     Loaded(Vec<HistorySummary>),
     Recorded(HistorySummary),
     Opened(Request),
+    Cleared,
 }
 
 /// Owns the history database: opens it off the UI thread, prunes and loads it,
@@ -68,6 +69,26 @@ impl History {
                 }
                 Ok(None) => tracing::warn!("history entry {id} not found"),
                 Err(e) => tracing::warn!("failed to get request from history: {e:#}"),
+            }
+        })
+        .detach();
+    }
+
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        let State::Ready(store) = &self.state else {
+            return;
+        };
+        let store = store.clone();
+
+        cx.spawn(async move |this, cx| {
+            let cleared = cx
+                .background_spawn(async move { lock(&store).clear() })
+                .await;
+            match cleared {
+                Ok(_) => {
+                    this.update(cx, |_, cx| cx.emit(HistoryEvent::Cleared)).ok();
+                }
+                Err(e) => tracing::warn!("failed to clear history: {e:#}"),
             }
         })
         .detach();

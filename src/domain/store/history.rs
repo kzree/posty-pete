@@ -131,6 +131,10 @@ impl HistoryStore {
             .collect())
     }
 
+    pub fn clear(&self) -> anyhow::Result<usize> {
+        Ok(self.conn.execute("DELETE FROM history", [])?)
+    }
+
     pub fn prune(&self, cutoff: DateTime<Utc>) -> anyhow::Result<usize> {
         Ok(self.conn.execute(
             "DELETE FROM history WHERE sent_at < ?1",
@@ -378,6 +382,16 @@ mod tests {
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "keep");
+    }
+
+    #[test]
+    fn clear_removes_everything() {
+        let store = HistoryStore::open_in_memory().unwrap();
+        store.insert(&ok(at("2026-11-09T12:00:00Z"), "a")).unwrap();
+        store.insert(&ok(at("2026-11-10T12:00:00Z"), "b")).unwrap();
+
+        assert_eq!(store.clear().unwrap(), 2);
+        assert!(store.since(DateTime::UNIX_EPOCH).unwrap().is_empty());
     }
 
     #[test]
