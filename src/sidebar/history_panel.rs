@@ -20,14 +20,15 @@ use gpui_kit_assets::IconName as LucideIcon;
 
 use crate::{
     actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
-    domain::store::history::{self, HistorySummary, Outcome},
+    domain::history::{self, HistorySummary, OpenMode, Outcome},
     ui::{clipboard::copy_with_notification, status_tag::status_tag},
 };
 
 pub enum HistoryPanelEvent {
-    Open(i64),
-    /// Open the entry and send it right away.
-    SendAgain(i64),
+    Open {
+        id: i64,
+        mode: OpenMode,
+    },
     CopyAsCurl(i64),
     Delete(i64),
     /// The user confirmed clearing all history.
@@ -50,7 +51,10 @@ impl HistoryPanel {
             };
             let id = list.read(cx).delegate().entry(*ix).map(|entry| entry.id);
             if let Some(id) = id {
-                cx.emit(HistoryPanelEvent::Open(id));
+                cx.emit(HistoryPanelEvent::Open {
+                    id,
+                    mode: OpenMode::Load,
+                });
             }
         });
         Self {
@@ -109,7 +113,10 @@ impl HistoryPanel {
 
     fn send_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.selected_id(cx) {
-            cx.emit(HistoryPanelEvent::SendAgain(id));
+            cx.emit(HistoryPanelEvent::Open {
+                id,
+                mode: OpenMode::Send,
+            });
         }
     }
 
@@ -264,7 +271,7 @@ impl ListDelegate for HistoryDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         let entry = self.entry(ix)?;
-        let method = entry.method.clone();
+        let method = entry.method.as_str();
         let url = entry.url.clone();
         let summary = outcome_summary(entry.outcome);
         let sent_at = entry.sent_at.with_timezone(&Local).format("%H:%M");
@@ -347,13 +354,12 @@ fn context_menu(
 
     let mut menu = menu;
     if let Some((id, url)) = target {
-        let open_item = |label: &'static str, send: bool| {
+        let open_item = |label: &'static str, mode: OpenMode| {
             let (panel, list) = (panel.clone(), list.clone());
             let item = PopupMenuItem::new(label);
-            let item = if send {
-                item.action(Box::new(SendHistoryEntryAgain))
-            } else {
-                item
+            let item = match mode {
+                OpenMode::Send => item.action(Box::new(SendHistoryEntryAgain)),
+                OpenMode::Load => item,
             };
             item.on_click(move |_, window, cx| {
                 // Rows may have shifted since the menu opened.
@@ -362,17 +368,14 @@ fn context_menu(
                     list.set_selected_index(ix, window, cx)
                 })
                 .ok();
-                let event = if send {
-                    HistoryPanelEvent::SendAgain(id)
-                } else {
-                    HistoryPanelEvent::Open(id)
-                };
-                panel.update(cx, |_, cx| cx.emit(event)).ok();
+                panel
+                    .update(cx, |_, cx| cx.emit(HistoryPanelEvent::Open { id, mode }))
+                    .ok();
             })
         };
         menu = menu
-            .item(open_item("Open", false))
-            .item(open_item("Send again", true))
+            .item(open_item("Open", OpenMode::Load))
+            .item(open_item("Send again", OpenMode::Send))
             .item(
                 PopupMenuItem::new("Copy URL").on_click(move |_, window, cx| {
                     copy_with_notification(url.clone(), "URL copied", window, cx);
@@ -465,7 +468,7 @@ mod tests {
         HistorySummary {
             id,
             sent_at: local.with_timezone(&Utc),
-            method: "GET".into(),
+            method: crate::domain::request::HttpMethod::Get,
             url: format!("https://example.com/{id}"),
             outcome: None,
         }

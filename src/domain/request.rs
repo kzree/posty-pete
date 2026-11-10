@@ -106,6 +106,11 @@ impl HttpMethod {
             Self::Options => "OPTIONS",
         }
     }
+
+    /// The inverse of [`HttpMethod::as_str`].
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|method| method.as_str() == text)
+    }
 }
 
 impl From<HttpMethod> for reqwest::Method {
@@ -141,6 +146,15 @@ mod tests {
         {"method": "Head", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
         {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"}
     ]"#;
+
+    #[test]
+    fn method_parse_inverts_as_str() {
+        for method in HttpMethod::ALL {
+            assert_eq!(HttpMethod::parse(method.as_str()), Some(method));
+        }
+        assert_eq!(HttpMethod::parse("get"), None);
+        assert_eq!(HttpMethod::parse("BREW"), None);
+    }
 
     #[test]
     fn stored_format_is_stable() {

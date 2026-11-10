@@ -1,35 +1,12 @@
-use std::{ops::Range, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
-use chrono::{DateTime, Days, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Row, params};
 
-use crate::domain::request::Request;
-
-pub const RETENTION_DAYS: u64 = 14;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Outcome {
-    pub status: u16,
-    pub elapsed: Duration,
-}
-
-/// A sent request, before it's saved. `outcome` is `None` when no response arrived.
-#[derive(Clone, Debug)]
-pub struct HistoryRecord {
-    pub sent_at: DateTime<Utc>,
-    pub request: Request,
-    pub outcome: Option<Outcome>,
-}
-
-/// What the history list shows; the full request stays in the database.
-#[derive(Clone, Debug)]
-pub struct HistorySummary {
-    pub id: i64,
-    pub sent_at: DateTime<Utc>,
-    pub method: String,
-    pub url: String,
-    pub outcome: Option<Outcome>,
-}
+use crate::domain::{
+    history::{HistoryRecord, HistorySummary, Outcome},
+    request::{HttpMethod, Request},
+};
 
 pub struct HistoryStore {
     conn: Connection,
@@ -106,7 +83,7 @@ impl HistoryStore {
         Ok(HistorySummary {
             id: self.conn.last_insert_rowid(),
             sent_at: record.sent_at,
-            method: request.method.as_str().to_owned(),
+            method: request.method,
             url: request.url.clone(),
             outcome: record.outcome,
         })
@@ -179,6 +156,14 @@ impl RawRow {
             tracing::warn!(id, "skipping history row with invalid timestamp");
             return None;
         };
+        let Some(method) = HttpMethod::parse(&self.method) else {
+            tracing::warn!(
+                id,
+                method = self.method,
+                "skipping history row with unknown method"
+            );
+            return None;
+        };
         let outcome = match (self.status, self.elapsed_ms) {
             (None, _) => None,
             (Some(status), elapsed_ms) => {
@@ -196,52 +181,22 @@ impl RawRow {
         Some(HistorySummary {
             id,
             sent_at,
-            method: self.method,
+            method,
             url: self.url,
             outcome,
         })
     }
 }
 
-/// Start of the oldest day to keep: local midnight `RETENTION_DAYS - 1` days before `now`.
-/// Where a DST change skips midnight, the day starts at its first valid hour.
-pub fn retention_cutoff<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Utc> {
-    let first_day = now.date_naive() - Days::new(RETENTION_DAYS - 1);
-    (0..24)
-        .find_map(|hour| {
-            first_day
-                .and_hms_opt(hour, 0, 0)?
-                .and_local_timezone(now.timezone())
-                .earliest()
-        })
-        .map(|t| t.with_timezone(&Utc))
-        .unwrap_or_else(|| first_day.and_time(NaiveTime::MIN).and_utc())
-}
-
-/// Index ranges into `entries`, one per local day. Expects `entries` newest first,
-/// as returned by [`HistoryStore::since`].
-pub fn group_by_day<Tz: TimeZone>(
-    entries: &[HistorySummary],
-    tz: &Tz,
-) -> Vec<(NaiveDate, Range<usize>)> {
-    let day = |e: &HistorySummary| e.sent_at.with_timezone(tz).date_naive();
-    let mut start = 0;
-    entries
-        .chunk_by(|a, b| day(a) == day(b))
-        .map(|chunk| {
-            let range = start..start + chunk.len();
-            start = range.end;
-            (day(&chunk[0]), range)
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
-    use chrono::{FixedOffset, TimeDelta};
+    use chrono::TimeDelta;
 
     use super::*;
-    use crate::domain::request::{Auth, Body, HttpMethod, KeyValue, RawKind};
+    use crate::domain::{
+        history::retention_cutoff,
+        request::{Auth, Body, KeyValue, RawKind},
+    };
 
     fn record(sent_at: DateTime<Utc>, url: &str, outcome: Option<Outcome>) -> HistoryRecord {
         HistoryRecord {
@@ -270,13 +225,13 @@ mod tests {
         DateTime::parse_from_rfc3339(rfc3339).unwrap().to_utc()
     }
 
-    fn insert_raw(store: &HistoryStore, sent_at: i64, status: &str) {
+    fn insert_raw(store: &HistoryStore, sent_at: i64, method: &str, status: &str) {
         store
             .conn
             .execute(
                 &format!(
                     "INSERT INTO history (sent_at, method, url, status, request)
-                     VALUES (?1, 'GET', 'bad', {status}, '{{}}')"
+                     VALUES (?1, '{method}', 'bad', {status}, '{{}}')"
                 ),
                 [sent_at],
             )
@@ -300,7 +255,7 @@ mod tests {
         let entry = &entries[0];
         assert_eq!(entry.id, inserted.id);
         assert_eq!(entry.sent_at, sent_at);
-        assert_eq!(entry.method, "GET");
+        assert_eq!(entry.method, HttpMethod::Get);
         assert_eq!(entry.url, "https://a.test");
         assert_eq!(entry.outcome, Some(outcome));
     }
@@ -431,44 +386,12 @@ mod tests {
         let sent_at = at("2026-11-10T12:00:00Z");
         store.insert(&ok(sent_at, "ok")).unwrap();
         let later = sent_at.timestamp_millis() + 1;
-        insert_raw(&store, later, "70000");
-        insert_raw(&store, later, "'not a number'");
+        insert_raw(&store, later, "GET", "70000");
+        insert_raw(&store, later, "GET", "'not a number'");
+        insert_raw(&store, later, "BREW", "200");
 
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "ok");
-    }
-
-    #[test]
-    fn retention_cutoff_is_local_midnight() {
-        let tz = FixedOffset::east_opt(2 * 3600).unwrap();
-        let now = tz.with_ymd_and_hms(2026, 11, 10, 15, 30, 0).unwrap();
-        assert_eq!(retention_cutoff(&now), at("2026-10-28T00:00:00+02:00"));
-    }
-
-    #[test]
-    fn group_by_day_uses_local_dates() {
-        let tz = FixedOffset::east_opt(2 * 3600).unwrap();
-        let store = HistoryStore::open_in_memory().unwrap();
-        for time in [
-            "2026-11-09T21:30:00Z", // 23:30 local, Nov 9
-            "2026-11-09T22:30:00Z", // 00:30 local, Nov 10
-            "2026-11-10T08:00:00Z",
-        ] {
-            store.insert(&ok(at(time), time)).unwrap();
-        }
-        let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
-
-        let groups: Vec<_> = group_by_day(&entries, &tz)
-            .into_iter()
-            .map(|(day, entries)| (day, entries.len()))
-            .collect();
-        assert_eq!(
-            groups,
-            [
-                (NaiveDate::from_ymd_opt(2026, 11, 10).unwrap(), 2),
-                (NaiveDate::from_ymd_opt(2026, 11, 9).unwrap(), 1),
-            ]
-        );
     }
 }

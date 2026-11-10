@@ -17,12 +17,13 @@ use crate::{
         WORKSPACE_CONTEXT,
     },
     domain::{
-        self, curl, http,
+        self, curl,
+        history::{HistoryRecord, OpenMode, Outcome},
+        http,
         request::Request,
         response::Response,
-        store::history::{HistoryRecord, Outcome},
     },
-    history::{History, HistoryEvent, OpenMode},
+    history::{History, HistoryEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
     sidebar::{
@@ -168,12 +169,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match *event {
-            HistoryPanelEvent::Open(id) => self
+            HistoryPanelEvent::Open { id, mode } => self
                 .history
-                .update(cx, |history, cx| history.open(id, OpenMode::Load, cx)),
-            HistoryPanelEvent::SendAgain(id) => self
-                .history
-                .update(cx, |history, cx| history.open(id, OpenMode::Send, cx)),
+                .update(cx, |history, cx| history.open(id, mode, cx)),
             HistoryPanelEvent::CopyAsCurl(id) => self.copy_as_curl(id, window, cx),
             HistoryPanelEvent::Delete(id) => self
                 .history

@@ -9,8 +9,9 @@ use futures::{
 use gpui::{App, AppContext, Context, EventEmitter, Task};
 
 use crate::domain::{
+    history::{self, HistoryRecord, HistorySummary, OpenMode},
     request::Request,
-    store::history::{self, HistoryRecord, HistoryStore, HistorySummary},
+    store::history::HistoryStore,
 };
 
 pub enum HistoryEvent {
@@ -28,13 +29,6 @@ pub enum HistoryEvent {
         title: &'static str,
         error: anyhow::Error,
     },
-}
-
-/// What to do with a history entry once its full request is loaded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OpenMode {
-    Load,
-    Send,
 }
 
 /// Owns the history database: opens it off the UI thread, prunes and loads it,

@@ -1,5 +1,6 @@
 pub mod body_format;
 pub mod curl;
+pub mod history;
 pub mod http;
 pub mod request;
 pub mod resolved;
