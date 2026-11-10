@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Request {
     pub method: HttpMethod,
     pub url: String,
@@ -154,6 +154,15 @@ mod tests {
         }
         assert_eq!(HttpMethod::parse("get"), None);
         assert_eq!(HttpMethod::parse("BREW"), None);
+    }
+
+    #[test]
+    fn default_is_empty_get() {
+        let request = Request::default();
+        assert_eq!(request.method, HttpMethod::Get);
+        assert!(request.url.is_empty() && request.params.is_empty() && request.headers.is_empty());
+        assert!(matches!(request.body, Body::None));
+        assert!(matches!(request.auth, Auth::None));
     }
 
     #[test]

@@ -52,6 +52,11 @@ pub enum LibraryPanelEvent {
         parent: Option<Uuid>,
         name: String,
     },
+    /// `parent` is `None` for the collection root.
+    AddRequest {
+        collection_id: Uuid,
+        parent: Option<Uuid>,
+    },
 }
 
 pub struct LibraryPanel {
@@ -219,6 +224,14 @@ impl LibraryPanel {
         );
     }
 
+    fn add_request(&mut self, target: MenuTarget, cx: &mut Context<Self>) {
+        self.update_rows(cx, |delegate| delegate.expand(target.id()));
+        cx.emit(LibraryPanelEvent::AddRequest {
+            collection_id: target.collection_id(),
+            parent: target.folder_id(),
+        });
+    }
+
     fn update_rows(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut LibraryDelegate)) {
         self.list.update(cx, |list, cx| {
             f(list.delegate_mut());
@@ -301,9 +314,14 @@ fn context_menu(
         })
         .detach();
 
-    let (add_folder_panel, rename_panel, delete_panel) =
-        (panel.clone(), panel.clone(), panel.clone());
-    menu.item(PopupMenuItem::new("Add request").disabled(true))
+    let (add_request_panel, add_folder_panel, rename_panel, delete_panel) =
+        (panel.clone(), panel.clone(), panel.clone(), panel.clone());
+    let add_request = PopupMenuItem::new("Add request").on_click(move |_, _, cx| {
+        add_request_panel
+            .update(cx, |panel, cx| panel.add_request(target, cx))
+            .ok();
+    });
+    menu.item(add_request)
         .item(
             PopupMenuItem::new("Add folder").on_click(move |_, window, cx| {
                 add_folder_panel

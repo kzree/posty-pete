@@ -264,7 +264,35 @@ impl Workspace {
                     collections.add_folder(collection_id, parent, name, cx)
                 });
             }
+            LibraryPanelEvent::AddRequest {
+                collection_id,
+                parent,
+            } => self.add_saved_request(*collection_id, *parent, window, cx),
         }
+    }
+
+    fn add_saved_request(
+        &mut self,
+        collection_id: Uuid,
+        parent: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        let Some(request_id) = self.collections.update(cx, |collections, cx| {
+            collections.add_request(
+                collection_id,
+                parent,
+                "New Request",
+                domain::request::Request::default(),
+                cx,
+            )
+        }) else {
+            return;
+        };
+        self.open_saved_request(collection_id, request_id, window, cx);
     }
 
     fn open_saved_request(
@@ -274,14 +302,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending.is_some() {
-            window.push_notification(
-                Notification::info("Wait for it to finish, then try again.")
-                    .title("A request is still running"),
-                cx,
-            );
-            // The click selected the row; put the selection back.
-            self.set_open_request(self.open_request, window, cx);
+        if self.refuse_while_pending(window, cx) {
             return;
         }
         let Some(request) = self
@@ -298,6 +319,21 @@ impl Workspace {
         self.response_view
             .update(cx, |view, cx| view.clear(window, cx));
         self.set_open_request(Some((collection_id, request_id)), window, cx);
+    }
+
+    /// Shows a toast and returns `true` while a request is in flight.
+    fn refuse_while_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.pending.is_none() {
+            return false;
+        }
+        window.push_notification(
+            Notification::info("Wait for it to finish, then try again.")
+                .title("A request is still running"),
+            cx,
+        );
+        // A click may have selected another row; put the selection back.
+        self.set_open_request(self.open_request, window, cx);
+        true
     }
 
     fn find_saved_request<'a>(
