@@ -1082,10 +1082,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {
                 this.save_request(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &SaveRequestAs, window, cx| {
-                this.open_save_as(window, cx);
-            }))
-            // Only while there's something to revert, so the menu item greys out otherwise.
+            // Save As and Revert are only registered where they act, so their menu items grey out elsewhere.
+            .when(self.current_route() == self.editor_route(), |this| {
+                this.on_action(cx.listener(|this, _: &SaveRequestAs, window, cx| {
+                    this.open_save_as(window, cx);
+                }))
+            })
             .when(self.shows_dirty_request(), |this| {
                 this.on_action(cx.listener(|this, _: &RevertRequest, window, cx| {
                     this.revert_request(window, cx);
