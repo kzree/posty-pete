@@ -75,9 +75,7 @@ impl Workspace {
             SaveChoice::Cancel => false,
         };
         if proceed {
-            self.discard_confirmed = true;
-            then(self, window, cx);
-            self.discard_confirmed = false;
+            self.with_discard_confirmed(|this| then(this, window, cx));
         } else {
             self.sync_library_selection(window, cx);
         }
@@ -179,9 +177,16 @@ impl Workspace {
         else {
             return;
         };
-        self.discard_confirmed = true;
-        self.load_request(self.editor_content, &request, window, cx);
-        self.discard_confirmed = false;
+        let content = self.editor_content;
+        self.with_discard_confirmed(|this| this.load_request(content, &request, window, cx));
+    }
+
+    /// Runs `f` with `confirm_discard` and `load_request` treating the
+    /// editor's changes as already confirmed for discarding.
+    fn with_discard_confirmed(&mut self, f: impl FnOnce(&mut Self)) {
+        let was = std::mem::replace(&mut self.discard_confirmed, true);
+        f(self);
+        self.discard_confirmed = was;
     }
 
     pub(super) fn drop_deleted_responses(&mut self, cx: &App) {

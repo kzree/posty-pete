@@ -11,7 +11,7 @@ use gpui::{App, AppContext, Context, EventEmitter, Task};
 use crate::domain::{
     history::{self, HistoryRecord, HistorySummary, OpenMode},
     request::Request,
-    store::history::HistoryStore,
+    store::{self, history::HistoryStore},
 };
 
 pub enum HistoryEvent {
@@ -220,9 +220,7 @@ impl History {
 }
 
 fn open_and_load() -> anyhow::Result<(HistoryStore, Vec<HistorySummary>)> {
-    let dirs =
-        directories::ProjectDirs::from("", "", "posty-pete").context("no home directory found")?;
-    let path = dirs.data_dir().join("history.db");
+    let path = store::data_dir()?.join("history.db");
     let store =
         HistoryStore::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
 

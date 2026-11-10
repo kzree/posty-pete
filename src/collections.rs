@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::anyhow;
 use futures::{
     StreamExt,
     channel::{mpsc, oneshot},
@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::domain::{
     collection::{self, Collection, Folder, Item, Location, SavedRequest},
     request::Request,
-    store::collection::CollectionStore,
+    store::{self, collection::CollectionStore},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,9 +327,7 @@ impl Collections {
 }
 
 fn open_and_load() -> anyhow::Result<(CollectionStore, anyhow::Result<Vec<Collection>>)> {
-    let dirs =
-        directories::ProjectDirs::from("", "", "posty-pete").context("no home directory found")?;
-    let store = CollectionStore::new(dirs.data_dir().join("collections"))?;
+    let store = CollectionStore::new(store::data_dir()?.join("collections"))?;
     let loaded = store.load_all();
     Ok((store, loaded))
 }

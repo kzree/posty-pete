@@ -1,5 +1,5 @@
 use gpui::{Context, Window};
-use gpui_component::{WindowExt, notification::Notification};
+use gpui_component::WindowExt;
 
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
@@ -26,14 +26,10 @@ impl Workspace {
             HistoryEvent::Recorded(summary) => self
                 .history_panel
                 .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
-            HistoryEvent::Opened { .. } if self.pending.is_some() => {
-                window.push_notification(
-                    Notification::info("Wait for it to finish, then try again.")
-                        .title("A request is still running"),
-                    cx,
-                );
-            }
             HistoryEvent::Opened { request, mode } => {
+                if self.refuse_while_pending(window, cx) {
+                    return;
+                }
                 let (request, mode) = (request.clone(), *mode);
                 self.confirm_discard(
                     move |this, window, cx| {

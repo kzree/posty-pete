@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context as _;
 use gpui::{App, AppContext, Context, Task, Window};
 use gpui_router::use_navigate;
 
@@ -17,7 +16,7 @@ use crate::{
     domain::{
         navigation::{NavEntry, SavedNavigation},
         request::Request,
-        store::navigation::NavigationStore,
+        store::{self, navigation::NavigationStore},
     },
 };
 
@@ -283,9 +282,7 @@ impl Workspace {
 
 /// A corrupt file is ignored.
 fn open_and_load() -> anyhow::Result<(NavigationStore, Option<SavedNavigation>)> {
-    let dirs =
-        directories::ProjectDirs::from("", "", "posty-pete").context("no home directory found")?;
-    let store = NavigationStore::new(dirs.data_dir().join("navigation.json"));
+    let store = NavigationStore::new(store::data_dir()?.join("navigation.json"));
     let saved = store.load().unwrap_or_else(|error| {
         tracing::warn!("ignoring saved navigation: {error:#}");
         None
@@ -295,29 +292,12 @@ fn open_and_load() -> anyhow::Result<(NavigationStore, Option<SavedNavigation>)>
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{fs, path::Path};
 
     use uuid::Uuid;
 
     use super::*;
-
-    struct TempFile(PathBuf);
-
-    impl TempFile {
-        fn new() -> Self {
-            let name = format!("posty-pete-test-{}-{}", std::process::id(), Uuid::new_v4());
-            let dir = std::env::temp_dir().join(name);
-            Self(dir.join("navigation.json"))
-        }
-    }
-
-    impl Drop for TempFile {
-        fn drop(&mut self) {
-            if let Some(dir) = self.0.parent() {
-                let _ = fs::remove_dir_all(dir);
-            }
-        }
-    }
+    use crate::domain::store::test_support::TempDir;
 
     fn navigation(entries: Vec<NavEntry>) -> SavedNavigation {
         SavedNavigation {
@@ -328,8 +308,8 @@ mod tests {
     }
 
     /// `navigation.json` already holds `stored`, as read at startup.
-    fn loaded(file: &TempFile, stored: &SavedNavigation) -> PersistedNavigation {
-        let store = NavigationStore::new(file.0.clone());
+    fn loaded(file: &Path, stored: &SavedNavigation) -> PersistedNavigation {
+        let store = NavigationStore::new(file.to_path_buf());
         store.save(stored).unwrap();
         PersistedNavigation {
             phase: Phase::Loaded {
@@ -342,10 +322,11 @@ mod tests {
 
     #[test]
     fn failed_collections_skip_the_restore_and_leave_the_file_alone() {
-        let file = TempFile::new();
+        let dir = TempDir::new();
+        let file = dir.path().join("navigation.json");
         let stored = navigation(vec![NavEntry::Settings]);
         let mut persisted = loaded(&file, &stored);
-        let before = fs::read(&file.0).unwrap();
+        let before = fs::read(&file).unwrap();
 
         assert!(persisted.collections_loaded(LoadState::Failed).is_none());
         assert!(!persisted.is_saving());
@@ -354,12 +335,13 @@ mod tests {
                 .save_job(navigation(vec![NavEntry::Draft]))
                 .is_none()
         );
-        assert_eq!(fs::read(&file.0).unwrap(), before);
+        assert_eq!(fs::read(&file).unwrap(), before);
     }
 
     #[test]
     fn loaded_collections_restore_and_start_saving() {
-        let file = TempFile::new();
+        let dir = TempDir::new();
+        let file = dir.path().join("navigation.json");
         let stored = navigation(vec![NavEntry::Settings]);
         let mut persisted = loaded(&file, &stored);
 
@@ -371,7 +353,7 @@ mod tests {
             .save_job(navigation(vec![NavEntry::Draft]))
             .unwrap();
         job();
-        let store = NavigationStore::new(file.0.clone());
+        let store = NavigationStore::new(file.clone());
         assert_eq!(
             store.load().unwrap(),
             Some(navigation(vec![NavEntry::Draft]))

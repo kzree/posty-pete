@@ -22,9 +22,25 @@ pub struct Entry {
     /// Empty for a collection.
     pub location: String,
     pub method: Option<HttpMethod>,
+    name_lower: String,
+    path_lower: String,
 }
 
 impl Entry {
+    fn new(target: Target, name: String, location: String, method: Option<HttpMethod>) -> Self {
+        let mut entry = Self {
+            target,
+            name,
+            location,
+            method,
+            name_lower: String::new(),
+            path_lower: String::new(),
+        };
+        entry.name_lower = entry.name.to_lowercase();
+        entry.path_lower = entry.path().to_lowercase();
+        entry
+    }
+
     pub fn path(&self) -> String {
         if self.location.is_empty() {
             self.name.clone()
@@ -38,12 +54,12 @@ impl Entry {
 pub fn entries(collections: &[Collection]) -> Vec<Entry> {
     let mut entries = Vec::new();
     for collection in collections {
-        entries.push(Entry {
-            target: Target::Collection(collection.id),
-            name: collection.name.clone(),
-            location: String::new(),
-            method: None,
-        });
+        entries.push(Entry::new(
+            Target::Collection(collection.id),
+            collection.name.clone(),
+            String::new(),
+            None,
+        ));
         push_requests(
             collection.id,
             &collection.items,
@@ -57,15 +73,15 @@ pub fn entries(collections: &[Collection]) -> Vec<Entry> {
 fn push_requests(collection_id: Uuid, items: &[Item], location: &str, entries: &mut Vec<Entry>) {
     for item in items {
         match item {
-            Item::Request(saved) => entries.push(Entry {
-                target: Target::Request {
+            Item::Request(saved) => entries.push(Entry::new(
+                Target::Request {
                     collection_id,
                     request_id: saved.id,
                 },
-                name: saved.name.clone(),
-                location: location.to_string(),
-                method: Some(saved.request.method),
-            }),
+                saved.name.clone(),
+                location.to_string(),
+                Some(saved.request.method),
+            )),
             Item::Folder(folder) => push_requests(
                 collection_id,
                 &folder.items,
@@ -104,7 +120,7 @@ enum Rank {
 
 /// `query` must be trimmed and lowercase.
 fn rank(entry: &Entry, query: &str) -> Option<Rank> {
-    let name = entry.name.to_lowercase();
+    let name = entry.name_lower.as_str();
     if name == query {
         return Some(Rank::ExactName);
     }
@@ -113,18 +129,18 @@ fn rank(entry: &Entry, query: &str) -> Option<Rank> {
     }
     if name
         .match_indices(query)
-        .any(|(ix, _)| starts_word(&name, ix))
+        .any(|(ix, _)| starts_word(name, ix))
     {
         return Some(Rank::NameWordPrefix);
     }
     if name.contains(query) {
         return Some(Rank::NameContains);
     }
-    let path = entry.path().to_lowercase();
+    let path = entry.path_lower.as_str();
     if path.contains(query) {
         return Some(Rank::PathContains);
     }
-    is_subsequence(query, &path).then_some(Rank::Fuzzy)
+    is_subsequence(query, path).then_some(Rank::Fuzzy)
 }
 
 fn starts_word(text: &str, ix: usize) -> bool {

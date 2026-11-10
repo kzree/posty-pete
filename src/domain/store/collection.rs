@@ -76,29 +76,15 @@ fn read_collection(path: &Path) -> anyhow::Result<Collection> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::store::test_support::TempDir;
     use crate::domain::{
         collection::{Folder, Item, SavedRequest},
         request::{Auth, Body, HttpMethod, Request},
     };
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            let name = format!("posty-pete-test-{}-{}", std::process::id(), Uuid::new_v4());
-            Self(std::env::temp_dir().join(name))
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
     fn setup() -> (TempDir, CollectionStore) {
         let dir = TempDir::new();
-        let store = CollectionStore::new(dir.0.clone()).unwrap();
+        let store = CollectionStore::new(dir.path().to_path_buf()).unwrap();
         (dir, store)
     }
 
@@ -135,7 +121,7 @@ mod tests {
     #[test]
     fn new_creates_missing_directory() {
         let dir = TempDir::new();
-        let nested = dir.0.join("a").join("collections");
+        let nested = dir.path().join("a").join("collections");
         CollectionStore::new(nested.clone()).unwrap();
         assert!(nested.is_dir());
     }
@@ -166,7 +152,7 @@ mod tests {
         collection.name = "New".into();
         store.save(&collection).unwrap();
 
-        assert_eq!(file_names(&dir.0), [format!("{}.json", collection.id)]);
+        assert_eq!(file_names(dir.path()), [format!("{}.json", collection.id)]);
         let loaded = store.load_all().unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "New");
@@ -177,7 +163,7 @@ mod tests {
         let (dir, store) = setup();
         store.save(&Collection::new("API")).unwrap();
         assert!(
-            file_names(&dir.0)
+            file_names(dir.path())
                 .iter()
                 .all(|name| !name.ends_with(".tmp"))
         );
@@ -188,10 +174,10 @@ mod tests {
         let (dir, store) = setup();
         let valid = Collection::new("Valid");
         store.save(&valid).unwrap();
-        let broken = dir.0.join(format!("{}.json", Uuid::new_v4()));
+        let broken = dir.path().join(format!("{}.json", Uuid::new_v4()));
         fs::write(&broken, "not json").unwrap();
-        fs::write(dir.0.join("leftover.json.tmp"), "{}").unwrap();
-        fs::write(dir.0.join("notes.txt"), "hello").unwrap();
+        fs::write(dir.path().join("leftover.json.tmp"), "{}").unwrap();
+        fs::write(dir.path().join("notes.txt"), "hello").unwrap();
 
         let loaded = store.load_all().unwrap();
         assert_eq!(loaded.len(), 1);
@@ -221,7 +207,7 @@ mod tests {
         store.save(&collection).unwrap();
 
         store.delete(collection.id).unwrap();
-        assert!(file_names(&dir.0).is_empty());
+        assert!(file_names(dir.path()).is_empty());
         assert!(store.load_all().unwrap().is_empty());
         store.delete(Uuid::new_v4()).unwrap();
     }

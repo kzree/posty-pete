@@ -46,29 +46,15 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::domain::store::test_support::TempDir;
     use crate::domain::{
         navigation::NavEntry,
         request::{HttpMethod, Request},
     };
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new() -> Self {
-            let name = format!("posty-pete-test-{}-{}", std::process::id(), Uuid::new_v4());
-            Self(std::env::temp_dir().join(name))
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
     fn setup() -> (TempDir, NavigationStore) {
         let dir = TempDir::new();
-        let store = NavigationStore::new(dir.0.join("navigation.json"));
+        let store = NavigationStore::new(dir.path().join("navigation.json"));
         (dir, store)
     }
 
@@ -109,7 +95,7 @@ mod tests {
         store.save(&newer).unwrap();
 
         assert_eq!(store.load().unwrap(), Some(newer));
-        let names: Vec<_> = fs::read_dir(&dir.0)
+        let names: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
@@ -125,8 +111,8 @@ mod tests {
     #[test]
     fn corrupt_file_is_an_error() {
         let (dir, store) = setup();
-        fs::create_dir_all(&dir.0).unwrap();
-        fs::write(dir.0.join("navigation.json"), "{ not json").unwrap();
+        fs::create_dir_all(dir.path()).unwrap();
+        fs::write(dir.path().join("navigation.json"), "{ not json").unwrap();
         assert!(store.load().is_err());
     }
 
@@ -151,9 +137,9 @@ mod tests {
     #[test]
     fn missing_draft_field_loads_as_none() {
         let (dir, store) = setup();
-        fs::create_dir_all(&dir.0).unwrap();
+        fs::create_dir_all(dir.path()).unwrap();
         fs::write(
-            dir.0.join("navigation.json"),
+            dir.path().join("navigation.json"),
             r#"{ "entries": [{ "kind": "draft" }, { "kind": "settings" }], "index": 1 }"#,
         )
         .unwrap();
