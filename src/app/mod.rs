@@ -5,8 +5,9 @@ mod send;
 use std::time::Duration;
 
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-    Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, MouseButton,
+    MouseDownEvent, NavigationDirection, ParentElement, Render, Role, StatefulInteractiveElement,
+    Styled, Subscription, Task, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, ResizableState, WindowExt, h_resizable, input::Escape, notification::Notification,
@@ -587,6 +588,15 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
                 window.focus(&this.focus_handle, cx);
+            }))
+            // Capture phase: disabled inputs and scrollbars stop mouse-downs before they bubble.
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                let direction = match event.button {
+                    MouseButton::Navigate(NavigationDirection::Back) => Direction::Back,
+                    MouseButton::Navigate(NavigationDirection::Forward) => Direction::Forward,
+                    _ => return,
+                };
+                this.go(direction, window, cx);
             }))
             .flex()
             .flex_col()
