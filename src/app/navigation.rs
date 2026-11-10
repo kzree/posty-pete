@@ -22,6 +22,28 @@ impl<T: PartialEq> NavHistory<T> {
         }
     }
 
+    /// A history of `entries` with `index` current, or `None` if `index` is out
+    /// of range. Only the newest entries past the limit are kept.
+    pub(super) fn from_parts(mut entries: Vec<T>, index: usize) -> Option<Self> {
+        if index >= entries.len() {
+            return None;
+        }
+        let excess = entries.len().saturating_sub(MAX_ENTRIES);
+        entries.drain(..excess);
+        Some(Self {
+            entries,
+            index: index.saturating_sub(excess),
+        })
+    }
+
+    pub(super) fn entries(&self) -> &[T] {
+        &self.entries
+    }
+
+    pub(super) fn index(&self) -> usize {
+        self.index
+    }
+
     pub(super) fn current(&self) -> &T {
         &self.entries[self.index]
     }
@@ -188,6 +210,33 @@ mod tests {
 
         assert_eq!(*history.current(), "/");
         assert!(!history.can_go(Direction::Back, any));
+    }
+
+    #[test]
+    fn from_parts_keeps_entries_and_index() {
+        let mut history = NavHistory::from_parts(vec!["/", "a", "b"], 1).unwrap();
+        assert_eq!(*history.current(), "a");
+        assert_eq!(forward(&mut history), Some("b"));
+        assert_eq!(back(&mut history), Some("a"));
+        assert_eq!(back(&mut history), Some("/"));
+    }
+
+    #[test]
+    fn from_parts_rejects_an_out_of_range_index() {
+        assert!(NavHistory::from_parts(vec!["/"], 1).is_none());
+        assert!(NavHistory::<&str>::from_parts(Vec::new(), 0).is_none());
+    }
+
+    #[test]
+    fn from_parts_drops_the_oldest_entries_past_the_limit() {
+        let entries: Vec<usize> = (0..MAX_ENTRIES + 10).collect();
+        let history = NavHistory::from_parts(entries.clone(), MAX_ENTRIES + 5).unwrap();
+        assert_eq!(history.entries(), &entries[10..]);
+        assert_eq!(*history.current(), MAX_ENTRIES + 5);
+
+        let history = NavHistory::from_parts(entries, 3).unwrap();
+        assert_eq!(history.entries().len(), MAX_ENTRIES);
+        assert_eq!(*history.current(), 10);
     }
 
     #[test]

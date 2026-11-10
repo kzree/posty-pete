@@ -26,7 +26,7 @@ pub(super) enum AppRoute {
 }
 
 impl AppRoute {
-    fn path(&self) -> SharedString {
+    pub(super) fn path(&self) -> SharedString {
         match self {
             AppRoute::Request => "/".into(),
             AppRoute::SavedRequest {
@@ -236,7 +236,7 @@ impl Workspace {
 
     /// Brings the main pane in line with the current route. The editor keeps
     /// what it holds if that already belongs to the route.
-    fn show_current_route(
+    pub(super) fn show_current_route(
         &mut self,
         previous: AppRoute,
         window: &mut Window,
@@ -281,6 +281,7 @@ impl Workspace {
         self.sync_library_selection(window, cx);
         self.sync_editor_name(window, cx);
         self.sync_window_title(window, cx);
+        self.schedule_navigation_save(cx);
         cx.notify();
     }
 

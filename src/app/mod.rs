@@ -1,6 +1,7 @@
 mod dirty;
 mod menu_fallback;
 mod navigation;
+mod persisted_navigation;
 mod response_cache;
 mod routes;
 mod send;
@@ -21,6 +22,7 @@ use uuid::Uuid;
 use self::{
     dirty::Baseline,
     navigation::Direction,
+    persisted_navigation::PersistedNavigation,
     response_cache::ResponseCache,
     routes::{AppRoute, RouteHistory},
 };
@@ -101,6 +103,7 @@ pub struct Workspace {
     baseline: Option<Baseline>,
     dirty: bool,
     responses: ResponseCache<EditorContent>,
+    persisted_navigation: PersistedNavigation,
     /// Set while the save prompt is open.
     discard_prompt: Option<Continuation>,
     /// Set while a continuation runs, after the user saved or discarded.
@@ -152,7 +155,19 @@ impl Workspace {
             cx.subscribe(&response_view, |this, _, event, _| match event {
                 ResponseViewEvent::Cleared => this.responses.remove(this.editor_content),
             }),
+            cx.on_app_quit(|this, cx| {
+                this.save_navigation_now(cx);
+                async {}
+            }),
         ];
+        let workspace = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            workspace
+                .update(cx, |this, cx| this.save_navigation_now(cx))
+                .ok();
+            true
+        });
+        Self::load_navigation(window, cx);
 
         let mut workspace = Self {
             request_editor,
@@ -176,6 +191,7 @@ impl Workspace {
             baseline: None,
             dirty: false,
             responses: ResponseCache::new(),
+            persisted_navigation: PersistedNavigation::new(),
             discard_prompt: None,
             discard_confirmed: false,
             pending: None,
@@ -269,8 +285,10 @@ impl Workspace {
                 }
                 self.refresh_dirty(window, cx);
                 self.sync_window_title(window, cx);
+                self.schedule_navigation_save(cx);
                 cx.notify();
             }
+            CollectionsEvent::Loaded => self.restore_navigation(window, cx),
             CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
         }
     }
@@ -539,6 +557,7 @@ impl Workspace {
         });
         self.sync_editor_name(window, cx);
         self.refresh_dirty(window, cx);
+        self.schedule_navigation_save(cx);
     }
 
     fn drop_deleted_responses(&mut self, cx: &App) {
@@ -725,7 +744,10 @@ impl Workspace {
                 self.send_request(request.clone(), window, cx)
             }
             RequestEditorEvent::Save => self.save_request(window, cx),
-            RequestEditorEvent::Edited => self.refresh_dirty(window, cx),
+            RequestEditorEvent::Edited => {
+                self.refresh_dirty(window, cx);
+                self.schedule_navigation_save(cx);
+            }
         }
     }
 

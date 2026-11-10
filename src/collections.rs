@@ -11,6 +11,8 @@ use crate::domain::{
 
 pub enum CollectionsEvent {
     Changed,
+    /// Sent once, after the initial load finished or failed.
+    Loaded,
     /// `title` says what didn't happen, e.g. "Couldn't save collection".
     Failed {
         title: &'static str,
@@ -26,6 +28,7 @@ pub enum CollectionsEvent {
 pub struct Collections {
     /// Sorted by name, case-insensitively.
     collections: Vec<Collection>,
+    loaded: bool,
     jobs: mpsc::UnboundedSender<Job>,
 }
 
@@ -61,12 +64,18 @@ impl Collections {
 
         Self {
             collections: Vec::new(),
+            loaded: false,
             jobs,
         }
     }
 
     pub fn all(&self) -> &[Collection] {
         &self.collections
+    }
+
+    /// Whether the initial load finished, successfully or not.
+    pub fn is_loaded(&self) -> bool {
+        self.loaded
     }
 
     pub fn get(&self, id: Uuid) -> Option<&Collection> {
@@ -244,6 +253,7 @@ impl Collections {
         opened: anyhow::Result<(CollectionStore, anyhow::Result<Vec<Collection>>)>,
         cx: &mut Context<Self>,
     ) -> Option<CollectionStore> {
+        self.loaded = true;
         let (store, loaded) = match opened {
             Ok(opened) => opened,
             Err(error) => {
@@ -251,6 +261,7 @@ impl Collections {
                     title: "Collections are unavailable",
                     error,
                 });
+                cx.emit(CollectionsEvent::Loaded);
                 return None;
             }
         };
@@ -267,6 +278,7 @@ impl Collections {
                 error,
             }),
         }
+        cx.emit(CollectionsEvent::Loaded);
         Some(store)
     }
 }

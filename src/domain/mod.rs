@@ -3,6 +3,7 @@ pub mod collection;
 pub mod curl;
 pub mod history;
 pub mod http;
+pub mod navigation;
 pub mod request;
 pub mod resolved;
 pub mod response;
