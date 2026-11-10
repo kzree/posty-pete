@@ -35,7 +35,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## App
 
-- [ ] **Native menu bar.** `cx.set_menus` listing the actions in `actions.rs` with their shortcuts.
+- [ ] **In-window menu bar on Windows/Linux.** The native menu bar (`src/menus.rs`) only shows on macOS.
 - [ ] **Settings page.** Settings moved out of the sidebar; the status bar button and cmd+, only log for now (`OpenSettings` in `app.rs`). Needs a router to show it as its own page (theme, request timeout, history retention, ...).
 - [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.

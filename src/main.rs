@@ -9,6 +9,7 @@ mod collection_view;
 mod collections;
 mod domain;
 mod history;
+mod menus;
 mod request_editor;
 mod response_view;
 mod settings_page;
@@ -30,6 +31,8 @@ fn run() {
         gpui_component::init(cx);
         gpui_router::init(cx);
         actions::bind_keys(cx);
+        menus::init(WINDOW_TITLE, cx);
+        app::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
 

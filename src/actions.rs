@@ -15,7 +15,11 @@ actions!(
         OpenSettings,
         FocusUrl,
         DeleteHistoryEntry,
-        SendHistoryEntryAgain
+        SendHistoryEntryAgain,
+        Quit,
+        Hide,
+        HideOthers,
+        ShowAll
     ]
 );
 
@@ -41,6 +45,9 @@ mod keys {
     pub const SETTINGS: &str = "cmd-,";
     pub const FOCUS_URL: &str = "cmd-l";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["backspace", "delete"];
+    pub const QUIT: &str = "cmd-q";
+    pub const HIDE: &str = "cmd-h";
+    pub const HIDE_OTHERS: &str = "alt-cmd-h";
 }
 #[cfg(not(target_os = "macos"))]
 mod keys {
@@ -58,6 +65,7 @@ mod keys {
     pub const SETTINGS: &str = "ctrl-,";
     pub const FOCUS_URL: &str = "ctrl-l";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["delete"];
+    pub const QUIT: &str = "ctrl-q";
 }
 
 /// Must run after `gpui_component::init` so these override the input bindings.
@@ -71,11 +79,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::NEW_REQUEST, NewRequest, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::TOGGLE_SIDEBAR, ToggleSidebar, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::LIBRARY, OpenLibrary, Some(WORKSPACE_CONTEXT)),
-        KeyBinding::new(keys::HISTORY_ALT, OpenHistory, Some(WORKSPACE_CONTEXT)),
+        // The menu shows the first binding.
         KeyBinding::new(keys::HISTORY, OpenHistory, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new(keys::HISTORY_ALT, OpenHistory, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::TESTS, OpenTests, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::SETTINGS, OpenSettings, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::FOCUS_URL, FocusUrl, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new(keys::QUIT, Quit, None),
+    ]);
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new(keys::HIDE, Hide, None),
+        KeyBinding::new(keys::HIDE_OTHERS, HideOthers, None),
     ]);
     // Workspace only: the code editor keeps cmd/ctrl-[ and -] for outdent/indent,
     // and single-line inputs pass them on to these.

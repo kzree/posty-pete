@@ -1,4 +1,5 @@
 mod dirty;
+mod menu_fallback;
 mod navigation;
 mod routes;
 mod send;
@@ -44,6 +45,8 @@ use crate::{
     },
     window_title_bar::WindowTitleBar,
 };
+
+pub use self::menu_fallback::init;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
