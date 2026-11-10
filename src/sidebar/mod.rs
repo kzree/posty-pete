@@ -1,5 +1,6 @@
 use gpui::{
-    Context, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
+    Context, Entity, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Window, div,
 };
 use gpui_component::{
     ActiveTheme, Colorize, Icon, IconName,
@@ -9,6 +10,10 @@ use gpui_component::{
 };
 // Icons used here must also be listed in `assets.rs`.
 use gpui_kit_assets::IconName as LucideIcon;
+
+pub mod history_panel;
+
+use history_panel::HistoryPanel;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SidebarTab {
@@ -42,12 +47,19 @@ impl SidebarTab {
     }
 }
 
-#[derive(Default)]
 pub struct Sidebar {
     active_tab: SidebarTab,
+    history_panel: Entity<HistoryPanel>,
 }
 
 impl Sidebar {
+    pub fn new(history_panel: Entity<HistoryPanel>) -> Self {
+        Self {
+            active_tab: SidebarTab::default(),
+            history_panel,
+        }
+    }
+
     pub fn set_active_tab(&mut self, tab: SidebarTab, cx: &mut Context<Self>) {
         self.active_tab = tab;
         cx.notify();
@@ -70,24 +82,27 @@ impl Render for Sidebar {
                     .tooltip(move |window, cx| Tooltip::new(tab.label()).build(window, cx))
             }));
 
-        let empty_text = match self.active_tab {
-            SidebarTab::Library => "Your library is empty.",
-            SidebarTab::History => "Requests you send show up here.",
-            SidebarTab::Settings => "Settings coming soon.",
+        let content = div().flex_1().min_h_0();
+        let content = match self.active_tab {
+            SidebarTab::History => content.child(self.history_panel.clone()),
+            SidebarTab::Library | SidebarTab::Settings => {
+                let empty_text = if self.active_tab == SidebarTab::Library {
+                    "Your library is empty."
+                } else {
+                    "Settings coming soon."
+                };
+                content
+                    .p_3()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(empty_text)
+            }
         };
 
         v_flex()
             .size_full()
             .bg(cx.theme().sidebar.lighten(1.0))
             .child(tabs)
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .p_3()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(empty_text),
-            )
+            .child(content)
     }
 }

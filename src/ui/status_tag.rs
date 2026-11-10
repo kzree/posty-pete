@@ -1,10 +1,10 @@
-use gpui::ParentElement;
+use gpui::{ParentElement, SharedString};
 use gpui_component::{ColorName, Sizable, tag::Tag};
 
-use crate::domain::response::{Response, StatusClass};
+use crate::domain::response::StatusClass;
 
-pub(super) fn status_tag(response: &Response) -> Tag {
-    let color = match response.status_class() {
+pub fn status_tag(status: u16, label: impl Into<SharedString>) -> Tag {
+    let color = match StatusClass::from_status(status) {
         StatusClass::Success => ColorName::Green,
         StatusClass::Redirect => ColorName::Blue,
         StatusClass::ClientError => ColorName::Amber,
@@ -17,5 +17,5 @@ pub(super) fn status_tag(response: &Response) -> Tag {
         color.scale(800).opacity(0.6),
     )
     .small()
-    .child(response.status_text())
+    .child(label.into())
 }

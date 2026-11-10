@@ -12,11 +12,11 @@ use gpui_component::{
     v_flex,
 };
 
-mod status_tag;
-
-use crate::domain::{body_format::BodyFormat, response::Response};
+use crate::{
+    domain::{body_format::BodyFormat, response::Response},
+    ui::status_tag::status_tag,
+};
 use gpui_kit_assets::IconName as LucideIcon;
-use status_tag::status_tag;
 
 fn editor_language(format: BodyFormat) -> &'static str {
     match format {
@@ -180,7 +180,7 @@ impl Render for ResponseView {
                             };
                             h_flex()
                                 .gap_1()
-                                .child(status_tag(response))
+                                .child(status_tag(response.status, response.status_text()))
                                 .child(separator())
                                 .child(
                                     div()

@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::{ops::Range, path::Path, time::Duration};
 
 use chrono::{DateTime, Days, NaiveDate, NaiveTime, TimeZone, Utc};
 use rusqlite::{Connection, params};
@@ -29,6 +29,7 @@ impl HistoryStore {
         Self::init(Connection::open(path)?)
     }
 
+    #[cfg(test)]
     pub fn open_in_memory() -> anyhow::Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
@@ -140,15 +141,21 @@ pub fn retention_cutoff<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Utc> {
         .unwrap_or_else(|| first_day.and_utc())
 }
 
-/// Expects `entries` newest first, as returned by [`HistoryStore::since`].
-pub fn group_by_day<'a, Tz: TimeZone>(
-    entries: &'a [HistoryEntry],
+/// Index ranges into `entries`, one per local day. Expects `entries` newest first,
+/// as returned by [`HistoryStore::since`].
+pub fn group_by_day<Tz: TimeZone>(
+    entries: &[HistoryEntry],
     tz: &Tz,
-) -> Vec<(NaiveDate, &'a [HistoryEntry])> {
+) -> Vec<(NaiveDate, Range<usize>)> {
     let day = |e: &HistoryEntry| e.sent_at.with_timezone(tz).date_naive();
+    let mut start = 0;
     entries
         .chunk_by(|a, b| day(a) == day(b))
-        .map(|chunk| (day(&chunk[0]), chunk))
+        .map(|chunk| {
+            let range = start..start + chunk.len();
+            start = range.end;
+            (day(&chunk[0]), range)
+        })
         .collect()
 }
 

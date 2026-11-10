@@ -24,6 +24,18 @@ pub enum StatusClass {
     ServerError,
 }
 
+impl StatusClass {
+    pub fn from_status(status: u16) -> Self {
+        match status {
+            200..=299 => Self::Success,
+            300..=399 => Self::Redirect,
+            400..=499 => Self::ClientError,
+            500..=599 => Self::ServerError,
+            _ => Self::Informational,
+        }
+    }
+}
+
 impl Response {
     pub fn new(
         status: u16,
@@ -40,16 +52,6 @@ impl Response {
         };
         response.text = decode_body(&response.body, response.content_type());
         response
-    }
-
-    pub fn status_class(&self) -> StatusClass {
-        match self.status {
-            200..=299 => StatusClass::Success,
-            300..=399 => StatusClass::Redirect,
-            400..=499 => StatusClass::ClientError,
-            500..=599 => StatusClass::ServerError,
-            _ => StatusClass::Informational,
-        }
     }
 
     pub fn status_text(&self) -> String {

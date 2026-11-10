@@ -28,7 +28,7 @@ use actions::{
     FocusUrl, OpenHistory, OpenLibrary, OpenSettings, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
 };
 use assets::AppAssets;
-use sidebar::{Sidebar, SidebarTab};
+use sidebar::{Sidebar, SidebarTab, history_panel::HistoryPanel};
 use status_bar::StatusBar;
 
 use crate::{
@@ -59,6 +59,7 @@ struct BaseLayout {
     response_view: Entity<ResponseView>,
     status_bar: Entity<StatusBar>,
     sidebar: Entity<Sidebar>,
+    history_panel: Entity<HistoryPanel>,
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
     history: Option<Arc<Mutex<HistoryStore>>>,
@@ -76,7 +77,8 @@ impl BaseLayout {
         let response_view = cx.new(|cx| ResponseView::new(window, cx));
         let left_panel = LeftPanelState::Open;
         let status_bar = cx.new(|_| StatusBar::new(left_panel == LeftPanelState::Open));
-        let sidebar = cx.new(|_| Sidebar::default());
+        let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
+        let sidebar = cx.new(|_| Sidebar::new(history_panel.clone()));
         let loading_bar = cx.new(LoadingBar::new);
 
         let sub = cx.subscribe_in(
@@ -127,25 +129,57 @@ impl BaseLayout {
             },
         );
 
-        Self {
+        let this = Self {
             request_editor,
             response_view,
             status_bar,
             sidebar,
+            history_panel,
             loading_bar,
             client: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
                 .redirect(domain::http::redirect_policy())
                 .build()
                 .expect("failed to build HTTP client"),
-            history: open_history(cx),
+            history: open_history(),
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
             focus_handle: cx.focus_handle(),
             _subscriptions: vec![sub],
-        }
+        };
+        this.load_history(cx);
+        this
+    }
+
+    fn load_history(&self, cx: &mut Context<Self>) {
+        let Some(store) = self.history.clone() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let entries = cx
+                .background_spawn(async move {
+                    let store = lock(&store);
+                    let cutoff = history::retention_cutoff(&Local::now());
+                    if let Err(e) = store.prune(cutoff) {
+                        tracing::warn!("failed to prune history: {e:#}");
+                    }
+                    store.since(cutoff)
+                })
+                .await;
+            match entries {
+                Ok(entries) => {
+                    this.update(cx, |this, cx| {
+                        this.history_panel
+                            .update(cx, |panel, cx| panel.set_entries(entries, cx));
+                    })
+                    .ok();
+                }
+                Err(e) => tracing::error!("failed to load history: {e:#}"),
+            }
+        })
+        .detach();
     }
 
     fn record_history(
@@ -153,15 +187,27 @@ impl BaseLayout {
         sent_at: DateTime<Utc>,
         request: Request,
         outcome: Option<(u16, Duration)>,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) {
         let Some(store) = self.history.clone() else {
             return;
         };
-        cx.background_spawn(async move {
-            let (status, elapsed) = outcome.unzip();
-            if let Err(e) = lock(&store).insert(sent_at, &request, status, elapsed) {
-                tracing::warn!("failed to save request to history: {e:#}");
+        cx.spawn(async move |this, cx| {
+            let entry = cx
+                .background_spawn(async move {
+                    let (status, elapsed) = outcome.unzip();
+                    lock(&store).insert(sent_at, &request, status, elapsed)
+                })
+                .await;
+            match entry {
+                Ok(entry) => {
+                    this.update(cx, |this, cx| {
+                        this.history_panel
+                            .update(cx, |panel, cx| panel.push(entry, cx));
+                    })
+                    .ok();
+                }
+                Err(e) => tracing::warn!("failed to save request to history: {e:#}"),
             }
         })
         .detach();
@@ -256,30 +302,19 @@ impl Render for BaseLayout {
     }
 }
 
-fn open_history(cx: &App) -> Option<Arc<Mutex<HistoryStore>>> {
+fn open_history() -> Option<Arc<Mutex<HistoryStore>>> {
     let Some(dirs) = directories::ProjectDirs::from("", "", "posty-pete") else {
         tracing::error!("no home directory found; history is disabled");
         return None;
     };
     let path = dirs.data_dir().join("history.db");
-    let store = match HistoryStore::open(&path) {
-        Ok(store) => Arc::new(Mutex::new(store)),
+    match HistoryStore::open(&path) {
+        Ok(store) => Some(Arc::new(Mutex::new(store))),
         Err(e) => {
             tracing::error!("failed to open history at {}: {e:#}", path.display());
-            return None;
+            None
         }
-    };
-
-    let pruning = store.clone();
-    cx.background_spawn(async move {
-        let cutoff = history::retention_cutoff(&Local::now());
-        if let Err(e) = lock(&pruning).prune(cutoff) {
-            tracing::warn!("failed to prune history: {e:#}");
-        }
-    })
-    .detach();
-
-    Some(store)
+    }
 }
 
 fn lock(store: &Mutex<HistoryStore>) -> MutexGuard<'_, HistoryStore> {
