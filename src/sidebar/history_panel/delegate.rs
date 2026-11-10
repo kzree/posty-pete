@@ -168,7 +168,7 @@ impl ListDelegate for HistoryDelegate {
                         .min_w_0()
                         .gap_2()
                         .child(method_label(entry.method, cx))
-                        .child(div().flex_1().min_w_0().truncate().child(url))
+                        .child(div().flex_1().min_w_0().truncate().text_xs().child(url))
                         .child(outcome_tag(entry.outcome).flex_none()),
                 ),
         )
