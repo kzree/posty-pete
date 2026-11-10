@@ -50,7 +50,7 @@ impl RenderOnce for WindowTitleBar {
         };
 
         TitleBar::new().child(
-            div()
+            h_flex()
                 .relative()
                 .flex_1()
                 .h_full()
