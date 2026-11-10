@@ -91,97 +91,17 @@ impl Workspace {
         let loading_bar = cx.new(LoadingBar::new);
         let history = cx.new(History::new);
 
-        let history_sub = cx.subscribe_in(
-            &history,
-            window,
-            |this, _, event: &HistoryEvent, window, cx| match event {
-                HistoryEvent::Loaded(entries) => this
-                    .history_panel
-                    .update(cx, |panel, cx| panel.set_entries(entries.clone(), cx)),
-                HistoryEvent::Recorded(summary) => this
-                    .history_panel
-                    .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
-                HistoryEvent::Opened { .. } if this.pending.is_some() => {
-                    window.push_notification(
-                        Notification::info("Wait for it to finish, then try again.")
-                            .title("A request is still running"),
-                        cx,
-                    );
-                }
-                HistoryEvent::Opened { request, mode } => {
-                    this.request_editor
-                        .update(cx, |editor, cx| editor.load_request(request, window, cx));
-                    this.response_view
-                        .update(cx, |view, cx| view.clear(window, cx));
-                    if *mode == OpenMode::Send {
-                        this.request_editor.update(cx, |editor, cx| editor.send(cx));
-                    }
-                }
-                HistoryEvent::Deleted(id) => this
-                    .history_panel
-                    .update(cx, |panel, cx| panel.remove(*id, window, cx)),
-                HistoryEvent::Cleared => this
-                    .history_panel
-                    .update(cx, |panel, cx| panel.clear(window, cx)),
-                HistoryEvent::Failed { title, error } => show_error(title, error, window, cx),
-            },
-        );
-
-        let history_panel_sub = cx.subscribe_in(
-            &history_panel,
-            window,
-            |this, _, event: &HistoryPanelEvent, window, cx| match event {
-                HistoryPanelEvent::Open(id) => {
-                    let id = *id;
-                    this.history
-                        .update(cx, |history, cx| history.open(id, OpenMode::Load, cx));
-                }
-                HistoryPanelEvent::SendAgain(id) => {
-                    let id = *id;
-                    this.history
-                        .update(cx, |history, cx| history.open(id, OpenMode::Send, cx));
-                }
-                HistoryPanelEvent::CopyAsCurl(id) => {
-                    let request = this.history.read(cx).request(*id, cx);
-                    let id = *id;
-                    cx.spawn_in(window, async move |this, cx| {
-                        let request = request.await;
-                        this.update_in(cx, |this, window, cx| match request {
-                            Ok(Some(request)) => copy_with_notification(
-                                curl::to_curl(&request),
-                                "Copied as cURL",
-                                window,
-                                cx,
-                            ),
-                            Ok(None) => this
-                                .history_panel
-                                .update(cx, |panel, cx| panel.remove(id, window, cx)),
-                            Err(error) => show_error("Couldn't copy as cURL", &error, window, cx),
-                        })
-                        .ok();
-                    })
-                    .detach();
-                }
-                HistoryPanelEvent::Delete(id) => {
-                    let id = *id;
-                    this.history
-                        .update(cx, |history, cx| history.delete(id, cx));
-                }
-                HistoryPanelEvent::Clear => {
-                    this.history.update(cx, |history, cx| history.clear(cx));
-                }
-            },
-        );
-
-        let sub = cx.subscribe_in(
-            &request_editor,
-            window,
-            |this, _editor, event, window, cx| match event {
-                RequestEditorEvent::SendRequested(request) => {
-                    this.send_request(request.clone(), window, cx)
-                }
-            },
-        );
+        let subscriptions = vec![
+            cx.subscribe_in(&history, window, |this, _, event, window, cx| {
+                this.on_history_event(event, window, cx)
+            }),
+            cx.subscribe_in(&history_panel, window, |this, _, event, window, cx| {
+                this.on_history_panel_event(event, window, cx)
+            }),
+            cx.subscribe_in(&request_editor, window, |this, _, event, window, cx| {
+                this.on_editor_event(event, window, cx)
+            }),
+        ];
 
         Self {
             request_editor,
@@ -201,8 +121,99 @@ impl Workspace {
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
             focus_handle: cx.focus_handle(),
-            _subscriptions: vec![sub, history_sub, history_panel_sub],
+            _subscriptions: subscriptions,
         }
+    }
+
+    fn on_history_event(
+        &mut self,
+        event: &HistoryEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            HistoryEvent::Loaded(entries) => self
+                .history_panel
+                .update(cx, |panel, cx| panel.set_entries(entries.clone(), cx)),
+            HistoryEvent::Recorded(summary) => self
+                .history_panel
+                .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
+            HistoryEvent::Opened { .. } if self.pending.is_some() => {
+                window.push_notification(
+                    Notification::info("Wait for it to finish, then try again.")
+                        .title("A request is still running"),
+                    cx,
+                );
+            }
+            HistoryEvent::Opened { request, mode } => {
+                self.request_editor
+                    .update(cx, |editor, cx| editor.load_request(request, window, cx));
+                self.response_view
+                    .update(cx, |view, cx| view.clear(window, cx));
+                if *mode == OpenMode::Send {
+                    self.request_editor.update(cx, |editor, cx| editor.send(cx));
+                }
+            }
+            HistoryEvent::Deleted(id) => self
+                .history_panel
+                .update(cx, |panel, cx| panel.remove(*id, window, cx)),
+            HistoryEvent::Cleared => self
+                .history_panel
+                .update(cx, |panel, cx| panel.clear(window, cx)),
+            HistoryEvent::Failed { title, error } => show_error(title, error, window, cx),
+        }
+    }
+
+    fn on_history_panel_event(
+        &mut self,
+        event: &HistoryPanelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match *event {
+            HistoryPanelEvent::Open(id) => self
+                .history
+                .update(cx, |history, cx| history.open(id, OpenMode::Load, cx)),
+            HistoryPanelEvent::SendAgain(id) => self
+                .history
+                .update(cx, |history, cx| history.open(id, OpenMode::Send, cx)),
+            HistoryPanelEvent::CopyAsCurl(id) => self.copy_as_curl(id, window, cx),
+            HistoryPanelEvent::Delete(id) => self
+                .history
+                .update(cx, |history, cx| history.delete(id, cx)),
+            HistoryPanelEvent::Clear => self.history.update(cx, |history, cx| history.clear(cx)),
+        }
+    }
+
+    fn on_editor_event(
+        &mut self,
+        event: &RequestEditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            RequestEditorEvent::SendRequested(request) => {
+                self.send_request(request.clone(), window, cx)
+            }
+        }
+    }
+
+    fn copy_as_curl(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let request = self.history.read(cx).request(id, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let request = request.await;
+            this.update_in(cx, |this, window, cx| match request {
+                Ok(Some(request)) => {
+                    copy_with_notification(curl::to_curl(&request), "Copied as cURL", window, cx)
+                }
+                Ok(None) => this
+                    .history_panel
+                    .update(cx, |panel, cx| panel.remove(id, window, cx)),
+                Err(error) => show_error("Couldn't copy as cURL", &error, window, cx),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn send_request(&mut self, request: Request, window: &mut Window, cx: &mut Context<Self>) {
