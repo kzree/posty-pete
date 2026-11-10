@@ -143,7 +143,7 @@ impl BodyEditor {
                     .selected_value()
                     .copied()
                     .unwrap_or_default(),
-                text: self.raw.read(cx).value().to_string(),
+                text: self.raw.read(cx).text().to_string(),
             },
         }
     }

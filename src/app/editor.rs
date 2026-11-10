@@ -21,7 +21,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.is_dirty() || self.discard_confirmed {
+        if self.discard_confirmed || !self.is_dirty_now(window, cx) {
             then(self, window, cx);
             return;
         }
@@ -109,7 +109,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.is_dirty() && !self.discard_confirmed {
+        if !self.discard_confirmed && self.is_dirty_now(window, cx) {
             tracing::error!("unsaved changes replaced without confirm_discard");
             window.push_notification(
                 Notification::error("Your unsaved changes to the request were discarded.")
@@ -143,8 +143,8 @@ impl Workspace {
     /// then reloads the stored request. The shown response stays.
     pub(super) fn revert_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editor_content == EditorContent::Draft
-            || !self.is_dirty()
             || window.has_active_dialog(cx)
+            || !self.is_dirty_now(window, cx)
         {
             return;
         }
@@ -197,14 +197,35 @@ impl Workspace {
         });
     }
 
-    /// Whether the editor holds a saved request with unsaved changes.
+    /// Whether the editor holds a saved request with unsaved changes, as of
+    /// the last check. A pending check runs before the next frame is drawn.
     pub(super) fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// `is_dirty`, running a pending check first.
+    pub(super) fn is_dirty_now(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.dirty_check.is_pending() {
+            self.refresh_dirty(window, cx);
+        }
+        self.dirty
+    }
+
+    /// Checks dirtiness once before the next frame, however many edits come first.
+    pub(super) fn schedule_dirty_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dirty_check.request() {
+            cx.on_next_frame(window, |this, window, cx| {
+                if this.dirty_check.is_pending() {
+                    this.refresh_dirty(window, cx);
+                }
+            });
+        }
     }
 
     /// Recomputes the cached dirty flag after an edit, a load, a save or a
     /// change to the collections.
     pub(super) fn refresh_dirty(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.dirty_check.clear();
         let dirty = self.baseline.as_ref().is_some_and(|baseline| {
             self.editor_saved_request(cx).is_some_and(|saved| {
                 let editor = self.request_editor.read(cx);

@@ -57,7 +57,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.closing || !self.is_dirty() {
+        if self.closing || !self.is_dirty_now(window, cx) {
             self.save_navigation_now(cx);
             return true;
         }

@@ -34,6 +34,25 @@ impl Baseline {
     }
 }
 
+/// Coalesces the dirty checks a burst of edits asks for into one.
+#[derive(Default)]
+pub(super) struct PendingCheck(bool);
+
+impl PendingCheck {
+    /// Asks for a check. Returns `true` if none was pending, so one needs scheduling.
+    pub(super) fn request(&mut self) -> bool {
+        !std::mem::replace(&mut self.0, true)
+    }
+
+    pub(super) fn is_pending(&self) -> bool {
+        self.0
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.0 = false;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +146,17 @@ mod tests {
         let baseline = Baseline::new(edited.clone(), edited.clone());
         let saved = SavedRequest::new("Get users", edited.clone());
         assert!(!baseline.is_dirty(&saved, &edited, Some("Get users")));
+    }
+
+    #[test]
+    fn a_burst_of_requests_schedules_one_check() {
+        let mut check = PendingCheck::default();
+        let scheduled = (0..100).filter(|_| check.request()).count();
+        assert_eq!(scheduled, 1);
+        assert!(check.is_pending());
+
+        check.clear();
+        assert!(!check.is_pending());
+        assert!(check.request());
     }
 }

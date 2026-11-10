@@ -21,7 +21,7 @@ use gpui_component::{ResizableState, Root, WindowExt, notification::Notification
 use uuid::Uuid;
 
 use self::{
-    dirty::Baseline,
+    dirty::{Baseline, PendingCheck},
     persisted_navigation::PersistedNavigation,
     response_cache::ResponseCache,
     routes::{AppRoute, RouteHistory},
@@ -94,6 +94,8 @@ pub struct Workspace {
     /// Set while the editor holds a saved request.
     baseline: Option<Baseline>,
     dirty: bool,
+    /// Set after an edit until the dirty check runs.
+    dirty_check: PendingCheck,
     responses: ResponseCache<EditorContent>,
     persisted_navigation: PersistedNavigation,
     /// Set while the save prompt is open.
@@ -149,6 +151,7 @@ impl Workspace {
             draft: None,
             baseline: None,
             dirty: false,
+            dirty_check: PendingCheck::default(),
             responses: ResponseCache::new(),
             persisted_navigation: PersistedNavigation::new(),
             discard_prompt: None,

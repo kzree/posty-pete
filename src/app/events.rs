@@ -219,7 +219,7 @@ impl Workspace {
             }
             RequestEditorEvent::Save => self.save_request(window, cx),
             RequestEditorEvent::Edited => {
-                self.refresh_dirty(window, cx);
+                self.schedule_dirty_check(window, cx);
                 self.schedule_navigation_save(cx);
             }
         }
