@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
-    div, relative,
+    AnyElement, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    Styled, Window, div, relative,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable,
@@ -47,11 +47,18 @@ impl ResponseTab {
     }
 }
 
+pub enum ResponseViewEvent {
+    /// The user cleared the response.
+    Cleared,
+}
+
 pub struct ResponseView {
     response: Option<Result<Response, String>>,
     active_tab: ResponseTab,
     body: Entity<EditorState>,
 }
+
+impl EventEmitter<ResponseViewEvent> for ResponseView {}
 
 impl ResponseView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -114,7 +121,10 @@ impl ResponseView {
             .icon(Icon::new(LucideIcon::Trash))
             .tooltip("Clear response")
             .accessibility_label("Clear response")
-            .on_click(cx.listener(|this, _, window, cx| this.clear(window, cx)))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear(window, cx);
+                cx.emit(ResponseViewEvent::Cleared);
+            }))
     }
     fn render_tab_content(&self, response: &Response, cx: &Context<Self>) -> AnyElement {
         match self.active_tab {

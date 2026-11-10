@@ -44,7 +44,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
 - [ ] **Navigation: two-finger swipes.** Mouse side buttons and three-finger "swipe between pages" work; two-finger trackpad swipes arrive as plain scrolling and would need custom horizontal-scroll detection.
 - [ ] **Navigation: persist history.** Keep the back/forward history across restarts.
-- [ ] **Navigation: keep responses.** Going back or forward clears the response pane; keep each history entry's last response (capped) and show it again.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
 ## Look and feel

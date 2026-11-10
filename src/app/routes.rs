@@ -67,6 +67,21 @@ pub(super) fn route_title(route: AppRoute, collections: &[Collection]) -> Window
     }
 }
 
+impl EditorContent {
+    pub(super) fn route(self) -> AppRoute {
+        match self {
+            EditorContent::Draft => AppRoute::Request,
+            EditorContent::Saved {
+                collection_id,
+                request_id,
+            } => AppRoute::SavedRequest {
+                collection_id,
+                request_id,
+            },
+        }
+    }
+}
+
 pub(super) type RouteHistory = NavHistory<AppRoute>;
 
 impl Workspace {
@@ -172,16 +187,7 @@ impl Workspace {
 
     /// The route of what the editor holds.
     pub(super) fn editor_route(&self) -> AppRoute {
-        match self.editor_content {
-            EditorContent::Draft => AppRoute::Request,
-            EditorContent::Saved {
-                collection_id,
-                request_id,
-            } => AppRoute::SavedRequest {
-                collection_id,
-                request_id,
-            },
-        }
+        self.editor_content.route()
     }
 
     /// Goes back if possible, otherwise to the editor's route, which needs no load.

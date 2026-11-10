@@ -2,7 +2,7 @@ use chrono::Utc;
 use gpui::{AppContext, Context, Window};
 use tokio::task::JoinError;
 
-use super::{Workspace, show_error};
+use super::{EditorContent, Workspace, show_error};
 use crate::{
     domain::{
         curl,
@@ -54,6 +54,7 @@ impl Workspace {
         }
         self.set_sending(true, cx);
 
+        let content = self.editor_content;
         let sent_at = Utc::now();
         let handle = http::spawn_send(self.client.clone(), request.clone());
         self.pending = Some(cx.spawn_in(window, async move |this, cx| {
@@ -78,14 +79,16 @@ impl Workspace {
                 outcome,
             };
             this.update_in(cx, |this, window, cx| {
-                this.finish_request(result, body_text, record, window, cx)
+                this.finish_request(content, result, body_text, record, window, cx)
             })
             .ok();
         }));
     }
 
+    /// `content` is what the editor held when the request was sent.
     fn finish_request(
         &mut self,
+        content: EditorContent,
         result: Result<Response, String>,
         body_text: String,
         record: HistoryRecord,
@@ -94,9 +97,18 @@ impl Workspace {
     ) {
         self.pending = None;
         self.set_sending(false, cx);
-        self.response_view.update(cx, |view, cx| {
-            view.set_response(result, body_text, window, cx)
-        });
+        // A saved request deleted in flight became the draft.
+        let content = if self.route_exists(content.route(), cx) {
+            content
+        } else {
+            self.editor_content
+        };
+        self.responses.insert(content, &result, &body_text);
+        if content == self.editor_content {
+            self.response_view.update(cx, |view, cx| {
+                view.set_response(result, body_text, window, cx)
+            });
+        }
         self.history
             .update(cx, |history, cx| history.record(record, cx));
     }

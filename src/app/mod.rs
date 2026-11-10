@@ -1,6 +1,7 @@
 mod dirty;
 mod menu_fallback;
 mod navigation;
+mod response_cache;
 mod routes;
 mod send;
 
@@ -20,6 +21,7 @@ use uuid::Uuid;
 use self::{
     dirty::Baseline,
     navigation::Direction,
+    response_cache::ResponseCache,
     routes::{AppRoute, RouteHistory},
 };
 use crate::{
@@ -32,7 +34,7 @@ use crate::{
     domain::{self, history::OpenMode},
     history::{History, HistoryEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
-    response_view::ResponseView,
+    response_view::{ResponseView, ResponseViewEvent},
     sidebar::{
         Sidebar, SidebarTab,
         history_panel::{HistoryPanel, HistoryPanelEvent},
@@ -98,6 +100,7 @@ pub struct Workspace {
     /// Set while the editor holds a saved request.
     baseline: Option<Baseline>,
     dirty: bool,
+    responses: ResponseCache<EditorContent>,
     /// Set while the save prompt is open.
     discard_prompt: Option<Continuation>,
     /// Set while a continuation runs, after the user saved or discarded.
@@ -146,6 +149,9 @@ impl Workspace {
             cx.subscribe_in(&request_editor, window, |this, _, event, window, cx| {
                 this.on_editor_event(event, window, cx)
             }),
+            cx.subscribe(&response_view, |this, _, event, _| match event {
+                ResponseViewEvent::Cleared => this.responses.remove(this.editor_content),
+            }),
         ];
 
         let mut workspace = Self {
@@ -169,6 +175,7 @@ impl Workspace {
             draft: None,
             baseline: None,
             dirty: false,
+            responses: ResponseCache::new(),
             discard_prompt: None,
             discard_confirmed: false,
             pending: None,
@@ -208,6 +215,7 @@ impl Workspace {
                 let (request, mode) = (request.clone(), *mode);
                 self.confirm_discard(
                     move |this, window, cx| {
+                        this.responses.remove(EditorContent::Draft);
                         this.load_editor(EditorContent::Draft, &request, window, cx);
                         this.navigate(AppRoute::Request, window, cx);
                         if mode == OpenMode::Send {
@@ -242,10 +250,13 @@ impl Workspace {
                 });
                 if !self.route_exists(self.editor_route(), cx) {
                     // What was in the editor stays there, as the draft.
+                    self.responses
+                        .rekey(self.editor_content, EditorContent::Draft);
                     self.editor_content = EditorContent::Draft;
                     self.draft = None;
                     self.baseline = None;
                 }
+                self.drop_deleted_responses(cx);
                 if !self.route_exists(self.current_route(), cx) {
                     self.replace_route(self.editor_route(), window, cx);
                 } else {
@@ -405,6 +416,7 @@ impl Workspace {
         self.confirm_discard(
             |this, window, cx| {
                 let blank = domain::request::Request::default();
+                this.responses.remove(EditorContent::Draft);
                 this.load_editor(EditorContent::Draft, &blank, window, cx);
                 this.navigate(AppRoute::Request, window, cx);
                 this.request_editor
@@ -489,8 +501,9 @@ impl Workspace {
         }
     }
 
-    /// Loads `request` into the editor and clears the response. Loading a draft
-    /// replaces it; loading a saved request over the draft keeps a snapshot of it.
+    /// Loads `request` into the editor and shows its kept response, if any.
+    /// Loading a draft replaces it; loading a saved request over the draft
+    /// keeps a snapshot of it.
     fn load_editor(
         &mut self,
         content: EditorContent,
@@ -519,10 +532,26 @@ impl Workspace {
             )),
             EditorContent::Draft => None,
         };
-        self.response_view
-            .update(cx, |view, cx| view.clear(window, cx));
+        let kept = self.responses.get(content).cloned();
+        self.response_view.update(cx, |view, cx| match kept {
+            Some(kept) => view.set_response(kept.result, kept.body_text, window, cx),
+            None => view.clear(window, cx),
+        });
         self.sync_editor_name(window, cx);
         self.refresh_dirty(window, cx);
+    }
+
+    fn drop_deleted_responses(&mut self, cx: &App) {
+        let collections = self.collections.read(cx);
+        self.responses.retain(|content| match content {
+            EditorContent::Draft => true,
+            EditorContent::Saved {
+                collection_id,
+                request_id,
+            } => collections
+                .get(collection_id)
+                .is_some_and(|collection| collection.find_request(request_id).is_some()),
+        });
     }
 
     /// Whether the editor holds a saved request with unsaved changes.
