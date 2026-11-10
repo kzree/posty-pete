@@ -2,11 +2,12 @@ use std::time::Duration;
 
 use chrono::Utc;
 use gpui::{
-    AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
+    App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
     Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme, ResizableState, h_resizable, input::Escape, resizable_panel, v_resizable,
+    ActiveTheme, ResizableState, WindowExt, h_resizable, input::Escape, notification::Notification,
+    resizable_panel, v_resizable,
 };
 use tokio::task::JoinError;
 
@@ -36,6 +37,15 @@ use crate::{
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Logs `error` and shows it as a toast.
+fn show_error(title: &str, error: &anyhow::Error, window: &mut Window, cx: &mut App) {
+    tracing::warn!("{title}: {error:#}");
+    window.push_notification(
+        Notification::error(format!("{error:#}")).title(title.to_string()),
+        cx,
+    );
+}
 
 fn flatten_send_result(
     joined: Result<anyhow::Result<Response>, JoinError>,
@@ -106,6 +116,7 @@ impl Workspace {
                 HistoryEvent::Cleared => this
                     .history_panel
                     .update(cx, |panel, cx| panel.clear(window, cx)),
+                HistoryEvent::Failed { title, error } => show_error(title, error, window, cx),
             },
         );
 
@@ -126,13 +137,17 @@ impl Workspace {
                 HistoryPanelEvent::CopyAsCurl(id) => {
                     let request = this.history.read(cx).request(*id, cx);
                     cx.spawn_in(window, async move |_, cx| {
-                        if let Some(request) = request.await {
-                            let command = curl::to_curl(&request);
-                            cx.update(|window, cx| {
-                                copy_with_notification(command, "Copied as cURL", window, cx)
-                            })
-                            .ok();
-                        }
+                        let request = request.await;
+                        cx.update(|window, cx| match request {
+                            Ok(request) => copy_with_notification(
+                                curl::to_curl(&request),
+                                "Copied as cURL",
+                                window,
+                                cx,
+                            ),
+                            Err(error) => show_error("Couldn't copy as cURL", &error, window, cx),
+                        })
+                        .ok();
                     })
                     .detach();
                 }

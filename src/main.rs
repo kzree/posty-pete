@@ -1,4 +1,4 @@
-use gpui::{App, AppContext, Bounds, WindowOptions, px, size};
+use gpui::{Anchor, App, AppContext, Bounds, WindowOptions, px, size};
 use gpui_component::{Root, Theme, ThemeMode};
 use gpui_platform::application;
 
@@ -26,6 +26,7 @@ fn run() {
         gpui_component::init(cx);
         actions::bind_keys(cx);
         Theme::change(ThemeMode::Dark, None, cx);
+        Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
 
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
         cx.open_window(

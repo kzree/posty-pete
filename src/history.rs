@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use chrono::Local;
 use gpui::{App, AppContext, Context, EventEmitter, Task};
 
@@ -22,6 +22,11 @@ pub enum HistoryEvent {
     },
     Deleted(i64),
     Cleared,
+    /// `title` says what didn't happen, e.g. "Couldn't clear history".
+    Failed {
+        title: &'static str,
+        error: anyhow::Error,
+    },
 }
 
 /// What to do with a history entry once its full request is loaded.
@@ -65,33 +70,29 @@ impl History {
     pub fn open(&mut self, id: i64, mode: OpenMode, cx: &mut Context<Self>) {
         let request = self.request(id, cx);
         cx.spawn(async move |this, cx| {
-            if let Some(request) = request.await {
-                this.update(cx, |_, cx| cx.emit(HistoryEvent::Opened { request, mode }))
-                    .ok();
-            }
+            let event = match request.await {
+                Ok(request) => HistoryEvent::Opened { request, mode },
+                Err(error) => HistoryEvent::Failed {
+                    title: "Couldn't open request",
+                    error,
+                },
+            };
+            this.update(cx, |_, cx| cx.emit(event)).ok();
         })
         .detach();
     }
 
-    /// Loads an entry's full request. Failures are logged and give `None`.
-    pub fn request(&self, id: i64, cx: &App) -> Task<Option<Request>> {
+    /// Loads an entry's full request.
+    pub fn request(&self, id: i64, cx: &App) -> Task<anyhow::Result<Request>> {
         let State::Ready(store) = &self.state else {
-            return Task::ready(None);
+            return Task::ready(Err(anyhow!("history is unavailable")));
         };
         let store = store.clone();
 
         cx.background_spawn(async move {
-            match lock(&store).get(id) {
-                Ok(Some(request)) => Some(request),
-                Ok(None) => {
-                    tracing::warn!("history entry {id} not found");
-                    None
-                }
-                Err(e) => {
-                    tracing::warn!("failed to get request from history: {e:#}");
-                    None
-                }
-            }
+            lock(&store)
+                .get(id)?
+                .ok_or_else(|| anyhow!("history entry {id} not found"))
         })
     }
 
@@ -105,14 +106,18 @@ impl History {
             let deleted = cx
                 .background_spawn(async move { lock(&store).delete(id) })
                 .await;
-            match deleted {
-                Ok(true) => {
-                    this.update(cx, |_, cx| cx.emit(HistoryEvent::Deleted(id)))
-                        .ok();
+            let event = match deleted {
+                Ok(true) => HistoryEvent::Deleted(id),
+                Ok(false) => {
+                    tracing::warn!("history entry {id} not found");
+                    return;
                 }
-                Ok(false) => tracing::warn!("history entry {id} not found"),
-                Err(e) => tracing::warn!("failed to delete history entry: {e:#}"),
-            }
+                Err(error) => HistoryEvent::Failed {
+                    title: "Couldn't delete request",
+                    error,
+                },
+            };
+            this.update(cx, |_, cx| cx.emit(event)).ok();
         })
         .detach();
     }
@@ -127,12 +132,14 @@ impl History {
             let cleared = cx
                 .background_spawn(async move { lock(&store).clear() })
                 .await;
-            match cleared {
-                Ok(_) => {
-                    this.update(cx, |_, cx| cx.emit(HistoryEvent::Cleared)).ok();
-                }
-                Err(e) => tracing::warn!("failed to clear history: {e:#}"),
-            }
+            let event = match cleared {
+                Ok(_) => HistoryEvent::Cleared,
+                Err(error) => HistoryEvent::Failed {
+                    title: "Couldn't clear history",
+                    error,
+                },
+            };
+            this.update(cx, |_, cx| cx.emit(event)).ok();
         })
         .detach();
     }
@@ -151,13 +158,14 @@ impl History {
             let saved = cx
                 .background_spawn(async move { lock(&store).insert(&record) })
                 .await;
-            match saved {
-                Ok(summary) => {
-                    this.update(cx, |_, cx| cx.emit(HistoryEvent::Recorded(summary)))
-                        .ok();
-                }
-                Err(e) => tracing::warn!("failed to save request to history: {e:#}"),
-            }
+            let event = match saved {
+                Ok(summary) => HistoryEvent::Recorded(summary),
+                Err(error) => HistoryEvent::Failed {
+                    title: "Couldn't save request to history",
+                    error,
+                },
+            };
+            this.update(cx, |_, cx| cx.emit(event)).ok();
         })
         .detach();
     }
@@ -180,9 +188,12 @@ impl History {
                     self.record(record, cx);
                 }
             }
-            Err(e) => {
-                tracing::error!("history is unavailable: {e:#}");
+            Err(error) => {
                 self.state = State::Unavailable;
+                cx.emit(HistoryEvent::Failed {
+                    title: "History is unavailable",
+                    error,
+                });
             }
         }
     }
