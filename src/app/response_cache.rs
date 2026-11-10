@@ -67,6 +67,13 @@ impl<K: Copy + Eq> ResponseCache<K> {
         }
     }
 
+    /// Copies the entry for `from` to `to`, replacing what `to` had.
+    pub(super) fn copy(&mut self, from: K, to: K) {
+        if let Some(entry) = self.position(from).map(|ix| self.entries[ix].1.clone()) {
+            self.insert(to, &entry.result, &entry.body_text);
+        }
+    }
+
     pub(super) fn retain(&mut self, mut keep: impl FnMut(K) -> bool) {
         self.entries.retain(|(key, _)| keep(*key));
     }
@@ -142,6 +149,18 @@ mod tests {
         assert_eq!(status(&mut cache, 2), Some(201));
         cache.rekey(3, 2);
         assert!(cache.get(2).is_none());
+    }
+
+    #[test]
+    fn copy_keeps_the_source() {
+        let mut cache = ResponseCache::new();
+        cache.insert(1, &ok(201), "body");
+        cache.insert(2, &ok(500), "");
+        cache.copy(1, 2);
+        assert_eq!(status(&mut cache, 1), Some(201));
+        assert_eq!(status(&mut cache, 2), Some(201));
+        cache.copy(3, 2);
+        assert_eq!(status(&mut cache, 2), Some(201));
     }
 
     #[test]

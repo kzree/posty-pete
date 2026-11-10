@@ -921,9 +921,11 @@ impl Workspace {
             collection_id,
             request_id,
         };
-        self.responses.rekey(self.editor_content, content);
         if self.editor_content == EditorContent::Draft {
+            self.responses.rekey(self.editor_content, content);
             self.draft = None;
+        } else {
+            self.responses.copy(self.editor_content, content);
         }
         self.editor_content = content;
         self.baseline = Some(Baseline::new(request.clone(), request));
