@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use gpui::SharedString;
+
 use crate::domain::response::Response;
 
 const MAX_ENTRIES: usize = 20;
@@ -9,7 +11,7 @@ const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
 #[derive(Clone, Debug)]
 pub(super) struct CachedResponse {
     pub(super) result: Result<Response, String>,
-    pub(super) body_text: String,
+    pub(super) body_text: SharedString,
 }
 
 /// The last response per key, least recently used first.
@@ -27,14 +29,19 @@ impl<K: Copy + Eq> ResponseCache<K> {
 
     /// Replaces the entry for `key`. A body over the size limit isn't kept,
     /// and the older entry is dropped anyway since it's stale.
-    pub(super) fn insert(&mut self, key: K, result: &Result<Response, String>, body_text: &str) {
+    pub(super) fn insert(
+        &mut self,
+        key: K,
+        result: &Result<Response, String>,
+        body_text: SharedString,
+    ) {
         self.remove(key);
         if body_text.len() > MAX_BODY_BYTES {
             return;
         }
         let entry = CachedResponse {
             result: result.clone(),
-            body_text: body_text.to_owned(),
+            body_text,
         };
         self.entries.push_back((key, entry));
         while self.entries.len() > MAX_ENTRIES {
@@ -70,7 +77,7 @@ impl<K: Copy + Eq> ResponseCache<K> {
     /// Copies the entry for `from` to `to`, replacing what `to` had.
     pub(super) fn copy(&mut self, from: K, to: K) {
         if let Some(entry) = self.position(from).map(|ix| self.entries[ix].1.clone()) {
-            self.insert(to, &entry.result, &entry.body_text);
+            self.insert(to, &entry.result, entry.body_text);
         }
     }
 
@@ -103,9 +110,9 @@ mod tests {
     #[test]
     fn keeps_the_last_response_per_key() {
         let mut cache = ResponseCache::new();
-        cache.insert(1, &ok(200), "first");
-        cache.insert(1, &ok(404), "second");
-        cache.insert(2, &Err("timed out".into()), "");
+        cache.insert(1, &ok(200), "first".into());
+        cache.insert(1, &ok(404), "second".into());
+        cache.insert(2, &Err("timed out".into()), "".into());
         assert_eq!(status(&mut cache, 1), Some(404));
         assert_eq!(cache.get(1).unwrap().body_text, "second");
         assert_eq!(
@@ -119,10 +126,10 @@ mod tests {
     fn evicts_the_least_recently_used() {
         let mut cache = ResponseCache::new();
         for key in 0..MAX_ENTRIES as u32 {
-            cache.insert(key, &ok(200), "");
+            cache.insert(key, &ok(200), "".into());
         }
         cache.get(0);
-        cache.insert(100, &ok(200), "");
+        cache.insert(100, &ok(200), "".into());
         assert_eq!(cache.entries.len(), MAX_ENTRIES);
         assert!(cache.get(0).is_some());
         assert!(cache.get(1).is_none());
@@ -132,18 +139,18 @@ mod tests {
     #[test]
     fn skips_large_bodies_and_drops_the_stale_entry() {
         let mut cache = ResponseCache::new();
-        cache.insert(1, &ok(200), "small");
-        cache.insert(1, &ok(200), &"x".repeat(MAX_BODY_BYTES + 1));
+        cache.insert(1, &ok(200), "small".into());
+        cache.insert(1, &ok(200), "x".repeat(MAX_BODY_BYTES + 1).into());
         assert!(cache.get(1).is_none());
-        cache.insert(2, &ok(200), &"x".repeat(MAX_BODY_BYTES));
+        cache.insert(2, &ok(200), "x".repeat(MAX_BODY_BYTES).into());
         assert!(cache.get(2).is_some());
     }
 
     #[test]
     fn rekey_replaces_the_target() {
         let mut cache = ResponseCache::new();
-        cache.insert(1, &ok(201), "");
-        cache.insert(2, &ok(500), "");
+        cache.insert(1, &ok(201), "".into());
+        cache.insert(2, &ok(500), "".into());
         cache.rekey(1, 2);
         assert!(cache.get(1).is_none());
         assert_eq!(status(&mut cache, 2), Some(201));
@@ -154,8 +161,8 @@ mod tests {
     #[test]
     fn copy_keeps_the_source() {
         let mut cache = ResponseCache::new();
-        cache.insert(1, &ok(201), "body");
-        cache.insert(2, &ok(500), "");
+        cache.insert(1, &ok(201), "body".into());
+        cache.insert(2, &ok(500), "".into());
         cache.copy(1, 2);
         assert_eq!(status(&mut cache, 1), Some(201));
         assert_eq!(status(&mut cache, 2), Some(201));
@@ -164,10 +171,20 @@ mod tests {
     }
 
     #[test]
+    fn shares_the_body_instead_of_copying() {
+        let mut cache = ResponseCache::new();
+        let body = SharedString::from("x".repeat(100));
+        cache.insert(1, &ok(200), body.clone());
+        cache.copy(1, 2);
+        assert_eq!(cache.get(1).unwrap().body_text.as_ptr(), body.as_ptr());
+        assert_eq!(cache.get(2).unwrap().body_text.as_ptr(), body.as_ptr());
+    }
+
+    #[test]
     fn retain_and_remove_drop_entries() {
         let mut cache = ResponseCache::new();
         for key in 0..4 {
-            cache.insert(key, &ok(200), "");
+            cache.insert(key, &ok(200), "".into());
         }
         cache.retain(|key| key % 2 == 0);
         cache.remove(2);

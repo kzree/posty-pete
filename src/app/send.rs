@@ -1,5 +1,5 @@
 use chrono::Utc;
-use gpui::{AppContext, Context, Window};
+use gpui::{AppContext, Context, SharedString, Window};
 use tokio::task::JoinError;
 
 use super::{EditorContent, Workspace, show_error};
@@ -70,7 +70,7 @@ impl Workspace {
                         .as_mut()
                         .map(Response::take_display_body)
                         .unwrap_or_default();
-                    (result, text)
+                    (result, SharedString::from(text))
                 })
                 .await;
             let record = HistoryRecord {
@@ -90,7 +90,7 @@ impl Workspace {
         &mut self,
         content: EditorContent,
         result: Result<Response, String>,
-        body_text: String,
+        body_text: SharedString,
         record: HistoryRecord,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -103,7 +103,7 @@ impl Workspace {
         } else {
             self.editor_content
         };
-        self.responses.insert(content, &result, &body_text);
+        self.responses.insert(content, &result, body_text.clone());
         if content == self.editor_content {
             self.response_view.update(cx, |view, cx| {
                 view.set_response(result, body_text, window, cx)

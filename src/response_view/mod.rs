@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    Styled, Window, div, relative,
+    SharedString, Styled, Window, div, relative,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable,
@@ -73,7 +73,7 @@ impl ResponseView {
     pub fn set_response(
         &mut self,
         response: Result<Response, String>,
-        body_text: String,
+        body_text: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
