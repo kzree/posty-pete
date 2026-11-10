@@ -31,8 +31,8 @@ mod keys {
     pub const SEND: &str = "cmd-enter";
     pub const SAVE: &str = "cmd-s";
     pub const NEW_REQUEST: &str = "cmd-n";
-    pub const GO_BACK: &str = "cmd-[";
-    pub const GO_FORWARD: &str = "cmd-]";
+    pub const GO_BACK: &[&str] = &["cmd-["];
+    pub const GO_FORWARD: &[&str] = &["cmd-]"];
     pub const TOGGLE_SIDEBAR: &str = "cmd-b";
     pub const LIBRARY: &str = "cmd-1";
     pub const HISTORY: &str = "cmd-2";
@@ -47,8 +47,9 @@ mod keys {
     pub const SEND: &str = "ctrl-enter";
     pub const SAVE: &str = "ctrl-s";
     pub const NEW_REQUEST: &str = "ctrl-n";
-    pub const GO_BACK: &str = "alt-left";
-    pub const GO_FORWARD: &str = "alt-right";
+    // Last one is shown in tooltips.
+    pub const GO_BACK: &[&str] = &["ctrl-[", "alt-left"];
+    pub const GO_FORWARD: &[&str] = &["ctrl-]", "alt-right"];
     pub const TOGGLE_SIDEBAR: &str = "ctrl-b";
     pub const LIBRARY: &str = "ctrl-1";
     pub const HISTORY: &str = "ctrl-2";
@@ -68,10 +69,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::SAVE, SaveRequest, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::NEW_REQUEST, NewRequest, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::NEW_REQUEST, NewRequest, Some(INPUT_CONTEXT)),
-        // Workspace only: the code editor keeps cmd-[ / cmd-] for outdent/indent,
-        // and single-line inputs pass them on to these.
-        KeyBinding::new(keys::GO_BACK, GoBack, Some(WORKSPACE_CONTEXT)),
-        KeyBinding::new(keys::GO_FORWARD, GoForward, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::TOGGLE_SIDEBAR, ToggleSidebar, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::LIBRARY, OpenLibrary, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::HISTORY_ALT, OpenHistory, Some(WORKSPACE_CONTEXT)),
@@ -80,6 +77,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::SETTINGS, OpenSettings, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::FOCUS_URL, FocusUrl, Some(WORKSPACE_CONTEXT)),
     ]);
+    // Workspace only: the code editor keeps cmd/ctrl-[ and -] for outdent/indent,
+    // and single-line inputs pass them on to these.
+    cx.bind_keys(
+        keys::GO_BACK
+            .iter()
+            .map(|key| KeyBinding::new(key, GoBack, Some(WORKSPACE_CONTEXT)))
+            .chain(
+                keys::GO_FORWARD
+                    .iter()
+                    .map(|key| KeyBinding::new(key, GoForward, Some(WORKSPACE_CONTEXT))),
+            ),
+    );
     cx.bind_keys(
         keys::DELETE_HISTORY_ENTRY
             .iter()

@@ -42,7 +42,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
 - [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
 - [ ] **Navigation: two-finger swipes.** Mouse side buttons and three-finger "swipe between pages" work; two-finger trackpad swipes arrive as plain scrolling and would need custom horizontal-scroll detection.
-- [ ] **Navigation shortcuts on Windows/Linux.** Back/forward are bound to `alt-left` / `alt-right` there, but gpui-component's Input binds them to word moves, so they don't fire while a text input is focused. Pick other keys (or the mouse buttons above).
 - [ ] **Navigation: persist history.** Keep the back/forward history across restarts.
 - [ ] **Navigation: keep responses.** Going back or forward clears the response pane; keep each history entry's last response (capped) and show it again.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
