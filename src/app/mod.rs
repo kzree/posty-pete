@@ -55,10 +55,10 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     sidebar: Entity<Sidebar>,
     history_panel: Entity<HistoryPanel>,
+    library_panel: Entity<LibraryPanel>,
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
     history: Entity<History>,
-    #[expect(dead_code, reason = "read by the library UI (task 08)")]
     collections: Entity<Collections>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
@@ -75,7 +75,7 @@ impl Workspace {
         let left_panel = LeftPanelState::Open;
         let status_bar = cx.new(|_| StatusBar::new(left_panel == LeftPanelState::Open));
         let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
-        let library_panel = cx.new(|_| LibraryPanel::new());
+        let library_panel = cx.new(|cx| LibraryPanel::new(window, cx));
         let sidebar = cx.new(|_| Sidebar::new(library_panel.clone(), history_panel.clone()));
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
@@ -105,6 +105,7 @@ impl Workspace {
             status_bar,
             sidebar,
             history_panel,
+            library_panel,
             loading_bar,
             client: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
@@ -168,7 +169,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            CollectionsEvent::Changed => {}
+            CollectionsEvent::Changed => {
+                let collections = self.collections.read(cx).all().to_vec();
+                self.library_panel.update(cx, |panel, cx| {
+                    panel.set_collections(collections, window, cx)
+                });
+            }
             CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
         }
     }

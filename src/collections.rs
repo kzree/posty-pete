@@ -65,7 +65,6 @@ impl Collections {
         }
     }
 
-    #[expect(dead_code, reason = "used by the library UI (task 08)")]
     pub fn all(&self) -> &[Collection] {
         &self.collections
     }

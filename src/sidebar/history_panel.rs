@@ -4,7 +4,7 @@ use chrono::{Datelike, Local, NaiveDate};
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
-    WeakEntity, Window, div, px,
+    WeakEntity, Window, div,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, IndexPath, Sizable, StyledExt, WindowExt,
@@ -22,7 +22,7 @@ use super::panel_header;
 use crate::{
     actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
     domain::history::{self, HistorySummary, OpenMode, Outcome},
-    ui::{clipboard::copy_with_notification, status_tag::status_tag},
+    ui::{clipboard::copy_with_notification, method_label::method_label, status_tag::status_tag},
 };
 
 pub enum HistoryPanelEvent {
@@ -354,15 +354,7 @@ impl ListDelegate for HistoryDelegate {
                         .w_full()
                         .min_w_0()
                         .gap_2()
-                        .child(
-                            div()
-                                .w(px(52.))
-                                .flex_none()
-                                .text_xs()
-                                .font_semibold()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(method),
-                        )
+                        .child(method_label(entry.method, cx))
                         .child(div().flex_1().min_w_0().truncate().child(url))
                         .child(outcome_tag(entry.outcome).flex_none()),
                 ),
