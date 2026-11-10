@@ -5,6 +5,7 @@ actions!(
     [
         SendRequest,
         SaveRequest,
+        SaveRequestAs,
         RevertRequest,
         NewRequest,
         GoBack,
@@ -36,6 +37,7 @@ const INPUT_CONTEXT: &str = "Input";
 mod keys {
     pub const SEND: &str = "cmd-enter";
     pub const SAVE: &str = "cmd-s";
+    pub const SAVE_AS: &str = "cmd-shift-s";
     pub const NEW_REQUEST: &str = "cmd-n";
     pub const GO_BACK: &[&str] = &["cmd-["];
     pub const GO_FORWARD: &[&str] = &["cmd-]"];
@@ -56,6 +58,7 @@ mod keys {
 mod keys {
     pub const SEND: &str = "ctrl-enter";
     pub const SAVE: &str = "ctrl-s";
+    pub const SAVE_AS: &str = "ctrl-shift-s";
     pub const NEW_REQUEST: &str = "ctrl-n";
     // Last one is shown in tooltips.
     pub const GO_BACK: &[&str] = &["ctrl-[", "alt-left"];
@@ -79,6 +82,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::SEND, SendRequest, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::SAVE, SaveRequest, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::SAVE, SaveRequest, Some(INPUT_CONTEXT)),
+        KeyBinding::new(keys::SAVE_AS, SaveRequestAs, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new(keys::SAVE_AS, SaveRequestAs, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::NEW_REQUEST, NewRequest, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::NEW_REQUEST, NewRequest, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::TOGGLE_SIDEBAR, ToggleSidebar, Some(WORKSPACE_CONTEXT)),

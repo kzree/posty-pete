@@ -1,6 +1,6 @@
 use gpui::{Context, IntoElement, ParentElement, Styled, div, prelude::FluentBuilder, px};
 use gpui_component::{
-    ActiveTheme, Disableable,
+    ActiveTheme,
     button::{Button, ButtonVariants},
     h_flex,
     input::Input,
@@ -33,7 +33,6 @@ impl RequestEditor {
                             .when(self.dirty, |button| {
                                 button.accessibility_label("Save, unsaved changes")
                             })
-                            .disabled(!self.can_save())
                             .tooltip_with_action(
                                 "Save request",
                                 &SaveRequest,

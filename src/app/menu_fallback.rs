@@ -4,7 +4,7 @@ use gpui_component::WindowExt;
 use super::Workspace;
 use crate::actions::{
     FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings, QuickOpen,
-    SaveRequest, SendRequest, ToggleSidebar,
+    SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar,
 };
 
 /// Menu items dispatch to the focused element, so with focus outside the
@@ -16,6 +16,7 @@ use crate::actions::{
 pub(super) fn init(cx: &mut App) {
     forward::<SendRequest>(cx);
     forward::<SaveRequest>(cx);
+    forward::<SaveRequestAs>(cx);
     forward::<NewRequest>(cx);
     forward::<GoBack>(cx);
     forward::<GoForward>(cx);

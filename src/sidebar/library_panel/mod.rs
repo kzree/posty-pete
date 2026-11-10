@@ -122,6 +122,16 @@ impl LibraryPanel {
         self.sync_selection(window, cx);
     }
 
+    /// Expands these collections and folders, including ones the next
+    /// `set_collections` brings.
+    pub fn reveal(&mut self, ids: impl IntoIterator<Item = Uuid>, cx: &mut Context<Self>) {
+        self.update_rows(cx, |delegate| {
+            for id in ids {
+                delegate.expand(id);
+            }
+        });
+    }
+
     /// Only read when a context menu opens, so nothing needs repainting.
     pub fn set_dirty_request(&mut self, id: Option<Uuid>) {
         self.dirty_request = id;

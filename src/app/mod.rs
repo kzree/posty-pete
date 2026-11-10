@@ -30,15 +30,21 @@ use self::{
 use crate::{
     actions::{
         FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings, OpenTests,
-        QuickOpen, RevertRequest, SaveRequest, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
+        QuickOpen, RevertRequest, SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar,
+        WORKSPACE_CONTEXT,
     },
     collection_view::{CollectionView, CollectionViewEvent},
     collections::{Collections, CollectionsEvent},
-    domain::{self, history::OpenMode},
+    domain::{
+        self,
+        collection::{Location, NEW_COLLECTION_NAME},
+        history::OpenMode,
+    },
     history::{History, HistoryEvent},
     quick_open::{self, QuickOpenEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::{ResponseView, ResponseViewEvent},
+    save_as_dialog::{self, open_save_as_dialog},
     sidebar::{
         Sidebar, SidebarTab,
         history_panel::{HistoryPanel, HistoryPanelEvent},
@@ -318,7 +324,7 @@ impl Workspace {
         match event {
             LibraryPanelEvent::CreateCollection => {
                 let id = self.collections.update(cx, |collections, cx| {
-                    collections.create("New Collection", cx)
+                    collections.create(NEW_COLLECTION_NAME, cx)
                 });
                 self.navigate(AppRoute::Collection(id), window, cx);
                 self.collection_view
@@ -817,11 +823,125 @@ impl Workspace {
             .update(cx, |editor, cx| editor.set_saved_name(name, window, cx));
     }
 
-    /// Saves the editor's request if the main pane shows it.
+    /// Saves the editor's request if the main pane shows it; an unlinked
+    /// request opens Save As.
     fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.current_route() == self.editor_route() {
-            self.save_editor(window, cx);
+        if self.current_route() != self.editor_route() {
+            return;
         }
+        match self.editor_content {
+            EditorContent::Draft => self.open_save_as(window, cx),
+            EditorContent::Saved { .. } => {
+                self.save_editor(window, cx);
+            }
+        }
+    }
+
+    /// Asks where to save the editor's request as a new saved request, if the main pane shows it.
+    fn open_save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current_route() != self.editor_route() || window.has_active_dialog(cx) {
+            return;
+        }
+        if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        let collections = self.collections.read(cx).all();
+        let (name, location) = match self.editor_content {
+            EditorContent::Saved {
+                collection_id,
+                request_id,
+            } => {
+                let name = self.request_editor.read(cx).name(cx).or_else(|| {
+                    self.find_saved_request(collection_id, request_id, cx)
+                        .map(|saved| saved.name.clone())
+                });
+                let folder_id = collections
+                    .iter()
+                    .find(|collection| collection.id == collection_id)
+                    .and_then(|collection| collection.ancestors(request_id))
+                    .and_then(|ancestors| ancestors.last().copied());
+                let location = Location::Folder {
+                    collection_id,
+                    folder_id,
+                };
+                (name, location)
+            }
+            EditorContent::Draft => {
+                let location = collections
+                    .first()
+                    .map_or(Location::NewCollection, |collection| Location::Folder {
+                        collection_id: collection.id,
+                        folder_id: None,
+                    });
+                (None, location)
+            }
+        };
+        let name = name.unwrap_or_else(|| "New Request".to_string());
+        let locations = save_as_dialog::locations(collections);
+        let this = cx.weak_entity();
+        open_save_as_dialog(
+            name,
+            locations,
+            location,
+            move |name, location, window, cx| {
+                this.update(cx, |this, cx| this.save_as(name, location, window, cx))
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Saves the editor's request as a new saved request at `location` and
+    /// links the editor to it, in place of the current history entry. A saved
+    /// request the editor held stays as it was stored.
+    fn save_as(
+        &mut self,
+        name: String,
+        location: Location,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        let request = self.request_editor.read(cx).build_request(cx);
+        let Some((collection_id, request_id)) = self.collections.update(cx, |collections, cx| {
+            collections.add_request_at(location, name.clone(), request.clone(), cx)
+        }) else {
+            show_error(
+                "Couldn't save request",
+                &anyhow::anyhow!("The chosen folder is no longer there."),
+                window,
+                cx,
+            );
+            return;
+        };
+        let content = EditorContent::Saved {
+            collection_id,
+            request_id,
+        };
+        self.responses.rekey(self.editor_content, content);
+        if self.editor_content == EditorContent::Draft {
+            self.draft = None;
+        }
+        self.editor_content = content;
+        self.baseline = Some(Baseline::new(request.clone(), request));
+        self.request_editor
+            .update(cx, |editor, cx| editor.link(name, window, cx));
+        self.refresh_dirty(window, cx);
+
+        let ancestors = self
+            .collections
+            .read(cx)
+            .get(collection_id)
+            .and_then(|collection| collection.ancestors(request_id))
+            .unwrap_or_default();
+        self.library_panel.update(cx, |panel, cx| {
+            panel.reveal(std::iter::once(collection_id).chain(ancestors), cx)
+        });
+        self.replace_route(content.route(), window, cx);
+        window.push_notification(Notification::success("Saved"), cx);
     }
 
     /// Saves the editor's request to its collection. Returns `false` if it
@@ -961,6 +1081,9 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {
                 this.save_request(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &SaveRequestAs, window, cx| {
+                this.open_save_as(window, cx);
             }))
             // Only while there's something to revert, so the menu item greys out otherwise.
             .when(self.shows_dirty_request(), |this| {

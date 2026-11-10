@@ -7,7 +7,7 @@ use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
 use crate::domain::{
-    collection::{Collection, Folder, Item, SavedRequest},
+    collection::{self, Collection, Folder, Item, Location, SavedRequest},
     request::Request,
     store::collection::CollectionStore,
 };
@@ -148,6 +148,22 @@ impl Collections {
         let id = saved.id;
         self.add_item(collection_id, parent, Item::Request(saved), cx)
             .then_some(id)
+    }
+
+    /// Adds a request at `location` with one save, creating the collection
+    /// first for `Location::NewCollection`. Returns the collection and request ids.
+    pub fn add_request_at(
+        &mut self,
+        location: Location,
+        name: impl Into<String>,
+        request: Request,
+        cx: &mut Context<Self>,
+    ) -> Option<(Uuid, Uuid)> {
+        let (collection_id, request_id) =
+            collection::add_request_at(&mut self.collections, location, name, request)?;
+        self.sort();
+        self.changed(collection_id, cx);
+        Some((collection_id, request_id))
     }
 
     /// Replaces the saved request, and renames it too if `name` is given.

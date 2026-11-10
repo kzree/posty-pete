@@ -127,10 +127,6 @@ impl RequestEditor {
         cx.notify();
     }
 
-    fn can_save(&self) -> bool {
-        self.saved_name.is_some()
-    }
-
     /// Links the editor to a saved request with this stored name (`None` unlinks).
     /// When only the stored name changes, an unsaved edit of the name field is kept.
     pub fn set_saved_name(
@@ -149,6 +145,13 @@ impl RequestEditor {
             self.set_name_value(saved_name.clone().unwrap_or_default(), window, cx);
         }
         self.saved_name = saved_name;
+        cx.notify();
+    }
+
+    /// Links the editor to a saved request named `name`, replacing the name field.
+    pub fn link(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_name_value(name.clone(), window, cx);
+        self.saved_name = Some(name);
         cx.notify();
     }
 

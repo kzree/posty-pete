@@ -32,6 +32,51 @@ pub struct SavedRequest {
     pub request: Request,
 }
 
+pub const NEW_COLLECTION_NAME: &str = "New Collection";
+
+/// Where a new request goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Location {
+    /// A collection created for it, named [`NEW_COLLECTION_NAME`].
+    NewCollection,
+    /// The folder, or the collection's root when `folder_id` is `None`.
+    Folder {
+        collection_id: Uuid,
+        folder_id: Option<Uuid>,
+    },
+}
+
+/// Adds a request at `location`, creating the collection for
+/// `Location::NewCollection`. Returns the collection and request ids, or
+/// `None` (changing nothing) if the collection or folder doesn't exist.
+pub fn add_request_at(
+    collections: &mut Vec<Collection>,
+    location: Location,
+    name: impl Into<String>,
+    request: Request,
+) -> Option<(Uuid, Uuid)> {
+    let saved = SavedRequest::new(name, request);
+    let request_id = saved.id;
+    let item = Item::Request(saved);
+    match location {
+        Location::NewCollection => {
+            let mut collection = Collection::new(NEW_COLLECTION_NAME);
+            collection.items.push(item);
+            let collection_id = collection.id;
+            collections.push(collection);
+            Some((collection_id, request_id))
+        }
+        Location::Folder {
+            collection_id,
+            folder_id,
+        } => collections
+            .iter_mut()
+            .find(|collection| collection.id == collection_id)?
+            .add_item(folder_id, item)
+            .then_some((collection_id, request_id)),
+    }
+}
+
 impl Collection {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
@@ -74,6 +119,20 @@ impl Collection {
             }
             Item::Request(_) => false,
         }
+    }
+
+    /// The root and every folder, depth-first, with paths like "API / Users / Admin".
+    pub fn folder_paths(&self) -> Vec<(Option<Uuid>, String)> {
+        let mut paths = vec![(None, self.name.clone())];
+        collect_folder_paths(&self.items, &self.name, &mut paths);
+        paths
+    }
+
+    /// The folders from the root down to the one holding `id`; empty if `id`
+    /// is at the root, `None` if it isn't in this collection.
+    pub fn ancestors(&self, id: Uuid) -> Option<Vec<Uuid>> {
+        let mut path = Vec::new();
+        ancestors_in(&self.items, id, &mut path).then_some(path)
     }
 
     pub fn rename(&mut self, id: Uuid, name: impl Into<String>) -> bool {
@@ -130,6 +189,33 @@ fn locate(items: &mut Vec<Item>, id: Uuid) -> Option<(&mut Vec<Item>, usize)> {
     items.iter_mut().find_map(|item| match item {
         Item::Folder(folder) => locate(&mut folder.items, id),
         Item::Request(_) => None,
+    })
+}
+
+fn collect_folder_paths(items: &[Item], prefix: &str, paths: &mut Vec<(Option<Uuid>, String)>) {
+    for item in items {
+        if let Item::Folder(folder) = item {
+            let path = format!("{prefix} / {}", folder.name);
+            paths.push((Some(folder.id), path.clone()));
+            collect_folder_paths(&folder.items, &path, paths);
+        }
+    }
+}
+
+fn ancestors_in(items: &[Item], id: Uuid, path: &mut Vec<Uuid>) -> bool {
+    items.iter().any(|item| {
+        if item.id() == id {
+            return true;
+        }
+        let Item::Folder(folder) = item else {
+            return false;
+        };
+        path.push(folder.id);
+        if ancestors_in(&folder.items, id, path) {
+            return true;
+        }
+        path.pop();
+        false
     })
 }
 
@@ -325,5 +411,126 @@ mod tests {
             "example.com/changed"
         );
         assert!(f.collection.find_request_mut(f.outer).is_none());
+    }
+
+    #[test]
+    fn folder_paths_list_root_then_folders_depth_first() {
+        let mut f = fixture();
+        let sibling = Folder::new("Sibling");
+        let sibling_id = sibling.id;
+        assert!(f.collection.add_item(None, Item::Folder(sibling)));
+
+        assert_eq!(
+            f.collection.folder_paths(),
+            vec![
+                (None, "API".to_string()),
+                (Some(f.outer), "API / Outer".to_string()),
+                (Some(f.inner), "API / Outer / Inner".to_string()),
+                (Some(sibling_id), "API / Sibling".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn ancestors_lead_down_to_the_item() {
+        let f = fixture();
+        assert_eq!(
+            f.collection.ancestors(f.deep_request),
+            Some(vec![f.outer, f.inner])
+        );
+        assert_eq!(f.collection.ancestors(f.inner), Some(vec![f.outer]));
+        assert_eq!(f.collection.ancestors(f.root_request), Some(vec![]));
+        assert_eq!(f.collection.ancestors(Uuid::new_v4()), None);
+    }
+
+    #[test]
+    fn add_request_at_a_folder() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let mut collections = vec![f.collection];
+        let location = Location::Folder {
+            collection_id,
+            folder_id: Some(f.inner),
+        };
+
+        let (added_to, id) = add_request_at(
+            &mut collections,
+            location,
+            "Copy",
+            request("example.com/copy"),
+        )
+        .unwrap();
+
+        assert_eq!(added_to, collection_id);
+        let saved = collections[0].find_request(id).unwrap();
+        assert_eq!(saved.name, "Copy");
+        assert_eq!(saved.request.url, "example.com/copy");
+        assert_eq!(collections[0].ancestors(id), Some(vec![f.outer, f.inner]));
+        assert_eq!(collections.len(), 1);
+    }
+
+    #[test]
+    fn add_request_at_the_root() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let mut collections = vec![f.collection];
+        let location = Location::Folder {
+            collection_id,
+            folder_id: None,
+        };
+
+        let (_, id) =
+            add_request_at(&mut collections, location, "Top", Request::default()).unwrap();
+
+        assert_eq!(collections[0].items.len(), 3);
+        assert_eq!(collections[0].ancestors(id), Some(vec![]));
+    }
+
+    #[test]
+    fn add_request_at_a_new_collection() {
+        let mut collections = vec![fixture().collection];
+
+        let (collection_id, id) = add_request_at(
+            &mut collections,
+            Location::NewCollection,
+            "First",
+            request("example.com/first"),
+        )
+        .unwrap();
+
+        assert_eq!(collections.len(), 2);
+        let created = &collections[1];
+        assert_eq!(created.id, collection_id);
+        assert_eq!(created.name, NEW_COLLECTION_NAME);
+        assert_eq!(created.items.len(), 1);
+        assert_eq!(created.find_request(id).unwrap().name, "First");
+    }
+
+    #[test]
+    fn add_request_at_a_missing_location_changes_nothing() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let mut collections = vec![f.collection];
+        let before = serde_json::to_value(&collections).unwrap();
+
+        let missing_folder = Location::Folder {
+            collection_id,
+            folder_id: Some(Uuid::new_v4()),
+        };
+        let missing_collection = Location::Folder {
+            collection_id: Uuid::new_v4(),
+            folder_id: None,
+        };
+        let under_request = Location::Folder {
+            collection_id,
+            folder_id: Some(f.root_request),
+        };
+        for location in [missing_folder, missing_collection, under_request] {
+            assert!(
+                add_request_at(&mut collections, location, "Lost", Request::default()).is_none()
+            );
+        }
+
+        assert_eq!(serde_json::to_value(&collections).unwrap(), before);
     }
 }
