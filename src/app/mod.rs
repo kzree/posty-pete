@@ -1,40 +1,33 @@
-use std::{rc::Rc, time::Duration};
+mod routes;
+mod send;
 
-use chrono::Utc;
+use std::time::Duration;
+
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-    Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window,
-    div, px,
+    Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, ResizableState, WindowExt, h_resizable, input::Escape, notification::Notification,
-    resizable_panel, v_resizable,
+    resizable_panel,
 };
-use gpui_router::{Route, Routes, use_navigate};
-use tokio::task::JoinError;
 
+use self::routes::AppRoute;
 use crate::{
     actions::{
         FocusUrl, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SendRequest, ToggleSidebar,
         WORKSPACE_CONTEXT,
     },
-    domain::{
-        self, curl,
-        history::{HistoryRecord, OpenMode, Outcome},
-        http,
-        request::Request,
-        response::Response,
-    },
+    domain::{self, history::OpenMode},
     history::{History, HistoryEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
-    settings_page::SettingsPage,
     sidebar::{
         Sidebar, SidebarTab,
         history_panel::{HistoryPanel, HistoryPanelEvent},
     },
     status_bar::StatusBar,
-    ui::{clipboard::copy_with_notification, loading_bar::LoadingBar},
+    ui::loading_bar::LoadingBar,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -46,16 +39,6 @@ fn show_error(title: &str, error: &anyhow::Error, window: &mut Window, cx: &mut 
         Notification::error(format!("{error:#}")).title(title.to_string()),
         cx,
     );
-}
-
-fn flatten_send_result(
-    joined: Result<anyhow::Result<Response>, JoinError>,
-) -> Result<Response, String> {
-    match joined {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(e)) => Err(format!("{e:#}")),
-        Err(e) => Err(format!("task failed: {e}")),
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,85 +179,6 @@ impl Workspace {
         }
     }
 
-    fn copy_as_curl(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
-        let request = self.history.read(cx).request(id, cx);
-        cx.spawn_in(window, async move |this, cx| {
-            let request = request.await;
-            this.update_in(cx, |this, window, cx| match request {
-                Ok(Some(request)) => {
-                    copy_with_notification(curl::to_curl(&request), "Copied as cURL", window, cx)
-                }
-                Ok(None) => this
-                    .history_panel
-                    .update(cx, |panel, cx| panel.remove(id, window, cx)),
-                Err(error) => show_error("Couldn't copy as cURL", &error, window, cx),
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn send_request(&mut self, request: Request, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending.is_some() {
-            return;
-        }
-        self.set_sending(true, cx);
-
-        let sent_at = Utc::now();
-        let handle = http::spawn_send(self.client.clone(), request.clone());
-        self.pending = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = flatten_send_result(handle.await);
-            let outcome = result.as_ref().ok().map(|r| Outcome {
-                status: r.status,
-                elapsed: r.elapsed,
-            });
-            let (result, body_text) = cx
-                .background_spawn(async move {
-                    let mut result = result;
-                    let text = result
-                        .as_mut()
-                        .map(Response::take_display_body)
-                        .unwrap_or_default();
-                    (result, text)
-                })
-                .await;
-            let record = HistoryRecord {
-                sent_at,
-                request,
-                outcome,
-            };
-            this.update_in(cx, |this, window, cx| {
-                this.finish_request(result, body_text, record, window, cx)
-            })
-            .ok();
-        }));
-    }
-
-    fn finish_request(
-        &mut self,
-        result: Result<Response, String>,
-        body_text: String,
-        record: HistoryRecord,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.pending = None;
-        self.set_sending(false, cx);
-        self.response_view.update(cx, |view, cx| {
-            view.set_response(result, body_text, window, cx)
-        });
-        self.history
-            .update(cx, |history, cx| history.record(record, cx));
-    }
-
-    /// `pending` is the source of truth; this mirrors it in the UI.
-    fn set_sending(&mut self, sending: bool, cx: &mut Context<Self>) {
-        self.request_editor
-            .update(cx, |editor, cx| editor.set_loading(sending, cx));
-        self.loading_bar
-            .update(cx, |bar, cx| bar.set_active(sending, cx));
-    }
-
     fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
         match self.left_panel {
             LeftPanelState::Closed => self.left_panel = LeftPanelState::Open,
@@ -285,39 +189,6 @@ impl Workspace {
             status_bar.set_left_panel_open(open, cx)
         });
         cx.notify();
-    }
-
-    fn navigate(&mut self, path: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-        // The focused element may not exist on the new route, which would drop workspace keybindings.
-        window.focus(&self.focus_handle, cx);
-        use_navigate(window, cx).push(path);
-    }
-
-    fn request_response_route(&self) -> Route {
-        let request_editor = self.request_editor.clone();
-        let response_view = self.response_view.clone();
-        let loading_bar = self.loading_bar.clone();
-        let layout = self.request_response_layout.clone();
-
-        Route::new().index().element(move |_, _| {
-            let split = v_resizable("request-response")
-                .with_state(&layout)
-                .child(resizable_panel().child(request_editor.clone()))
-                .child(resizable_panel().child(response_view.clone()));
-
-            div()
-                .relative()
-                .size_full()
-                .child(split)
-                .child(loading_bar.clone())
-        })
-    }
-
-    fn settings_route(&self, cx: &mut Context<Self>) -> Route {
-        let on_back = Rc::new(cx.listener(|this, _, window, cx| this.navigate("/", window, cx)));
-        Route::new()
-            .path("settings")
-            .element(move |_, _| SettingsPage::new(on_back.clone()))
     }
 
     fn open_sidebar_tab(&mut self, tab: SidebarTab, cx: &mut Context<Self>) {
@@ -331,9 +202,7 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let main_content = Routes::new()
-            .child(self.request_response_route())
-            .child(self.settings_route(cx));
+        let main_content = self.routes(cx);
 
         // A hidden panel would still leave its resize handle behind.
         let body = if self.left_panel == LeftPanelState::Open {
@@ -374,7 +243,7 @@ impl Render for Workspace {
                 this.open_sidebar_tab(SidebarTab::Tests, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
-                this.navigate("/settings", window, cx);
+                this.navigate(AppRoute::Settings, window, cx);
             }))
             .on_action(cx.listener(|this, _: &FocusUrl, window, cx| {
                 this.request_editor
