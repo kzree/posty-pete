@@ -22,6 +22,13 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **XML highlighting.** gpui-component 0.9 has no XML grammar; XML is highlighted as HTML for now.
 - [ ] **Large responses.** Downloads are capped at 50 MB (`MAX_BODY_BYTES` in `domain/http.rs`; larger bodies fail with "response exceeds 50 MB"), but the editor handles only ~50K lines; add a display cutoff or a "response too large to display" message, and possibly make the download cap configurable.
 
+## Collections
+
+- [ ] **Collection variables.** The collection view's Variables tab is a placeholder. Decide the requirements (scope, secret values, how they combine with environments) and build the editor, likely on top of `ui::key_value_editor`.
+- [ ] **Manage requests in collections.** Rename, delete, duplicate and move requests (and move folders) in the library tree, including drag and drop.
+- [ ] **Unsaved changes.** Show a dirty marker for an edited saved request and prompt before switching to another request.
+- [ ] **Save as.** Save a request that isn't linked to a collection (a fresh one or one from history) into a chosen collection or folder.
+
 ## App
 
 - [ ] **Native menu bar.** `cx.set_menus` listing the actions in `actions.rs` with their shortcuts.
