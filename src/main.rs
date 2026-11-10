@@ -1,5 +1,9 @@
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::Duration,
+};
 
+use chrono::{DateTime, Local, Utc};
 use gpui::{
     App, AppContext, Bounds, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
     ParentElement, Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window,
@@ -28,7 +32,11 @@ use sidebar::{Sidebar, SidebarTab};
 use status_bar::StatusBar;
 
 use crate::{
-    domain::http,
+    domain::{
+        http,
+        request::Request,
+        store::history::{self, HistoryStore},
+    },
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
     ui::loading_bar::{GlobalLoading, LoadingBar},
@@ -53,6 +61,7 @@ struct BaseLayout {
     sidebar: Entity<Sidebar>,
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
+    history: Option<Arc<Mutex<HistoryStore>>>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -82,6 +91,8 @@ impl BaseLayout {
                     this.request_editor
                         .update(cx, |editor, cx| editor.set_loading(true, cx));
 
+                    let sent_at = Utc::now();
+                    let request = request.clone();
                     let handle = http::spawn_send(this.client.clone(), request.clone());
                     this.pending = Some(cx.spawn_in(window, async move |this, cx| {
                         let result = match handle.await {
@@ -89,6 +100,7 @@ impl BaseLayout {
                             Ok(Err(e)) => Err(format!("{e:#}")),
                             Err(e) => Err(format!("task failed: {e}")),
                         };
+                        let outcome = result.as_ref().ok().map(|r| (r.status, r.elapsed));
                         let (result, body_text) = cx
                             .background_executor()
                             .spawn(async move {
@@ -106,6 +118,7 @@ impl BaseLayout {
                             this.request_editor
                                 .update(cx, |editor, cx| editor.set_loading(false, cx));
                             GlobalLoading::end(cx);
+                            this.record_history(sent_at, request, outcome, cx);
                             this.pending = None;
                         })
                         .ok();
@@ -125,6 +138,7 @@ impl BaseLayout {
                 .redirect(domain::http::redirect_policy())
                 .build()
                 .expect("failed to build HTTP client"),
+            history: open_history(cx),
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -132,6 +146,25 @@ impl BaseLayout {
             focus_handle: cx.focus_handle(),
             _subscriptions: vec![sub],
         }
+    }
+
+    fn record_history(
+        &self,
+        sent_at: DateTime<Utc>,
+        request: Request,
+        outcome: Option<(u16, Duration)>,
+        cx: &App,
+    ) {
+        let Some(store) = self.history.clone() else {
+            return;
+        };
+        cx.background_spawn(async move {
+            let (status, elapsed) = outcome.unzip();
+            if let Err(e) = lock(&store).insert(sent_at, &request, status, elapsed) {
+                tracing::warn!("failed to save request to history: {e:#}");
+            }
+        })
+        .detach();
     }
 
     fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
@@ -221,6 +254,36 @@ impl Render for BaseLayout {
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .child(self.status_bar.clone())
     }
+}
+
+fn open_history(cx: &App) -> Option<Arc<Mutex<HistoryStore>>> {
+    let Some(dirs) = directories::ProjectDirs::from("", "", "posty-pete") else {
+        tracing::error!("no home directory found; history is disabled");
+        return None;
+    };
+    let path = dirs.data_dir().join("history.db");
+    let store = match HistoryStore::open(&path) {
+        Ok(store) => Arc::new(Mutex::new(store)),
+        Err(e) => {
+            tracing::error!("failed to open history at {}: {e:#}", path.display());
+            return None;
+        }
+    };
+
+    let pruning = store.clone();
+    cx.background_spawn(async move {
+        let cutoff = history::retention_cutoff(&Local::now());
+        if let Err(e) = lock(&pruning).prune(cutoff) {
+            tracing::warn!("failed to prune history: {e:#}");
+        }
+    })
+    .detach();
+
+    Some(store)
+}
+
+fn lock(store: &Mutex<HistoryStore>) -> MutexGuard<'_, HistoryStore> {
+    store.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn run() {
