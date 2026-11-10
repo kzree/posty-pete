@@ -17,6 +17,7 @@ pub enum HistoryEvent {
     Loaded(Vec<HistorySummary>),
     Recorded(HistorySummary),
     Opened(Request),
+    Deleted(i64),
     Cleared,
 }
 
@@ -69,6 +70,28 @@ impl History {
                 }
                 Ok(None) => tracing::warn!("history entry {id} not found"),
                 Err(e) => tracing::warn!("failed to get request from history: {e:#}"),
+            }
+        })
+        .detach();
+    }
+
+    pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
+        let State::Ready(store) = &self.state else {
+            return;
+        };
+        let store = store.clone();
+
+        cx.spawn(async move |this, cx| {
+            let deleted = cx
+                .background_spawn(async move { lock(&store).delete(id) })
+                .await;
+            match deleted {
+                Ok(true) => {
+                    this.update(cx, |_, cx| cx.emit(HistoryEvent::Deleted(id)))
+                        .ok();
+                }
+                Ok(false) => tracing::warn!("history entry {id} not found"),
+                Err(e) => tracing::warn!("failed to delete history entry: {e:#}"),
             }
         })
         .detach();

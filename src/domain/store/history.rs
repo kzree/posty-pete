@@ -131,6 +131,14 @@ impl HistoryStore {
             .collect())
     }
 
+    /// Returns `false` if there was no entry with this id.
+    pub fn delete(&self, id: i64) -> anyhow::Result<bool> {
+        Ok(self
+            .conn
+            .execute("DELETE FROM history WHERE id = ?1", [id])?
+            > 0)
+    }
+
     pub fn clear(&self) -> anyhow::Result<usize> {
         Ok(self.conn.execute("DELETE FROM history", [])?)
     }
@@ -382,6 +390,28 @@ mod tests {
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "keep");
+    }
+
+    #[test]
+    fn delete_removes_only_that_entry() {
+        let store = HistoryStore::open_in_memory().unwrap();
+        let keep = store
+            .insert(&ok(at("2026-11-10T11:00:00Z"), "keep"))
+            .unwrap();
+        let drop = store
+            .insert(&ok(at("2026-11-10T12:00:00Z"), "drop"))
+            .unwrap();
+
+        assert!(store.delete(drop.id).unwrap());
+        let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, keep.id);
+    }
+
+    #[test]
+    fn delete_unknown_id_is_false() {
+        let store = HistoryStore::open_in_memory().unwrap();
+        assert!(!store.delete(42).unwrap());
     }
 
     #[test]

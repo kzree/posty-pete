@@ -94,6 +94,9 @@ impl Workspace {
                     this.response_view
                         .update(cx, |view, cx| view.clear(window, cx));
                 }
+                HistoryEvent::Deleted(id) => this
+                    .history_panel
+                    .update(cx, |panel, cx| panel.remove(*id, window, cx)),
                 HistoryEvent::Cleared => this
                     .history_panel
                     .update(cx, |panel, cx| panel.clear(window, cx)),
@@ -106,6 +109,11 @@ impl Workspace {
                 HistoryPanelEvent::Open(id) => {
                     let id = *id;
                     this.history.update(cx, |history, cx| history.open(id, cx));
+                }
+                HistoryPanelEvent::Delete(id) => {
+                    let id = *id;
+                    this.history
+                        .update(cx, |history, cx| history.delete(id, cx));
                 }
                 HistoryPanelEvent::Clear => {
                     this.history.update(cx, |history, cx| history.clear(cx));

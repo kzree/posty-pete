@@ -2,14 +2,16 @@ use std::ops::Range;
 
 use chrono::{Datelike, Local, NaiveDate};
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    App, AppContext, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IndexPath, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariant, ButtonVariants},
     h_flex,
     list::{List, ListDelegate, ListEvent, ListItem, ListState},
+    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
     tag::Tag,
     tooltip::Tooltip,
     v_flex,
@@ -17,12 +19,14 @@ use gpui_component::{
 use gpui_kit_assets::IconName as LucideIcon;
 
 use crate::{
+    actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT},
     domain::store::history::{self, HistorySummary, Outcome},
     ui::status_tag::status_tag,
 };
 
 pub enum HistoryPanelEvent {
     Open(i64),
+    Delete(i64),
     /// The user confirmed clearing all history.
     Clear,
 }
@@ -79,6 +83,26 @@ impl HistoryPanel {
         cx.notify();
     }
 
+    pub fn remove(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.list.update(cx, |list, cx| {
+            list.delegate_mut().remove(id);
+            list.set_selected_index(None, window, cx);
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    fn delete_selected(&mut self, cx: &mut Context<Self>) {
+        let list = self.list.read(cx);
+        let id = list
+            .selected_index()
+            .and_then(|ix| list.delegate().entry(ix))
+            .map(|entry| entry.id);
+        if let Some(id) = id {
+            cx.emit(HistoryPanelEvent::Delete(id));
+        }
+    }
+
     fn confirm_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.list.read(cx).delegate().entries.len();
         let panel = cx.entity().downgrade();
@@ -128,10 +152,25 @@ impl HistoryPanel {
 
 impl Render for HistoryPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let panel = cx.weak_entity();
+        let list = self.list.downgrade();
+        // On the root, so the context menu's trigger sits inside this key
+        // context and can show the Delete shortcut.
         v_flex()
+            .key_context(HISTORY_PANEL_CONTEXT)
+            .on_action(cx.listener(|this, _: &DeleteHistoryEntry, _, cx| this.delete_selected(cx)))
             .size_full()
             .child(self.render_header(cx))
-            .child(List::new(&self.list).flex_1().min_h_0())
+            .child(
+                div()
+                    .id("history-list")
+                    .flex_1()
+                    .min_h_0()
+                    .child(List::new(&self.list).size_full())
+                    .context_menu(move |menu, window, cx| {
+                        context_menu(&panel, &list, menu, window, cx)
+                    }),
+            )
     }
 }
 
@@ -149,6 +188,11 @@ impl HistoryDelegate {
 
     fn push(&mut self, entry: HistorySummary) {
         self.entries.insert(0, entry);
+        self.regroup();
+    }
+
+    fn remove(&mut self, id: i64) {
+        self.entries.retain(|entry| entry.id != id);
         self.regroup();
     }
 
@@ -245,6 +289,82 @@ impl ListDelegate for HistoryDelegate {
         _cx: &mut Context<ListState<Self>>,
     ) {
     }
+}
+
+/// Entry actions apply to the right-clicked row; a right-click on empty space
+/// only offers "Clear history…".
+fn context_menu(
+    panel: &WeakEntity<HistoryPanel>,
+    list: &WeakEntity<ListState<HistoryDelegate>>,
+    menu: PopupMenu,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let Some(list_state) = list.upgrade() else {
+        return menu;
+    };
+    let state = list_state.read(cx);
+    let target = state.right_clicked_index().and_then(|ix| {
+        let entry = state.delegate().entry(ix)?;
+        Some((ix, entry.id, entry.url.clone()))
+    });
+    let has_entries = !state.delegate().entries.is_empty();
+
+    // The list outlines the right-clicked row until this is reset.
+    let menu_entity = cx.entity();
+    window
+        .subscribe(&menu_entity, cx, {
+            let list = list.clone();
+            move |_, _: &DismissEvent, window, cx| {
+                list.update(cx, |list, cx| {
+                    list.set_right_clicked_index(None, window, cx)
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+    let mut menu = menu;
+    if let Some((ix, id, url)) = target {
+        menu = menu
+            .item(PopupMenuItem::new("Open").on_click({
+                let (panel, list) = (panel.clone(), list.clone());
+                move |_, window, cx| {
+                    list.update(cx, |list, cx| list.set_selected_index(Some(ix), window, cx))
+                        .ok();
+                    panel
+                        .update(cx, |_, cx| cx.emit(HistoryPanelEvent::Open(id)))
+                        .ok();
+                }
+            }))
+            .item(PopupMenuItem::new("Copy URL").on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+            }))
+            .separator()
+            .item(
+                PopupMenuItem::new("Delete")
+                    .action(Box::new(DeleteHistoryEntry))
+                    .on_click({
+                        let panel = panel.clone();
+                        move |_, _, cx| {
+                            panel
+                                .update(cx, |_, cx| cx.emit(HistoryPanelEvent::Delete(id)))
+                                .ok();
+                        }
+                    }),
+            );
+    }
+
+    let panel = panel.clone();
+    menu.item(
+        PopupMenuItem::new("Clear history…")
+            .disabled(!has_entries)
+            .on_click(move |_, window, cx| {
+                panel
+                    .update(cx, |panel, cx| panel.confirm_clear(window, cx))
+                    .ok();
+            }),
+    )
 }
 
 const FAILED_LABEL: &str = "Error";

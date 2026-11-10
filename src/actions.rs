@@ -9,11 +9,13 @@ actions!(
         OpenHistory,
         OpenTests,
         OpenSettings,
-        FocusUrl
+        FocusUrl,
+        DeleteHistoryEntry
     ]
 );
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
+pub const HISTORY_PANEL_CONTEXT: &str = "HistoryPanel";
 const INPUT_CONTEXT: &str = "Input";
 
 // gpui-pre 0.3.11's `KeyBinding::new` can't parse "secondary-".
@@ -27,6 +29,7 @@ mod keys {
     pub const TESTS: &str = "cmd-3";
     pub const SETTINGS: &str = "cmd-,";
     pub const FOCUS_URL: &str = "cmd-l";
+    pub const DELETE_HISTORY_ENTRY: &[&str] = &["backspace", "delete"];
 }
 #[cfg(not(target_os = "macos"))]
 mod keys {
@@ -38,6 +41,7 @@ mod keys {
     pub const TESTS: &str = "ctrl-3";
     pub const SETTINGS: &str = "ctrl-,";
     pub const FOCUS_URL: &str = "ctrl-l";
+    pub const DELETE_HISTORY_ENTRY: &[&str] = &["delete"];
 }
 
 /// Must run after `gpui_component::init` so these override the input bindings.
@@ -53,4 +57,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::SETTINGS, OpenSettings, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::FOCUS_URL, FocusUrl, Some(WORKSPACE_CONTEXT)),
     ]);
+    cx.bind_keys(
+        keys::DELETE_HISTORY_ENTRY
+            .iter()
+            .map(|key| KeyBinding::new(key, DeleteHistoryEntry, Some(HISTORY_PANEL_CONTEXT))),
+    );
 }
