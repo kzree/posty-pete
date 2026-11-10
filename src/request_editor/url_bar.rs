@@ -1,10 +1,14 @@
-use gpui::{Context, IntoElement, ParentElement, Styled, div, prelude::FluentBuilder, px};
+use gpui::{
+    Context, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
+    div, prelude::FluentBuilder, px,
+};
 use gpui_component::{
-    ActiveTheme,
+    ActiveTheme, Icon, IconName, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     input::Input,
     select::Select,
+    tooltip::Tooltip,
 };
 
 use super::{RequestEditor, RequestEditorEvent};
@@ -61,5 +65,24 @@ impl RequestEditor {
                     .tooltip_with_action("Send request", &SendRequest, Some(WORKSPACE_CONTEXT))
                     .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
             )
+    }
+
+    pub(super) fn render_unresolved_hint(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let hint = self.unresolved_hint.clone()?;
+        Some(
+            h_flex()
+                .id("unresolved-variables")
+                .gap_1p5()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(
+                    Icon::new(IconName::TriangleAlert)
+                        .xsmall()
+                        .flex_none()
+                        .text_color(cx.theme().warning),
+                )
+                .child(div().min_w_0().truncate().child(hint.clone()))
+                .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx)),
+        )
     }
 }

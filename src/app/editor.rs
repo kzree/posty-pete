@@ -227,14 +227,16 @@ impl Workspace {
         }
     }
 
-    /// Recomputes the cached dirty flag after an edit, a load, a save or a
-    /// change to the collections.
+    /// Recomputes the cached dirty flag and the unresolved-variables hint
+    /// after an edit, a load, a save or a change to the collections.
     pub(super) fn refresh_dirty(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dirty_check.clear();
+        let request = self.request_editor.read(cx).build_request(cx);
+        self.sync_unresolved_variables(&request, cx);
         let dirty = self.baseline.as_ref().is_some_and(|baseline| {
             self.editor_saved_request(cx).is_some_and(|saved| {
-                let editor = self.request_editor.read(cx);
-                baseline.is_dirty(saved, &editor.build_request(cx), editor.name(cx).as_deref())
+                let name = self.request_editor.read(cx).name(cx);
+                baseline.is_dirty(saved, &request, name.as_deref())
             })
         });
         let dirty_request = match self.editor_content {

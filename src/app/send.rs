@@ -42,7 +42,7 @@ fn editor_variables(content: EditorContent, collections: &[Arc<Collection>]) -> 
 
 fn resolve(request: Request, variables: Option<&Variables>) -> Request {
     match variables {
-        Some(variables) => request.with_variables(variables).0,
+        Some(variables) => request.with_variables(variables),
         None => request,
     }
 }
@@ -53,6 +53,17 @@ impl Workspace {
         self.flush_collection_variables(cx);
         let variables = editor_variables(self.editor_content, self.collections.read(cx).all());
         resolve(request, variables.as_ref())
+    }
+
+    /// Hands the editor the variables `request` references but that don't
+    /// resolve. No variables apply to the draft, so there all of them are.
+    pub(super) fn sync_unresolved_variables(&mut self, request: &Request, cx: &mut Context<Self>) {
+        let variables = editor_variables(self.editor_content, self.collections.read(cx).all());
+        let names = request.unresolved_variables(&variables.unwrap_or_default());
+        let linked = matches!(self.editor_content, EditorContent::Saved { .. });
+        self.request_editor.update(cx, |editor, cx| {
+            editor.set_unresolved_variables(&names, linked, cx)
+        });
     }
 
     pub(super) fn copy_editor_as_curl(

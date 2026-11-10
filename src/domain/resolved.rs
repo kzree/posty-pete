@@ -29,39 +29,33 @@ pub enum ResolvedBody<'a> {
 
 impl Request {
     pub fn resolve(&self) -> ResolvedRequest<'_> {
-        let is_form = matches!(self.body, Body::FormData(_));
-        let mut headers: Vec<(&str, Cow<str>)> = active(&self.headers)
-            // The multipart Content-Type needs the boundary the sender picks.
-            .filter(|(key, _)| !(is_form && key.eq_ignore_ascii_case("content-type")))
-            .map(|(key, value)| (key, Cow::Borrowed(value)))
+        let mut headers: Vec<(&str, Cow<str>)> = self
+            .headers
+            .iter()
+            .filter(|header| self.sends_header(header))
+            .map(|header| (header.key.as_str(), Cow::Borrowed(header.value.as_str())))
             .collect();
-        let has_header = |headers: &[(&str, Cow<str>)], name: &str| {
-            headers
-                .iter()
-                .any(|(key, _)| key.eq_ignore_ascii_case(name))
-        };
-        let user_set_authorization = has_header(&headers, "authorization");
+        let sends_auth = self.sends_auth();
 
         if let Auth::ApiKey { key, value } = &self.auth
-            && !key.is_empty()
-            && !has_header(&headers, key)
+            && sends_auth
         {
             headers.push((key, Cow::Borrowed(value)));
         }
         if let Body::Raw { kind, .. } = &self.body
-            && !has_header(&headers, "content-type")
+            && !headers
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("content-type"))
         {
             headers.push(("Content-Type", Cow::Owned(kind.mime().to_string())));
         }
 
         let mut basic_auth = None;
         match &self.auth {
-            Auth::Basic { username, password }
-                if !user_set_authorization && !(username.is_empty() && password.is_empty()) =>
-            {
+            Auth::Basic { username, password } if sends_auth => {
                 basic_auth = Some((username.as_str(), password.as_str()));
             }
-            Auth::Bearer { token } if !user_set_authorization && !token.is_empty() => {
+            Auth::Bearer { token } if sends_auth => {
                 headers.push(("Authorization", Cow::Owned(format!("Bearer {token}"))));
             }
             _ => {}
@@ -80,12 +74,43 @@ impl Request {
             },
         }
     }
+
+    /// Whether `resolve` sends `header`, one of this request's headers.
+    pub(super) fn sends_header(&self, header: &KeyValue) -> bool {
+        // The multipart Content-Type needs the boundary the sender picks.
+        is_active(header)
+            && !(matches!(self.body, Body::FormData(_))
+                && header.key.eq_ignore_ascii_case("content-type"))
+    }
+
+    /// Whether `resolve` sends anything from the auth tab. A header the user
+    /// set takes precedence over it.
+    pub(super) fn sends_auth(&self) -> bool {
+        let has_header = |name: &str| {
+            self.headers
+                .iter()
+                .any(|header| self.sends_header(header) && header.key.eq_ignore_ascii_case(name))
+        };
+        match &self.auth {
+            Auth::None => false,
+            Auth::ApiKey { key, .. } => !key.is_empty() && !has_header(key),
+            Auth::Basic { username, password } => {
+                !has_header("authorization") && !(username.is_empty() && password.is_empty())
+            }
+            Auth::Bearer { token } => !has_header("authorization") && !token.is_empty(),
+        }
+    }
+}
+
+/// Whether a param, header or form field row is sent.
+pub(super) fn is_active(row: &KeyValue) -> bool {
+    row.enabled && !row.key.is_empty()
 }
 
 fn active(items: &[KeyValue]) -> impl Iterator<Item = (&str, &str)> {
     items
         .iter()
-        .filter(|kv| kv.enabled && !kv.key.is_empty())
+        .filter(|kv| is_active(kv))
         .map(|kv| (kv.key.as_str(), kv.value.as_str()))
 }
 

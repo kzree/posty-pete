@@ -2,11 +2,12 @@ mod auth_editor;
 mod body_editor;
 mod method_item;
 mod tabs;
+mod unresolved_hint;
 mod url_bar;
 
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, div, prelude::FluentBuilder,
+    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     IndexPath, StyledExt,
@@ -24,6 +25,7 @@ use auth_editor::AuthEditor;
 use body_editor::BodyEditor;
 use method_item::MethodItem;
 use tabs::RequestTab;
+use unresolved_hint::unresolved_hint;
 
 pub enum RequestEditorEvent {
     SendRequested(Request),
@@ -50,6 +52,7 @@ pub struct RequestEditor {
     loading: bool,
     /// Whether the linked saved request has unsaved changes.
     dirty: bool,
+    unresolved_hint: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -114,6 +117,7 @@ impl RequestEditor {
             auth,
             loading: false,
             dirty: false,
+            unresolved_hint: None,
             _subscriptions: subscriptions,
         }
     }
@@ -126,6 +130,21 @@ impl RequestEditor {
     pub fn set_dirty(&mut self, dirty: bool, cx: &mut Context<Self>) {
         self.dirty = dirty;
         cx.notify();
+    }
+
+    /// Shows the variables the request references but that don't resolve.
+    /// `linked` is whether the editor holds a saved request.
+    pub fn set_unresolved_variables(
+        &mut self,
+        names: &[String],
+        linked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let hint = unresolved_hint(names, linked).map(SharedString::from);
+        if hint != self.unresolved_hint {
+            self.unresolved_hint = hint;
+            cx.notify();
+        }
     }
 
     /// Links the editor to a saved request with this stored name (`None` unlinks).
@@ -265,6 +284,7 @@ impl Render for RequestEditor {
                 )
             })
             .child(self.render_url_bar(cx))
+            .children(self.render_unresolved_hint(cx))
             .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().child(content))
     }

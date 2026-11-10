@@ -2,7 +2,10 @@
 
 use std::{borrow::Cow, collections::HashMap, ops::Range};
 
-use super::request::{Auth, Body, KeyValue, Request};
+use super::{
+    request::{Auth, Body, KeyValue, Request},
+    resolved::is_active,
+};
 
 /// A `{{name}}` reference found in a text.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,11 +74,6 @@ impl Variables {
         self.values.get(name).map(String::as_str)
     }
 
-    #[allow(dead_code, reason = "not used yet (task 49)")]
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
-    }
-
     /// Replaces resolvable references in one pass (values aren't scanned
     /// again). Others stay as written and their names are added to
     /// `unresolved` unless already there.
@@ -117,123 +115,119 @@ fn note(unresolved: &mut Vec<String>, name: &str) {
     }
 }
 
-/// Rows that are sent; only these report unresolved names.
-fn is_sent(row: &KeyValue) -> bool {
-    row.enabled && !row.key.is_empty()
-}
-
-struct Substitution<'v> {
-    variables: &'v Variables,
-    unresolved: Vec<String>,
-}
+struct Substitution<'v>(&'v Variables);
 
 impl Substitution<'_> {
-    fn text(&mut self, text: &str, report: bool) -> String {
-        if report {
-            self.variables.substitute(text, &mut self.unresolved)
-        } else {
-            self.variables.substitute(text, &mut Vec::new())
-        }
-        .into_owned()
+    fn text(&self, text: &str) -> String {
+        self.0.substitute(text, &mut Vec::new()).into_owned()
     }
 
-    fn rows(&mut self, rows: &[KeyValue]) -> Vec<KeyValue> {
+    fn rows(&self, rows: &[KeyValue]) -> Vec<KeyValue> {
         rows.iter()
-            .map(|row| {
-                let sent = is_sent(row);
-                KeyValue {
-                    enabled: row.enabled,
-                    key: self.text(&row.key, sent),
-                    value: self.text(&row.value, sent),
-                }
+            .map(|row| KeyValue {
+                enabled: row.enabled,
+                key: self.text(&row.key),
+                value: self.text(&row.value),
             })
             .collect()
+    }
+
+    fn auth(&self, auth: &Auth) -> Auth {
+        match auth {
+            Auth::None => Auth::None,
+            Auth::ApiKey { key, value } => Auth::ApiKey {
+                key: self.text(key),
+                value: self.text(value),
+            },
+            Auth::Basic { username, password } => Auth::Basic {
+                username: self.text(username),
+                password: self.text(password),
+            },
+            Auth::Bearer { token } => Auth::Bearer {
+                token: self.text(token),
+            },
+        }
     }
 }
 
 impl Request {
-    /// A copy with variables substituted (method untouched), and the names
-    /// that didn't resolve in the parts that get sent, in first-seen order.
-    pub fn with_variables(&self, variables: &Variables) -> (Request, Vec<String>) {
-        let mut s = Substitution {
-            variables,
-            unresolved: Vec::new(),
-        };
-        let url = s.text(&self.url, true);
-        let params = s.rows(&self.params);
-        let headers = s.rows(&self.headers);
-        let body = match &self.body {
-            Body::None => Body::None,
-            Body::FormData(fields) => Body::FormData(s.rows(fields)),
-            Body::Raw { kind, text } => Body::Raw {
-                kind: *kind,
-                text: s.text(text, true),
-            },
-        };
-        let auth = match &self.auth {
-            Auth::None => Auth::None,
-            Auth::ApiKey { key, value } => Auth::ApiKey {
-                key: s.text(key, true),
-                value: s.text(value, true),
-            },
-            Auth::Basic { username, password } => Auth::Basic {
-                username: s.text(username, true),
-                password: s.text(password, true),
-            },
-            Auth::Bearer { token } => Auth::Bearer {
-                token: s.text(token, true),
-            },
-        };
-        let request = Request {
+    /// A copy with variables substituted (method untouched).
+    pub fn with_variables(&self, variables: &Variables) -> Request {
+        let s = Substitution(variables);
+        Request {
             method: self.method,
-            url,
-            params,
-            headers,
-            body,
-            auth,
-        };
-        (request, s.unresolved)
+            url: s.text(&self.url),
+            params: s.rows(&self.params),
+            headers: s.rows(&self.headers),
+            body: match &self.body {
+                Body::None => Body::None,
+                Body::FormData(fields) => Body::FormData(s.rows(fields)),
+                Body::Raw { kind, text } => Body::Raw {
+                    kind: *kind,
+                    text: s.text(text),
+                },
+            },
+            auth: s.auth(&self.auth),
+        }
     }
 
-    /// The names [`Request::with_variables`] would report, without building the copy.
-    #[allow(dead_code, reason = "not used yet (task 49)")]
+    /// The names that don't resolve in the parts of the request that get
+    /// sent, in first-seen order. Whether a part is sent is decided as
+    /// [`Request::resolve`] does, after substitution.
     pub fn unresolved_variables(&self, variables: &Variables) -> Vec<String> {
+        // Only keys and auth decide what is sent; the URL and raw text always are.
+        let s = Substitution(variables);
+        let substituted = Request {
+            method: self.method,
+            url: String::new(),
+            params: s.rows(&self.params),
+            headers: s.rows(&self.headers),
+            body: match &self.body {
+                Body::FormData(fields) => Body::FormData(s.rows(fields)),
+                _ => Body::None,
+            },
+            auth: s.auth(&self.auth),
+        };
+
+        let mut texts: Vec<&str> = vec![&self.url];
+        let rows = [
+            (&self.params[..], &substituted.params[..], false),
+            (&self.headers[..], &substituted.headers[..], true),
+            match (&self.body, &substituted.body) {
+                (Body::FormData(fields), Body::FormData(sent)) => (&fields[..], &sent[..], false),
+                _ => (&[][..], &[][..], false),
+            },
+        ];
+        for (rows, sent, is_header) in rows {
+            for (row, sent) in rows.iter().zip(sent) {
+                let sent = if is_header {
+                    substituted.sends_header(sent)
+                } else {
+                    is_active(sent)
+                };
+                if sent {
+                    texts.extend([row.key.as_str(), row.value.as_str()]);
+                }
+            }
+        }
+        if let Body::Raw { text, .. } = &self.body {
+            texts.push(text);
+        }
+        if substituted.sends_auth() {
+            match &self.auth {
+                Auth::None => {}
+                Auth::ApiKey { key, value } => texts.extend([key.as_str(), value]),
+                Auth::Basic { username, password } => texts.extend([username.as_str(), password]),
+                Auth::Bearer { token } => texts.push(token),
+            }
+        }
+
         let mut unresolved = Vec::new();
-        for text in sent_texts(self) {
+        for text in texts {
             variables.collect_unresolved(text, &mut unresolved);
         }
         unresolved
     }
-}
-
-fn sent_row_texts(rows: &[KeyValue]) -> impl Iterator<Item = &str> {
-    rows.iter()
-        .filter(|row| is_sent(row))
-        .flat_map(|row| [row.key.as_str(), row.value.as_str()])
-}
-
-/// The texts that are sent, in the order [`Request::with_variables`] visits them.
-fn sent_texts(request: &Request) -> impl Iterator<Item = &str> {
-    let form: &[KeyValue] = match &request.body {
-        Body::FormData(fields) => fields,
-        _ => &[],
-    };
-    let raw = match &request.body {
-        Body::Raw { text, .. } => Some(text.as_str()),
-        _ => None,
-    };
-    let auth: Vec<&str> = match &request.auth {
-        Auth::None => Vec::new(),
-        Auth::ApiKey { key, value } => vec![key, value],
-        Auth::Basic { username, password } => vec![username, password],
-        Auth::Bearer { token } => vec![token],
-    };
-    std::iter::once(request.url.as_str())
-        .chain(sent_row_texts(&request.params))
-        .chain(sent_row_texts(&request.headers))
-        .chain(sent_row_texts(form))
-        .chain(raw)
-        .chain(auth)
 }
 
 #[cfg(test)]
@@ -422,8 +416,8 @@ mod tests {
             .map(|name| row(true, name, &name.to_uppercase()))
             .collect();
         let v = Variables::from_rows(&rows);
-        let (out, unresolved) = templated_request().with_variables(&v);
-        assert!(unresolved.is_empty());
+        let out = templated_request().with_variables(&v);
+        assert!(templated_request().unresolved_variables(&v).is_empty());
         assert_eq!(
             out,
             Request {
@@ -451,8 +445,8 @@ mod tests {
             ..Request::default()
         };
         let v = vars(&[("id", "7"), ("user", "u"), ("pass", "p")]);
-        let (out, unresolved) = raw.with_variables(&v);
-        assert!(unresolved.is_empty());
+        let out = raw.with_variables(&v);
+        assert!(raw.unresolved_variables(&v).is_empty());
         assert_eq!(
             out.body,
             Body::Raw {
@@ -474,7 +468,7 @@ mod tests {
             },
             ..Request::default()
         };
-        let (out, _) = bearer.with_variables(&vars(&[("t", "secret")]));
+        let out = bearer.with_variables(&vars(&[("t", "secret")]));
         assert_eq!(
             out.auth,
             Auth::Bearer {
@@ -489,9 +483,7 @@ mod tests {
         request.params.push(row(true, "{{base}}", "{{pv}}"));
         let expected: Vec<String> = ALL_NAMES.iter().map(|n| n.to_string()).collect();
 
-        let (out, unresolved) = request.with_variables(&Variables::default());
-        assert_eq!(out, request);
-        assert_eq!(unresolved, expected);
+        assert_eq!(request.with_variables(&Variables::default()), request);
         assert_eq!(
             request.unresolved_variables(&Variables::default()),
             expected
@@ -499,12 +491,109 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_variables_matches_with_variables() {
+    fn defined_names_are_not_reported() {
         let request = templated_request();
         let v = vars(&[("pk", "1"), ("hv", "2"), ("ak", "3")]);
         assert_eq!(
             request.unresolved_variables(&v),
-            request.with_variables(&v).1
+            ["base", "pv", "hk", "fk", "fv", "av"]
+        );
+    }
+
+    #[test]
+    fn rows_whose_key_resolves_to_empty_are_not_sent() {
+        let request = Request {
+            params: vec![row(true, "{{empty}}", "{{p}}")],
+            headers: vec![row(true, "{{empty}}", "{{h}}")],
+            body: Body::FormData(vec![row(true, "{{empty}}", "{{f}}")]),
+            ..Request::default()
+        };
+        let v = vars(&[("empty", "")]);
+        assert!(request.unresolved_variables(&v).is_empty());
+        assert_eq!(
+            request.unresolved_variables(&Variables::default()),
+            ["empty", "p", "h", "f"]
+        );
+    }
+
+    #[test]
+    fn form_data_drops_content_type_header() {
+        let request = Request {
+            headers: vec![row(true, "{{ct}}", "{{type}}")],
+            body: Body::FormData(Vec::new()),
+            ..Request::default()
+        };
+        assert_eq!(
+            request.unresolved_variables(&Variables::default()),
+            ["ct", "type"]
+        );
+        let v = vars(&[("ct", "content-type")]);
+        assert!(request.unresolved_variables(&v).is_empty());
+    }
+
+    #[test]
+    fn auth_that_isnt_sent_is_not_reported() {
+        let bearer = Request {
+            headers: vec![row(true, "{{auth}}", "Custom x")],
+            auth: Auth::Bearer {
+                token: "{{token}}".into(),
+            },
+            ..Request::default()
+        };
+        assert_eq!(
+            bearer.unresolved_variables(&vars(&[("auth", "X-Other")])),
+            ["token"]
+        );
+        assert!(
+            bearer
+                .unresolved_variables(&vars(&[("auth", "Authorization")]))
+                .is_empty()
+        );
+
+        let basic = Request {
+            headers: vec![row(true, "Authorization", "Custom x")],
+            auth: Auth::Basic {
+                username: "{{user}}".into(),
+                password: "{{pass}}".into(),
+            },
+            ..Request::default()
+        };
+        assert!(basic.unresolved_variables(&Variables::default()).is_empty());
+
+        let api_key = Request {
+            headers: vec![row(true, "X-Key", "mine")],
+            auth: Auth::ApiKey {
+                key: "{{key}}".into(),
+                value: "{{value}}".into(),
+            },
+            ..Request::default()
+        };
+        assert_eq!(
+            api_key.unresolved_variables(&vars(&[("key", "X-Other")])),
+            ["value"]
+        );
+        assert!(
+            api_key
+                .unresolved_variables(&vars(&[("key", "x-key")]))
+                .is_empty()
+        );
+        assert!(
+            api_key
+                .unresolved_variables(&vars(&[("key", "")]))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn substituted_values_are_not_reported() {
+        let request = Request {
+            url: "{{a}}".into(),
+            ..Request::default()
+        };
+        assert!(
+            request
+                .unresolved_variables(&vars(&[("a", "{{b}}")]))
+                .is_empty()
         );
     }
 }
