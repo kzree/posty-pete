@@ -38,6 +38,10 @@ pub enum LibraryPanelEvent {
         name: String,
     },
     DeleteCollection(Uuid),
+    DeleteItem {
+        collection_id: Uuid,
+        item_id: Uuid,
+    },
     /// `parent` is `None` for the collection root.
     AddFolder {
         collection_id: Uuid,
@@ -91,21 +95,25 @@ impl LibraryPanel {
         });
     }
 
-    fn rename_collection(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(name) = self.list.read(cx).delegate().collection_name(id) else {
+    fn rename(&mut self, target: MenuTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.list.read(cx).delegate().target_name(target) else {
             return;
+        };
+        let title = match target {
+            MenuTarget::Collection(_) => "Rename collection",
+            MenuTarget::Folder { .. } => "Rename folder",
         };
         let panel = cx.weak_entity();
         open_rename_dialog(
-            "Rename collection",
+            title,
             name,
             "Save",
             move |name, _, cx| {
                 panel
                     .update(cx, |_, cx| {
                         cx.emit(LibraryPanelEvent::Rename {
-                            collection_id: id,
-                            item_id: id,
+                            collection_id: target.collection_id(),
+                            item_id: target.id(),
                             name,
                         })
                     })
@@ -116,21 +124,39 @@ impl LibraryPanel {
         );
     }
 
-    fn delete_collection(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(name) = self.list.read(cx).delegate().collection_name(id) else {
+    fn delete(&mut self, target: MenuTarget, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.list.read(cx).delegate().target_name(target) else {
             return;
+        };
+        let (title, message) = match target {
+            MenuTarget::Collection(_) => (
+                "Delete collection?",
+                format!(
+                    "“{name}” and all of its folders and requests will be deleted. This can't be undone."
+                ),
+            ),
+            MenuTarget::Folder { .. } => (
+                "Delete folder?",
+                format!("“{name}” and everything in it will be deleted. This can't be undone."),
+            ),
         };
         let panel = cx.weak_entity();
         open_confirm_dialog(
-            "Delete collection?",
-            format!(
-                "“{name}” and all of its folders and requests will be deleted. This can't be undone."
-            ),
+            title,
+            message,
             "Delete",
             move |_, cx| {
-                panel
-                    .update(cx, |_, cx| cx.emit(LibraryPanelEvent::DeleteCollection(id)))
-                    .ok();
+                let event = match target {
+                    MenuTarget::Collection(id) => LibraryPanelEvent::DeleteCollection(id),
+                    MenuTarget::Folder {
+                        collection_id,
+                        folder_id,
+                    } => LibraryPanelEvent::DeleteItem {
+                        collection_id,
+                        item_id: folder_id,
+                    },
+                };
+                panel.update(cx, |_, cx| cx.emit(event)).ok();
             },
             window,
             cx,
@@ -242,9 +268,9 @@ fn context_menu(
         })
         .detach();
 
-    let add_folder_panel = panel.clone();
-    let menu = menu
-        .item(PopupMenuItem::new("Add request").disabled(true))
+    let (add_folder_panel, rename_panel, delete_panel) =
+        (panel.clone(), panel.clone(), panel.clone());
+    menu.item(PopupMenuItem::new("Add request").disabled(true))
         .item(
             PopupMenuItem::new("Add folder").on_click(move |_, window, cx| {
                 add_folder_panel
@@ -252,34 +278,21 @@ fn context_menu(
                     .ok();
             }),
         )
-        .separator();
-
-    match target {
-        MenuTarget::Collection(collection_id) => {
-            let (rename_panel, delete_panel) = (panel.clone(), panel.clone());
-            menu.item(
-                PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
-                    rename_panel
-                        .update(cx, |panel, cx| {
-                            panel.rename_collection(collection_id, window, cx)
-                        })
-                        .ok();
-                }),
-            )
-            .item(
-                PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
-                    delete_panel
-                        .update(cx, |panel, cx| {
-                            panel.delete_collection(collection_id, window, cx)
-                        })
-                        .ok();
-                }),
-            )
-        }
-        MenuTarget::Folder { .. } => menu
-            .item(PopupMenuItem::new("Rename…").disabled(true))
-            .item(PopupMenuItem::new("Delete…").disabled(true)),
-    }
+        .separator()
+        .item(
+            PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
+                rename_panel
+                    .update(cx, |panel, cx| panel.rename(target, window, cx))
+                    .ok();
+            }),
+        )
+        .item(
+            PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
+                delete_panel
+                    .update(cx, |panel, cx| panel.delete(target, window, cx))
+                    .ok();
+            }),
+        )
 }
 
 /// A collection or folder row: anything that can hold folders and requests.
@@ -398,11 +411,17 @@ impl LibraryDelegate {
         }
     }
 
-    fn collection_name(&self, id: Uuid) -> Option<String> {
-        self.collections
+    fn target_name(&self, target: MenuTarget) -> Option<String> {
+        let collection = self
+            .collections
             .iter()
-            .find(|collection| collection.id == id)
-            .map(|collection| collection.name.clone())
+            .find(|collection| collection.id == target.collection_id())?;
+        match target {
+            MenuTarget::Collection(_) => Some(collection.name.clone()),
+            MenuTarget::Folder { folder_id, .. } => collection
+                .find_folder(folder_id)
+                .map(|folder| folder.name.clone()),
+        }
     }
 
     fn rebuild_rows(&mut self) {
@@ -818,6 +837,30 @@ mod tests {
         assert_eq!(folder.folder_id(), Some(ids.outer));
         assert_eq!(MenuTarget::Collection(ids.collection).folder_id(), None);
         assert_eq!(delegate.menu_target_at(99), None);
+    }
+
+    #[test]
+    fn target_names_come_from_collections_and_nested_folders() {
+        let (collections, ids) = fixture();
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(collections);
+        let folder = |folder_id| MenuTarget::Folder {
+            collection_id: ids.collection,
+            folder_id,
+        };
+        assert_eq!(
+            delegate.target_name(MenuTarget::Collection(ids.collection)),
+            Some("API".into())
+        );
+        assert_eq!(
+            delegate.target_name(folder(ids.inner)),
+            Some("Inner".into())
+        );
+        assert_eq!(delegate.target_name(folder(Uuid::new_v4())), None);
+        assert_eq!(
+            delegate.target_name(MenuTarget::Collection(Uuid::new_v4())),
+            None
+        );
     }
 
     #[test]

@@ -49,6 +49,10 @@ impl Collection {
         find_request_in(&self.items, id)
     }
 
+    pub fn find_folder(&self, id: Uuid) -> Option<&Folder> {
+        find_folder_in(&self.items, id)
+    }
+
     pub fn find_request_mut(&mut self, id: Uuid) -> Option<&mut SavedRequest> {
         let (items, index) = locate(&mut self.items, id)?;
         match &mut items[index] {
@@ -129,6 +133,14 @@ fn locate(items: &mut Vec<Item>, id: Uuid) -> Option<(&mut Vec<Item>, usize)> {
     }
     items.iter_mut().find_map(|item| match item {
         Item::Folder(folder) => locate(&mut folder.items, id),
+        Item::Request(_) => None,
+    })
+}
+
+fn find_folder_in(items: &[Item], id: Uuid) -> Option<&Folder> {
+    items.iter().find_map(|item| match item {
+        Item::Folder(folder) if folder.id == id => Some(folder),
+        Item::Folder(folder) => find_folder_in(&folder.items, id),
         Item::Request(_) => None,
     })
 }
@@ -286,6 +298,15 @@ mod tests {
         assert!(f.collection.find_request(f.root_request).is_some());
         assert_eq!(f.collection.items.len(), 1);
         assert!(f.collection.remove(f.outer).is_none());
+    }
+
+    #[test]
+    fn find_folder_at_any_depth() {
+        let f = fixture();
+        assert_eq!(f.collection.find_folder(f.outer).unwrap().name, "Outer");
+        assert_eq!(f.collection.find_folder(f.inner).unwrap().name, "Inner");
+        assert!(f.collection.find_folder(f.deep_request).is_none());
+        assert!(f.collection.find_folder(Uuid::new_v4()).is_none());
     }
 
     #[test]

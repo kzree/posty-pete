@@ -153,7 +153,6 @@ impl Collections {
         }
     }
 
-    #[expect(dead_code, reason = "used by delete folder (task 14)")]
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {
         let removed = self.modify(collection_id, |collection| {
             collection.remove(item_id).is_some()

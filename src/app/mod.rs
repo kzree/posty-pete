@@ -229,6 +229,15 @@ impl Workspace {
                 self.collections
                     .update(cx, |collections, cx| collections.delete(id, cx));
             }
+            LibraryPanelEvent::DeleteItem {
+                collection_id,
+                item_id,
+            } => {
+                let (collection_id, item_id) = (*collection_id, *item_id);
+                self.collections.update(cx, |collections, cx| {
+                    collections.remove_item(collection_id, item_id, cx)
+                });
+            }
             LibraryPanelEvent::AddFolder {
                 collection_id,
                 parent,
