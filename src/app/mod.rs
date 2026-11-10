@@ -18,6 +18,7 @@ use crate::{
         FocusUrl, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SendRequest, ToggleSidebar,
         WORKSPACE_CONTEXT,
     },
+    collections::{Collections, CollectionsEvent},
     domain::{self, history::OpenMode},
     history::{History, HistoryEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
@@ -56,6 +57,8 @@ pub struct Workspace {
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
     history: Entity<History>,
+    #[expect(dead_code, reason = "read by the library UI (task 08)")]
+    collections: Entity<Collections>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -74,10 +77,14 @@ impl Workspace {
         let sidebar = cx.new(|_| Sidebar::new(history_panel.clone()));
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
+        let collections = cx.new(Collections::new);
 
         let subscriptions = vec![
             cx.subscribe_in(&history, window, |this, _, event, window, cx| {
                 this.on_history_event(event, window, cx)
+            }),
+            cx.subscribe_in(&collections, window, |this, _, event, window, cx| {
+                this.on_collections_event(event, window, cx)
             }),
             cx.subscribe_in(&history_panel, window, |this, _, event, window, cx| {
                 this.on_history_panel_event(event, window, cx)
@@ -100,6 +107,7 @@ impl Workspace {
                 .build()
                 .expect("failed to build HTTP client"),
             history,
+            collections,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -145,6 +153,18 @@ impl Workspace {
                 .history_panel
                 .update(cx, |panel, cx| panel.clear(window, cx)),
             HistoryEvent::Failed { title, error } => show_error(title, error, window, cx),
+        }
+    }
+
+    fn on_collections_event(
+        &mut self,
+        event: &CollectionsEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            CollectionsEvent::Changed => {}
+            CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
         }
     }
 
