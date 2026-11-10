@@ -129,9 +129,35 @@ impl Workspace {
         else {
             return;
         };
-        if self.loads_into_editor(target) && self.refuse_while_pending(window, cx) {
+        if !self.loads_into_editor(target) {
+            self.move_in_history(direction, steps, window, cx);
             return;
         }
+        if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        self.confirm_discard(
+            move |this, window, cx| {
+                let still = this
+                    .route_history
+                    .peek(direction, |route| this.route_exists(*route, cx))
+                    .map(|(steps, route)| (steps, *route));
+                if still == Some((steps, target)) {
+                    this.move_in_history(direction, steps, window, cx);
+                }
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn move_in_history(
+        &mut self,
+        direction: Direction,
+        steps: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let previous = self.current_route();
         self.route_history.go(direction, steps);
         let mut navigator = use_navigate(window, cx);
@@ -185,7 +211,7 @@ impl Workspace {
         }
     }
 
-    fn loads_into_editor(&self, route: AppRoute) -> bool {
+    pub(super) fn loads_into_editor(&self, route: AppRoute) -> bool {
         match route {
             AppRoute::Request => self.editor_content != EditorContent::Draft,
             AppRoute::SavedRequest {

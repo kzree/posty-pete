@@ -26,7 +26,8 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 - [ ] **Collection variables.** The collection view's Variables tab is a placeholder. Decide the requirements (scope, secret values, how they combine with environments) and build the editor, likely on top of `ui::key_value_editor`.
 - [ ] **Manage requests in collections.** Duplicate and move requests (and move folders) in the library tree, including drag and drop.
-- [ ] **Unsaved changes.** Show a dirty marker for an edited saved request and prompt before switching to another request.
+- [ ] **Unsaved changes on quit.** Edited saved requests are marked and prompt before being replaced, but closing the window or quitting doesn't ask yet.
+- [ ] **Revert a saved request.** Clicking the request already in the editor keeps its edits, so there's no way to throw them away except navigating elsewhere and choosing Discard. Add a Revert action (e.g. in the request context menu or next to Save).
 - [ ] **Save as.** Save a request that isn't linked to a collection (a fresh one or one from history) into a chosen collection or folder.
 - [ ] **Unsaved collection name edits.** `CollectionView::show` keeps a typed but unsaved name when you leave a collection and come back to it. Decide whether it should be discarded instead.
 - [ ] **Cheaper library refresh.** Every `CollectionsEvent::Changed` clones all collections into `LibraryPanel::set_collections`. Fine at current sizes; revisit if collections get large.

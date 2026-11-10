@@ -133,6 +133,7 @@ impl Collections {
     }
 
     /// Replaces the saved request, and renames it too if `name` is given.
+    /// Returns `false` if the request doesn't exist.
     pub fn update_request(
         &mut self,
         collection_id: Uuid,
@@ -140,7 +141,7 @@ impl Collections {
         request: Request,
         name: Option<String>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let updated = self.modify(collection_id, |collection| {
             let Some(saved) = collection.find_request_mut(request_id) else {
                 return false;
@@ -154,6 +155,7 @@ impl Collections {
         if updated {
             self.changed(collection_id, cx);
         }
+        updated
     }
 
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {

@@ -38,7 +38,10 @@ use crate::{
         library_panel::{LibraryPanel, LibraryPanelEvent},
     },
     status_bar::StatusBar,
-    ui::loading_bar::LoadingBar,
+    ui::{
+        loading_bar::LoadingBar,
+        save_changes_dialog::{SaveChoice, open_save_changes_dialog},
+    },
     window_title_bar::WindowTitleBar,
 };
 
@@ -63,6 +66,9 @@ enum EditorContent {
         request_id: Uuid,
     },
 }
+
+/// Work that replaces the editor's content, run once unsaved changes are dealt with.
+type Continuation = Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LeftPanelState {
@@ -89,6 +95,10 @@ pub struct Workspace {
     /// Set while the editor holds a saved request.
     baseline: Option<Baseline>,
     dirty: bool,
+    /// Set while the save prompt is open.
+    discard_prompt: Option<Continuation>,
+    /// Set while a continuation runs, after the user saved or discarded.
+    discard_confirmed: bool,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -156,6 +166,8 @@ impl Workspace {
             draft: None,
             baseline: None,
             dirty: false,
+            discard_prompt: None,
+            discard_confirmed: false,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -190,11 +202,18 @@ impl Workspace {
                 );
             }
             HistoryEvent::Opened { request, mode } => {
-                self.load_editor(EditorContent::Draft, request, window, cx);
-                self.navigate(AppRoute::Request, window, cx);
-                if *mode == OpenMode::Send {
-                    self.request_editor.update(cx, |editor, cx| editor.send(cx));
-                }
+                let (request, mode) = (request.clone(), *mode);
+                self.confirm_discard(
+                    move |this, window, cx| {
+                        this.load_editor(EditorContent::Draft, &request, window, cx);
+                        this.navigate(AppRoute::Request, window, cx);
+                        if mode == OpenMode::Send {
+                            this.request_editor.update(cx, |editor, cx| editor.send(cx));
+                        }
+                    },
+                    window,
+                    cx,
+                );
             }
             HistoryEvent::Deleted(id) => self
                 .history_panel
@@ -315,18 +334,24 @@ impl Workspace {
         if self.refuse_while_pending(window, cx) {
             return;
         }
-        let Some(request_id) = self.collections.update(cx, |collections, cx| {
-            collections.add_request(
-                collection_id,
-                parent,
-                "New Request",
-                domain::request::Request::default(),
-                cx,
-            )
-        }) else {
-            return;
-        };
-        self.open_saved_request(collection_id, request_id, window, cx);
+        self.confirm_discard(
+            move |this, window, cx| {
+                let Some(request_id) = this.collections.update(cx, |collections, cx| {
+                    collections.add_request(
+                        collection_id,
+                        parent,
+                        "New Request",
+                        domain::request::Request::default(),
+                        cx,
+                    )
+                }) else {
+                    return;
+                };
+                this.open_saved_request(collection_id, request_id, window, cx);
+            },
+            window,
+            cx,
+        );
     }
 
     fn open_saved_request(
@@ -336,40 +361,129 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.refuse_while_pending(window, cx) {
-            return;
-        }
-        let Some(request) = self
-            .find_saved_request(collection_id, request_id, cx)
-            .map(|saved| saved.request.clone())
-        else {
-            return;
-        };
-        let content = EditorContent::Saved {
+        let route = AppRoute::SavedRequest {
             collection_id,
             request_id,
         };
-        self.load_editor(content, &request, window, cx);
-        self.navigate(
-            AppRoute::SavedRequest {
-                collection_id,
-                request_id,
+        // Already in the editor, maybe with unsaved changes: keep them.
+        if !self.loads_into_editor(route) {
+            self.navigate(route, window, cx);
+            return;
+        }
+        if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        self.confirm_discard(
+            move |this, window, cx| {
+                let Some(request) = this
+                    .find_saved_request(collection_id, request_id, cx)
+                    .map(|saved| saved.request.clone())
+                else {
+                    this.sync_library_selection(window, cx);
+                    return;
+                };
+                let content = EditorContent::Saved {
+                    collection_id,
+                    request_id,
+                };
+                this.load_editor(content, &request, window, cx);
+                this.navigate(route, window, cx);
             },
             window,
             cx,
         );
     }
 
-    /// Opens a blank, unlinked request on `/`, discarding unsaved edits.
+    /// Opens a blank, unlinked request on `/`.
     fn new_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.refuse_while_pending(window, cx) {
             return;
         }
-        let blank = domain::request::Request::default();
-        self.load_editor(EditorContent::Draft, &blank, window, cx);
-        self.navigate(AppRoute::Request, window, cx);
-        self.request_editor
-            .update(cx, |editor, cx| editor.focus_url(window, cx));
+        self.confirm_discard(
+            |this, window, cx| {
+                let blank = domain::request::Request::default();
+                this.load_editor(EditorContent::Draft, &blank, window, cx);
+                this.navigate(AppRoute::Request, window, cx);
+                this.request_editor
+                    .update(cx, |editor, cx| editor.focus_url(window, cx));
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Runs `then` if the editor has no unsaved changes; otherwise asks to save
+    /// or discard them first, and drops `then` if the user cancels. Everything
+    /// that replaces the editor's content goes through here.
+    fn confirm_discard(
+        &mut self,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_dirty() || self.discard_confirmed {
+            then(self, window, cx);
+            return;
+        }
+        let name = match self.editor_content {
+            EditorContent::Saved {
+                collection_id,
+                request_id,
+            } => self
+                .find_saved_request(collection_id, request_id, cx)
+                .map(|saved| saved.name.clone()),
+            EditorContent::Draft => None,
+        };
+        // Ignored while a prompt is already open.
+        let Some(name) = name.filter(|_| self.discard_prompt.is_none()) else {
+            self.sync_library_selection(window, cx);
+            return;
+        };
+        self.discard_prompt = Some(Box::new(then));
+        let this = cx.weak_entity();
+        open_save_changes_dialog(
+            name,
+            move |choice, window, cx| {
+                this.update(cx, |this, cx| this.on_discard_choice(choice, window, cx))
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn on_discard_choice(
+        &mut self,
+        choice: SaveChoice,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(then) = self.discard_prompt.take() else {
+            return;
+        };
+        let proceed = match choice {
+            SaveChoice::Save => {
+                let saved = self.save_editor(window, cx);
+                if !saved {
+                    show_error(
+                        "Couldn't save request",
+                        &anyhow::anyhow!("The request is no longer in its collection."),
+                        window,
+                        cx,
+                    );
+                }
+                saved
+            }
+            SaveChoice::Discard => true,
+            SaveChoice::Cancel => false,
+        };
+        if proceed {
+            self.discard_confirmed = true;
+            then(self, window, cx);
+            self.discard_confirmed = false;
+        } else {
+            self.sync_library_selection(window, cx);
+        }
     }
 
     /// Loads `request` into the editor and clears the response. Loading a draft
@@ -381,6 +495,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        debug_assert!(
+            !self.is_dirty() || self.discard_confirmed,
+            "unsaved changes replaced without confirm_discard"
+        );
         self.draft = match (self.editor_content, content) {
             (EditorContent::Draft, EditorContent::Saved { .. }) => {
                 Some(self.request_editor.read(cx).build_request(cx))
@@ -495,24 +613,39 @@ impl Workspace {
             .update(cx, |editor, cx| editor.set_saved_name(name, window, cx));
     }
 
+    /// Saves the editor's request if the main pane shows it.
     fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let AppRoute::SavedRequest {
+        if self.current_route() == self.editor_route() {
+            self.save_editor(window, cx);
+        }
+    }
+
+    /// Saves the editor's request to its collection. Returns `false` if it
+    /// isn't a saved request (any more). Writing to disk happens later and
+    /// reports its own errors.
+    fn save_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let EditorContent::Saved {
             collection_id,
             request_id,
-        } = self.current_route()
+        } = self.editor_content
         else {
-            return;
+            return false;
         };
         let (request, name) = self.request_editor.update(cx, |editor, cx| {
             editor.tidy_name(window, cx);
             (editor.build_request(cx), editor.name(cx))
         });
-        self.baseline = Some(Baseline::new(request.clone(), request.clone()));
-        self.collections.update(cx, |collections, cx| {
+        let baseline = Baseline::new(request.clone(), request.clone());
+        let saved = self.collections.update(cx, |collections, cx| {
             collections.update_request(collection_id, request_id, request, name, cx)
         });
+        if !saved {
+            return false;
+        }
+        self.baseline = Some(baseline);
         self.refresh_dirty(window, cx);
         window.push_notification(Notification::success("Saved"), cx);
+        true
     }
 
     fn on_collection_view_event(

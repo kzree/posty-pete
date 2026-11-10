@@ -4,4 +4,5 @@ pub mod key_value_editor;
 pub mod loading_bar;
 pub mod method_label;
 pub mod rename_dialog;
+pub mod save_changes_dialog;
 pub mod status_tag;
