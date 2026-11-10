@@ -12,11 +12,14 @@ use gpui_component::{
     IndexPath, StyledExt,
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement,
-    select::SelectState,
+    select::{SelectEvent, SelectState},
     v_flex,
 };
 
-use crate::{domain::request::Request, ui::key_value_editor::KeyValueEditor};
+use crate::{
+    domain::request::Request,
+    ui::key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+};
 use auth_editor::AuthEditor;
 use body_editor::BodyEditor;
 use method_item::MethodItem;
@@ -25,7 +28,12 @@ use tabs::RequestTab;
 pub enum RequestEditorEvent {
     SendRequested(Request),
     Save,
+    /// A field of the request or its name changed.
+    Edited,
 }
+
+/// Emitted by the body and auth editors when their content changes.
+struct Edited;
 
 pub struct RequestEditor {
     name: Entity<InputState>,
@@ -39,6 +47,8 @@ pub struct RequestEditor {
     body: Entity<BodyEditor>,
     auth: Entity<AuthEditor>,
     loading: bool,
+    /// Whether the linked saved request has unsaved changes.
+    dirty: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -54,24 +64,42 @@ impl RequestEditor {
         let sub = cx.subscribe_in(
             &url,
             window,
-            |this, _url, event: &InputEvent, _window, cx| {
-                if let InputEvent::PressEnter { .. } = event {
-                    this.send(cx);
-                }
+            |this, _url, event: &InputEvent, _window, cx| match event {
+                InputEvent::PressEnter { .. } => this.send(cx),
+                InputEvent::Change => cx.emit(RequestEditorEvent::Edited),
+                _ => {}
             },
         );
 
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Request name"));
-        let name_sub = cx.subscribe(&name, |_, _, event: &InputEvent, cx| {
-            if let InputEvent::PressEnter { .. } = event {
-                cx.emit(RequestEditorEvent::Save);
-            }
+        let name_sub = cx.subscribe(&name, |_, _, event: &InputEvent, cx| match event {
+            InputEvent::PressEnter { .. } => cx.emit(RequestEditorEvent::Save),
+            InputEvent::Change => cx.emit(RequestEditorEvent::Edited),
+            _ => {}
         });
 
         let params = cx.new(|cx| KeyValueEditor::new("parameter", window, cx));
         let headers = cx.new(|cx| KeyValueEditor::new("header", window, cx));
         let body = cx.new(|cx| BodyEditor::new(window, cx));
         let auth = cx.new(|cx| AuthEditor::new(window, cx));
+
+        let method_sub = cx.subscribe(&method, |_, _, _: &SelectEvent<Vec<MethodItem>>, cx| {
+            cx.emit(RequestEditorEvent::Edited)
+        });
+        let mut subscriptions = vec![sub, name_sub, method_sub];
+        for key_values in [&params, &headers] {
+            subscriptions.push(
+                cx.subscribe(key_values, |_, _, _: &KeyValueEditorEvent, cx| {
+                    cx.emit(RequestEditorEvent::Edited)
+                }),
+            );
+        }
+        subscriptions.push(cx.subscribe(&body, |_, _, _: &Edited, cx| {
+            cx.emit(RequestEditorEvent::Edited)
+        }));
+        subscriptions.push(cx.subscribe(&auth, |_, _, _: &Edited, cx| {
+            cx.emit(RequestEditorEvent::Edited)
+        }));
 
         Self {
             name,
@@ -84,12 +112,18 @@ impl RequestEditor {
             body,
             auth,
             loading: false,
-            _subscriptions: vec![sub, name_sub],
+            dirty: false,
+            _subscriptions: subscriptions,
         }
     }
 
     pub fn set_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
         self.loading = loading;
+        cx.notify();
+    }
+
+    pub fn set_dirty(&mut self, dirty: bool, cx: &mut Context<Self>) {
+        self.dirty = dirty;
         cx.notify();
     }
 

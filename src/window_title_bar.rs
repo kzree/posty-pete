@@ -1,6 +1,6 @@
 use gpui::{
     App, ClickEvent, HighlightStyle, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, RenderOnce, SharedString, Styled, StyledText, Window, div, px,
+    Pixels, RenderOnce, SharedString, Styled, StyledText, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, TITLE_BAR_HEIGHT, TitleBar,
@@ -111,6 +111,7 @@ fn title_padding(
 #[derive(IntoElement)]
 pub struct WindowTitleBar {
     title: WindowTitle,
+    edited: bool,
     can_go_back: bool,
     can_go_forward: bool,
     on_back: Option<ClickHandler>,
@@ -122,12 +123,19 @@ impl WindowTitleBar {
     pub fn new(title: WindowTitle) -> Self {
         Self {
             title,
+            edited: false,
             can_go_back: false,
             can_go_forward: false,
             on_back: None,
             on_forward: None,
             on_new_request: None,
         }
+    }
+
+    /// Shows that what the title names has unsaved changes.
+    pub fn edited(mut self, edited: bool) -> Self {
+        self.edited = edited;
+        self
     }
 
     pub fn can_go_back(mut self, can_go_back: bool) -> Self {
@@ -216,13 +224,22 @@ impl RenderOnce for WindowTitleBar {
                         .justify_center()
                         .pl(title_left)
                         .pr(title_right)
+                        .gap_1p5()
+                        .text_sm()
                         .child(
                             div()
                                 .min_w_0()
                                 .truncate()
-                                .text_sm()
                                 .child(self.title.styled_text(cx.theme().muted_foreground)),
-                        ),
+                        )
+                        .when(self.edited, |this| {
+                            this.child(
+                                div()
+                                    .flex_none()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Edited"),
+                            )
+                        }),
                 )
                 .child(
                     h_flex()

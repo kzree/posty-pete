@@ -1,3 +1,4 @@
+mod dirty;
 mod navigation;
 mod routes;
 mod send;
@@ -16,6 +17,7 @@ use gpui_component::{
 use uuid::Uuid;
 
 use self::{
+    dirty::Baseline,
     navigation::Direction,
     routes::{AppRoute, RouteHistory},
 };
@@ -84,12 +86,16 @@ pub struct Workspace {
     editor_content: EditorContent,
     /// The draft, kept while the editor holds a saved request.
     draft: Option<domain::request::Request>,
+    /// Set while the editor holds a saved request.
+    baseline: Option<Baseline>,
+    dirty: bool,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
     request_response_layout: Entity<ResizableState>,
     /// The OS window title last set.
     os_window_title: String,
+    os_window_edited: bool,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -148,11 +154,14 @@ impl Workspace {
             route_history: RouteHistory::new(AppRoute::Request),
             editor_content: EditorContent::Draft,
             draft: None,
+            baseline: None,
+            dirty: false,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
             os_window_title: String::new(),
+            os_window_edited: false,
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -213,6 +222,7 @@ impl Workspace {
                     // What was in the editor stays there, as the draft.
                     self.editor_content = EditorContent::Draft;
                     self.draft = None;
+                    self.baseline = None;
                 }
                 if !self.route_exists(self.current_route(), cx) {
                     self.replace_route(self.editor_route(), window, cx);
@@ -224,6 +234,7 @@ impl Workspace {
                     self.collection_view
                         .update(cx, |view, cx| view.show(id, collection, window, cx));
                 }
+                self.refresh_dirty(window, cx);
                 self.sync_window_title(window, cx);
                 cx.notify();
             }
@@ -380,9 +391,55 @@ impl Workspace {
         self.editor_content = content;
         self.request_editor
             .update(cx, |editor, cx| editor.load_request(request, window, cx));
+        self.baseline = match content {
+            EditorContent::Saved { .. } => Some(Baseline::new(
+                request.clone(),
+                self.request_editor.read(cx).build_request(cx),
+            )),
+            EditorContent::Draft => None,
+        };
         self.response_view
             .update(cx, |view, cx| view.clear(window, cx));
         self.sync_editor_name(window, cx);
+        self.refresh_dirty(window, cx);
+    }
+
+    /// Whether the editor holds a saved request with unsaved changes.
+    fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Recomputes the cached dirty flag after an edit, a load, a save or a
+    /// change to the collections.
+    fn refresh_dirty(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dirty = match (self.editor_content, &self.baseline) {
+            (
+                EditorContent::Saved {
+                    collection_id,
+                    request_id,
+                },
+                Some(baseline),
+            ) => self
+                .find_saved_request(collection_id, request_id, cx)
+                .is_some_and(|saved| {
+                    let editor = self.request_editor.read(cx);
+                    baseline.is_dirty(saved, &editor.build_request(cx), editor.name(cx).as_deref())
+                }),
+            _ => false,
+        };
+        if dirty == self.dirty {
+            return;
+        }
+        self.dirty = dirty;
+        self.request_editor
+            .update(cx, |editor, cx| editor.set_dirty(dirty, cx));
+        self.sync_window_title(window, cx);
+        cx.notify();
+    }
+
+    /// Whether the main pane shows the editor's saved request with unsaved changes.
+    fn shows_dirty_request(&self) -> bool {
+        self.is_dirty() && self.current_route() == self.editor_route()
     }
 
     /// Shows a toast and returns `true` while a request is in flight.
@@ -450,9 +507,11 @@ impl Workspace {
             editor.tidy_name(window, cx);
             (editor.build_request(cx), editor.name(cx))
         });
+        self.baseline = Some(Baseline::new(request.clone(), request.clone()));
         self.collections.update(cx, |collections, cx| {
             collections.update_request(collection_id, request_id, request, name, cx)
         });
+        self.refresh_dirty(window, cx);
         window.push_notification(Notification::success("Saved"), cx);
     }
 
@@ -501,6 +560,7 @@ impl Workspace {
                 self.send_request(request.clone(), window, cx)
             }
             RequestEditorEvent::Save => self.save_request(window, cx),
+            RequestEditorEvent::Edited => self.refresh_dirty(window, cx),
         }
     }
 
@@ -605,6 +665,7 @@ impl Render for Workspace {
             .text_color(cx.theme().foreground)
             .child(
                 WindowTitleBar::new(self.title(cx))
+                    .edited(self.shows_dirty_request())
                     .can_go_back(self.can_go(Direction::Back, cx))
                     .can_go_forward(self.can_go(Direction::Forward, cx))
                     .on_back(

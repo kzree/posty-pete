@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
-    Window, div, prelude::FluentBuilder,
+    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
+    Subscription, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     ActiveTheme, IconName, Sizable,
@@ -37,12 +37,19 @@ impl Row {
     }
 }
 
+pub enum KeyValueEditorEvent {
+    /// A row was edited, toggled or removed.
+    Changed,
+}
+
 pub struct KeyValueEditor {
     /// Noun for one row in accessible names, e.g. "header".
     item_name: &'static str,
     rows: Vec<Row>,
     next_row_id: usize,
 }
+
+impl EventEmitter<KeyValueEditorEvent> for KeyValueEditor {}
 
 impl KeyValueEditor {
     pub fn new(item_name: &'static str, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -101,6 +108,7 @@ impl KeyValueEditor {
                 cx.subscribe_in(input, window, |this, _, event: &InputEvent, window, cx| {
                     if let InputEvent::Change = event {
                         this.ensure_trailing_empty_row(window, cx);
+                        cx.emit(KeyValueEditorEvent::Changed);
                         cx.notify();
                     }
                 })
@@ -168,6 +176,7 @@ impl Render for KeyValueEditor {
                                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
                                     if let Some(row) = this.row_mut(id) {
                                         row.enabled = *checked;
+                                        cx.emit(KeyValueEditorEvent::Changed);
                                         cx.notify();
                                     }
                                 })),
@@ -185,6 +194,7 @@ impl Render for KeyValueEditor {
                                 .accessibility_label(format!("Remove {item}"))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.rows.retain(|row| row.id != id);
+                                    cx.emit(KeyValueEditorEvent::Changed);
                                     cx.notify();
                                 })),
                         )

@@ -86,6 +86,11 @@ impl Workspace {
             window.set_window_title(&title);
             self.os_window_title = title;
         }
+        let edited = self.shows_dirty_request();
+        if self.os_window_edited != edited {
+            window.set_window_edited(edited);
+            self.os_window_edited = edited;
+        }
     }
 
     /// Shows `route` and records it in the history.

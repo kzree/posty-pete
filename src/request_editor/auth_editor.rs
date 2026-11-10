@@ -1,17 +1,18 @@
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Window, div, px,
+    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, IndexPath, Sizable,
     form::{field, v_form},
     h_flex,
-    input::{Input, InputState},
+    input::{Input, InputEvent, InputState},
     searchable_list::SearchableListItem,
     select::{Select, SelectEvent, SelectState},
     v_flex,
 };
 
+use super::Edited;
 use crate::domain::request::Auth;
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -62,6 +63,8 @@ pub struct AuthEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+impl EventEmitter<Edited> for AuthEditor {}
+
 impl AuthEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let items = AuthKind::ALL.into_iter().map(AuthKindItem).collect();
@@ -86,10 +89,19 @@ impl AuthEditor {
             |this, _, event: &SelectEvent<Vec<AuthKindItem>>, cx| {
                 if let SelectEvent::Confirm(Some(kind)) = event {
                     this.kind = *kind;
+                    cx.emit(Edited);
                     cx.notify();
                 }
             },
         );
+        let mut subscriptions = vec![sub];
+        for input in [&api_key_name, &api_key_value, &username, &password, &token] {
+            subscriptions.push(cx.subscribe(input, |_, _, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    cx.emit(Edited);
+                }
+            }));
+        }
 
         Self {
             kind: AuthKind::default(),
@@ -99,7 +111,7 @@ impl AuthEditor {
             username,
             password,
             token,
-            _subscriptions: vec![sub],
+            _subscriptions: subscriptions,
         }
     }
 

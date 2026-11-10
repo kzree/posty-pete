@@ -1,10 +1,10 @@
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Window, div, prelude::FluentBuilder, px, relative,
+    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder, px, relative,
 };
 use gpui_component::{
     ActiveTheme, IndexPath, Sizable, h_flex,
-    input::{Editor, EditorState},
+    input::{Editor, EditorState, InputEvent},
     scroll::ScrollableElement,
     searchable_list::SearchableListItem,
     select::{Select, SelectEvent, SelectState},
@@ -12,9 +12,10 @@ use gpui_component::{
     v_flex,
 };
 
+use super::Edited;
 use crate::{
     domain::request::{Body, RawKind},
-    ui::key_value_editor::KeyValueEditor,
+    ui::key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -70,6 +71,8 @@ pub struct BodyEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+impl EventEmitter<Edited> for BodyEditor {}
+
 impl BodyEditor {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let items = RawKind::ALL.into_iter().map(RawKindItem).collect();
@@ -85,16 +88,25 @@ impl BodyEditor {
                     let language = editor_language(*kind);
                     this.raw
                         .update(cx, |raw, cx| raw.set_highlighter(language, cx));
+                    cx.emit(Edited);
                 }
             },
         );
+        let raw_sub = cx.subscribe(&raw, |_, _, event: &InputEvent, cx| {
+            if let InputEvent::Change = event {
+                cx.emit(Edited);
+            }
+        });
+        let form_sub = cx.subscribe(&form_data, |_, _, _: &KeyValueEditorEvent, cx| {
+            cx.emit(Edited)
+        });
 
         Self {
             mode: BodyMode::None,
             raw_kind,
             raw,
             form_data,
-            _subscriptions: vec![sub],
+            _subscriptions: vec![sub, raw_sub, form_sub],
         }
     }
 
@@ -151,6 +163,7 @@ impl Render for BodyEditor {
                         .selected_index(self.mode.index())
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {
                             this.mode = BodyMode::ALL[*ix];
+                            cx.emit(Edited);
                             cx.notify();
                         }))
                         .children(BodyMode::ALL.map(BodyMode::label)),
