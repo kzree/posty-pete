@@ -3,7 +3,7 @@ use gpui::{
     Styled, Window, div,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Icon,
+    ActiveTheme, Colorize, Icon, h_flex,
     tab::{Tab, TabBar},
     tooltip::Tooltip,
     v_flex,
@@ -12,8 +12,10 @@ use gpui_component::{
 use gpui_kit_assets::IconName as LucideIcon;
 
 pub mod history_panel;
+pub mod library_panel;
 
 use history_panel::HistoryPanel;
+use library_panel::LibraryPanel;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SidebarTab {
@@ -49,13 +51,15 @@ impl SidebarTab {
 
 pub struct Sidebar {
     active_tab: SidebarTab,
+    library_panel: Entity<LibraryPanel>,
     history_panel: Entity<HistoryPanel>,
 }
 
 impl Sidebar {
-    pub fn new(history_panel: Entity<HistoryPanel>) -> Self {
+    pub fn new(library_panel: Entity<LibraryPanel>, history_panel: Entity<HistoryPanel>) -> Self {
         Self {
             active_tab: SidebarTab::default(),
+            library_panel,
             history_panel,
         }
     }
@@ -85,7 +89,7 @@ impl Render for Sidebar {
         let content = div().flex_1().min_h_0();
         let content = match self.active_tab {
             SidebarTab::History => content.child(self.history_panel.clone()),
-            SidebarTab::Library => content.child(placeholder("Your library is empty.", cx)),
+            SidebarTab::Library => content.child(self.library_panel.clone()),
             SidebarTab::Tests => content.child(placeholder("Tests coming soon.", cx)),
         };
 
@@ -103,4 +107,17 @@ fn placeholder(text: &'static str, cx: &App) -> Div {
         .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text)
+}
+
+fn panel_header(label: impl IntoElement, action: impl IntoElement, cx: &App) -> Div {
+    h_flex()
+        .flex_none()
+        .justify_between()
+        .pl_3()
+        .pr_1()
+        .py_1()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(label)
+        .child(action)
 }

@@ -5,7 +5,14 @@ use gpui::{AssetSource, Result, SharedString};
 // Lucide icons beyond the default set that `Assets` embeds.
 gpui_kit_assets::icon_assets!(
     ExtraIcons,
-    [Dot, FlaskConical, LibraryBig, RotateCcwClock, Trash]
+    [
+        Dot,
+        FlaskConical,
+        FolderPlus,
+        LibraryBig,
+        RotateCcwClock,
+        Trash
+    ]
 );
 
 pub struct AppAssets;

@@ -18,6 +18,7 @@ use gpui_component::{
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
+use super::panel_header;
 use crate::{
     actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
     domain::history::{self, HistorySummary, OpenMode, Outcome},
@@ -167,25 +168,15 @@ impl HistoryPanel {
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.list.read(cx).delegate().entries.len();
-        h_flex()
-            .flex_none()
-            .justify_between()
-            .pl_3()
-            .pr_1()
-            .py_1()
-            .text_xs()
-            .text_color(cx.theme().muted_foreground)
-            .child(request_count(count))
-            .child(
-                Button::new("clear-history")
-                    .ghost()
-                    .xsmall()
-                    .icon(Icon::new(LucideIcon::Trash))
-                    .tooltip("Clear history")
-                    .accessibility_label("Clear history")
-                    .disabled(count == 0)
-                    .on_click(cx.listener(|this, _, window, cx| this.confirm_clear(window, cx))),
-            )
+        let clear_button = Button::new("clear-history")
+            .ghost()
+            .xsmall()
+            .icon(Icon::new(LucideIcon::Trash))
+            .tooltip("Clear history")
+            .accessibility_label("Clear history")
+            .disabled(count == 0)
+            .on_click(cx.listener(|this, _, window, cx| this.confirm_clear(window, cx)));
+        panel_header(request_count(count), clear_button, cx)
     }
 }
 

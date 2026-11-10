@@ -26,6 +26,7 @@ use crate::{
     sidebar::{
         Sidebar, SidebarTab,
         history_panel::{HistoryPanel, HistoryPanelEvent},
+        library_panel::{LibraryPanel, LibraryPanelEvent},
     },
     status_bar::StatusBar,
     ui::loading_bar::LoadingBar,
@@ -74,7 +75,8 @@ impl Workspace {
         let left_panel = LeftPanelState::Open;
         let status_bar = cx.new(|_| StatusBar::new(left_panel == LeftPanelState::Open));
         let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
-        let sidebar = cx.new(|_| Sidebar::new(history_panel.clone()));
+        let library_panel = cx.new(|_| LibraryPanel::new());
+        let sidebar = cx.new(|_| Sidebar::new(library_panel.clone(), history_panel.clone()));
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
         let collections = cx.new(Collections::new);
@@ -85,6 +87,9 @@ impl Workspace {
             }),
             cx.subscribe_in(&collections, window, |this, _, event, window, cx| {
                 this.on_collections_event(event, window, cx)
+            }),
+            cx.subscribe(&library_panel, |this, _, event, _| {
+                this.on_library_panel_event(event)
             }),
             cx.subscribe_in(&history_panel, window, |this, _, event, window, cx| {
                 this.on_history_panel_event(event, window, cx)
@@ -165,6 +170,12 @@ impl Workspace {
         match event {
             CollectionsEvent::Changed => {}
             CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
+        }
+    }
+
+    fn on_library_panel_event(&mut self, event: &LibraryPanelEvent) {
+        match event {
+            LibraryPanelEvent::CreateCollection => tracing::info!("create collection requested"),
         }
     }
 
