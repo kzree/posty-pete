@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 
 use chrono::{Datelike, Local, NaiveDate};
 use gpui::{
@@ -7,7 +7,7 @@ use gpui::{
     WeakEntity, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, IndexPath, Sizable, StyledExt, WindowExt,
+    ActiveTheme, Disableable, Icon, IconName, IndexPath, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariant, ButtonVariants},
     h_flex,
     list::{List, ListDelegate, ListEvent, ListItem, ListState},
@@ -45,14 +45,17 @@ impl EventEmitter<HistoryPanelEvent> for HistoryPanel {}
 impl HistoryPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let list = cx.new(|cx| ListState::new(HistoryDelegate::default(), window, cx));
-        let list_sub = cx.subscribe(&list, |_, list, event: &ListEvent, cx| {
+        let list_sub = cx.subscribe_in(&list, window, |this, list, event, window, cx| {
             let ListEvent::Confirm(ix) = event else {
                 return;
             };
-            let id = list.read(cx).delegate().entry(*ix).map(|entry| entry.id);
-            if let Some(id) = id {
+            let delegate = list.read(cx).delegate();
+            if let Some(day) = delegate.day_at(*ix) {
+                // Rows above the day don't move, so its row stays selected.
+                this.update_rows(window, cx, |delegate| delegate.toggle(day));
+            } else if let Some(entry) = delegate.entry(*ix) {
                 cx.emit(HistoryPanelEvent::Open {
-                    id,
+                    id: entry.id,
                     mode: OpenMode::Load,
                 });
             }
@@ -63,37 +66,56 @@ impl HistoryPanel {
         }
     }
 
-    pub fn set_entries(&mut self, entries: Vec<HistorySummary>, cx: &mut Context<Self>) {
-        self.list.update(cx, |list, cx| {
-            list.delegate_mut().set_entries(entries);
-            cx.notify();
+    pub fn set_entries(
+        &mut self,
+        entries: Vec<HistorySummary>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_rows_and_deselect(window, cx, |delegate| {
+            delegate.set_entries(entries, today())
         });
-        cx.notify();
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.list.update(cx, |list, cx| {
-            list.delegate_mut().set_entries(Vec::new());
-            list.set_selected_index(None, window, cx);
-            cx.notify();
+        self.update_rows_and_deselect(window, cx, |delegate| {
+            delegate.set_entries(Vec::new(), today())
         });
-        cx.notify();
     }
 
-    /// Clears the selection, since every row below the new entry shifts down one.
     pub fn push(&mut self, entry: HistorySummary, window: &mut Window, cx: &mut Context<Self>) {
-        self.list.update(cx, |list, cx| {
-            list.delegate_mut().push(entry);
-            list.set_selected_index(None, window, cx);
-            cx.notify();
-        });
-        cx.notify();
+        self.update_rows_and_deselect(window, cx, |delegate| delegate.push(entry));
     }
 
     pub fn remove(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_rows_and_deselect(window, cx, |delegate| delegate.remove(id));
+    }
+
+    /// Clears the selection too, since rows below the change shift.
+    fn update_rows_and_deselect(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut HistoryDelegate),
+    ) {
+        self.update_rows(window, cx, f);
+        self.list
+            .update(cx, |list, cx| list.set_selected_index(None, window, cx));
+    }
+
+    fn update_rows(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut HistoryDelegate),
+    ) {
         self.list.update(cx, |list, cx| {
-            list.delegate_mut().remove(id);
-            list.set_selected_index(None, window, cx);
+            f(list.delegate_mut());
+            // Every row gets the measured row's height, so measure an entry
+            // rather than the shorter day rows.
+            if let Some(ix) = list.delegate().first_entry_row() {
+                list.set_item_to_measure_index(ix, window, cx);
+            }
             cx.notify();
         });
         cx.notify();
@@ -196,15 +218,30 @@ impl Render for HistoryPanel {
 struct HistoryDelegate {
     entries: Vec<HistorySummary>,
     days: Vec<(NaiveDate, Range<usize>)>,
+    expanded: HashSet<NaiveDate>,
+    rows: Vec<Row>,
+}
+
+/// Day rows are list items too, since the list hides a section header once
+/// its section has no rows.
+enum Row {
+    /// Index into `days`.
+    Day(usize),
+    /// Index into `entries`.
+    Entry(usize),
 }
 
 impl HistoryDelegate {
-    fn set_entries(&mut self, entries: Vec<HistorySummary>) {
+    /// Only today starts expanded.
+    fn set_entries(&mut self, entries: Vec<HistorySummary>, today: NaiveDate) {
         self.entries = entries;
+        self.expanded = HashSet::from([today]);
         self.regroup();
     }
 
+    /// Expands the entry's day, so a new request is always visible.
     fn push(&mut self, entry: HistorySummary) {
+        self.expanded.insert(local_day(&entry));
         self.entries.insert(0, entry);
         self.regroup();
     }
@@ -214,54 +251,90 @@ impl HistoryDelegate {
         self.regroup();
     }
 
+    fn toggle(&mut self, day: NaiveDate) {
+        if !self.expanded.remove(&day) {
+            self.expanded.insert(day);
+        }
+        self.rebuild_rows();
+    }
+
     fn regroup(&mut self) {
         self.days = history::group_by_day(&self.entries, &Local);
+        self.rebuild_rows();
+    }
+
+    fn rebuild_rows(&mut self) {
+        self.rows.clear();
+        for (ix, (day, range)) in self.days.iter().enumerate() {
+            self.rows.push(Row::Day(ix));
+            if self.expanded.contains(day) {
+                self.rows.extend(range.clone().map(Row::Entry));
+            }
+        }
     }
 
     fn entry(&self, ix: IndexPath) -> Option<&HistorySummary> {
-        let (_, range) = self.days.get(ix.section)?;
-        self.entries.get(range.start + ix.row)
+        match self.rows.get(ix.row)? {
+            Row::Entry(entry) => self.entries.get(*entry),
+            Row::Day(_) => None,
+        }
     }
 
+    fn day_at(&self, ix: IndexPath) -> Option<NaiveDate> {
+        match self.rows.get(ix.row)? {
+            Row::Day(day) => self.days.get(*day).map(|(day, _)| *day),
+            Row::Entry(_) => None,
+        }
+    }
+
+    /// `None` if there's no such entry or its day is collapsed.
     fn index_of(&self, id: i64) -> Option<IndexPath> {
-        let position = self.entries.iter().position(|entry| entry.id == id)?;
-        let section = self
-            .days
+        self.rows
             .iter()
-            .position(|(_, range)| range.contains(&position))?;
-        let row = position - self.days[section].1.start;
-        Some(IndexPath::new(row).section(section))
+            .position(|row| matches!(row, Row::Entry(ix) if self.entries[*ix].id == id))
+            .map(IndexPath::new)
+    }
+
+    fn first_entry_row(&self) -> Option<IndexPath> {
+        self.rows
+            .iter()
+            .position(|row| matches!(row, Row::Entry(_)))
+            .map(IndexPath::new)
+    }
+
+    fn render_day(&self, day: usize, cx: &App) -> Option<ListItem> {
+        let (day, range) = self.days.get(day)?;
+        let expanded = self.expanded.contains(day);
+        let label = day_label(*day, today());
+        let state = if expanded { "expanded" } else { "collapsed" };
+        let chevron = if expanded {
+            IconName::ChevronDown
+        } else {
+            IconName::ChevronRight
+        };
+        Some(
+            ListItem::new(("history-day", day.num_days_from_ce() as u64))
+                .accessibility_label(format!("{label}, {}, {state}", request_count(range.len())))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_1()
+                        .text_xs()
+                        .font_medium()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(Icon::new(chevron).xsmall())
+                        .child(div().flex_1().child(label))
+                        .child(range.len().to_string()),
+                ),
+        )
     }
 }
 
 impl ListDelegate for HistoryDelegate {
     type Item = ListItem;
 
-    fn sections_count(&self, _cx: &App) -> usize {
-        self.days.len()
-    }
-
-    fn items_count(&self, section: usize, _cx: &App) -> usize {
-        self.days.get(section).map_or(0, |(_, range)| range.len())
-    }
-
-    fn render_section_header(
-        &mut self,
-        section: usize,
-        _window: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) -> Option<impl IntoElement> {
-        let (day, _) = self.days.get(section)?;
-        Some(
-            div()
-                .px_3()
-                .pt_3()
-                .pb_1()
-                .text_xs()
-                .font_medium()
-                .text_color(cx.theme().muted_foreground)
-                .child(day_label(*day, Local::now().date_naive())),
-        )
+    fn items_count(&self, _section: usize, _cx: &App) -> usize {
+        self.rows.len()
     }
 
     fn render_item(
@@ -270,6 +343,9 @@ impl ListDelegate for HistoryDelegate {
         _window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
+        if let Some(Row::Day(day)) = self.rows.get(ix.row) {
+            return self.render_day(*day, cx);
+        }
         let entry = self.entry(ix)?;
         let method = entry.method.as_str();
         let url = entry.url.clone();
@@ -418,6 +494,14 @@ fn context_menu(
 
 const FAILED_LABEL: &str = "Error";
 
+fn today() -> NaiveDate {
+    Local::now().date_naive()
+}
+
+fn local_day(entry: &HistorySummary) -> NaiveDate {
+    entry.sent_at.with_timezone(&Local).date_naive()
+}
+
 fn request_count(count: usize) -> String {
     match count {
         0 => "No requests".to_string(),
@@ -474,25 +558,69 @@ mod tests {
         }
     }
 
-    #[test]
-    fn index_of_follows_shifted_rows() {
+    fn ids(delegate: &HistoryDelegate) -> Vec<String> {
+        (0..delegate.rows.len())
+            .map(|row| {
+                let ix = IndexPath::new(row);
+                match (delegate.day_at(ix), delegate.entry(ix)) {
+                    (Some(day), _) => day.format("%d").to_string(),
+                    (_, Some(entry)) => entry.id.to_string(),
+                    _ => unreachable!(),
+                }
+            })
+            .collect()
+    }
+
+    fn two_days() -> (HistoryDelegate, NaiveDate, NaiveDate) {
         let (today, yesterday) = (date(2026, 11, 10), date(2026, 11, 9));
         let mut delegate = HistoryDelegate::default();
-        delegate.set_entries(vec![
-            summary(3, today, 12),
-            summary(2, today, 10),
-            summary(1, yesterday, 12),
-        ]);
-        assert_eq!(delegate.index_of(3), Some(IndexPath::new(0).section(0)));
-        assert_eq!(delegate.index_of(1), Some(IndexPath::new(0).section(1)));
-        assert_eq!(delegate.index_of(9), None);
+        delegate.set_entries(
+            vec![
+                summary(3, today, 12),
+                summary(2, today, 10),
+                summary(1, yesterday, 12),
+            ],
+            today,
+        );
+        (delegate, today, yesterday)
+    }
 
+    #[test]
+    fn only_today_starts_expanded() {
+        let (delegate, _, _) = two_days();
+        assert_eq!(ids(&delegate), ["10", "3", "2", "09"]);
+    }
+
+    #[test]
+    fn toggle_expands_and_collapses_a_day() {
+        let (mut delegate, today, yesterday) = two_days();
+        delegate.toggle(yesterday);
+        assert_eq!(ids(&delegate), ["10", "3", "2", "09", "1"]);
+        delegate.toggle(today);
+        assert_eq!(ids(&delegate), ["10", "09", "1"]);
+    }
+
+    #[test]
+    fn push_expands_its_day() {
+        let (mut delegate, today, _) = two_days();
+        delegate.toggle(today);
         delegate.push(summary(4, today, 14));
-        assert_eq!(delegate.index_of(2), Some(IndexPath::new(2).section(0)));
+        assert_eq!(ids(&delegate), ["10", "4", "3", "2", "09"]);
+    }
 
-        delegate.remove(4);
-        assert_eq!(delegate.index_of(2), Some(IndexPath::new(1).section(0)));
-        assert_eq!(delegate.index_of(4), None);
+    #[test]
+    fn index_of_skips_collapsed_days() {
+        let (mut delegate, _, yesterday) = two_days();
+        assert_eq!(delegate.index_of(2), Some(IndexPath::new(2)));
+        assert_eq!(delegate.index_of(1), None);
+        assert_eq!(delegate.index_of(9), None);
+        assert_eq!(delegate.first_entry_row(), Some(IndexPath::new(1)));
+
+        delegate.toggle(yesterday);
+        assert_eq!(delegate.index_of(1), Some(IndexPath::new(4)));
+
+        delegate.remove(3);
+        assert_eq!(delegate.index_of(1), Some(IndexPath::new(3)));
     }
 
     #[test]

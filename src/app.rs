@@ -130,9 +130,9 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            HistoryEvent::Loaded(entries) => self
-                .history_panel
-                .update(cx, |panel, cx| panel.set_entries(entries.clone(), cx)),
+            HistoryEvent::Loaded(entries) => self.history_panel.update(cx, |panel, cx| {
+                panel.set_entries(entries.clone(), window, cx)
+            }),
             HistoryEvent::Recorded(summary) => self
                 .history_panel
                 .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
