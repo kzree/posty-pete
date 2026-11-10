@@ -1,4 +1,4 @@
-use gpui::{Anchor, ClipboardItem, Context, IntoElement};
+use gpui::{Anchor, Context, IntoElement};
 use gpui_component::{
     IconName, Sizable,
     button::{Button, ButtonVariants},
@@ -7,7 +7,7 @@ use gpui_component::{
 };
 
 use super::RequestEditor;
-use crate::domain::curl;
+use crate::{domain::curl, ui::clipboard::copy_with_notification};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum RequestTab {
@@ -58,11 +58,11 @@ impl RequestEditor {
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 let editor = editor.clone();
                 menu.item(
-                    PopupMenuItem::new("Copy as cURL").on_click(move |_, _, cx| {
+                    PopupMenuItem::new("Copy as cURL").on_click(move |_, window, cx| {
                         let command = editor
                             .read_with(cx, |editor, cx| curl::to_curl(&editor.build_request(cx)));
                         if let Ok(command) = command {
-                            cx.write_to_clipboard(ClipboardItem::new_string(command));
+                            copy_with_notification(command, "Copied as cURL", window, cx);
                         }
                     }),
                 )

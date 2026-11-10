@@ -2,9 +2,8 @@ use std::time::Duration;
 
 use chrono::Utc;
 use gpui::{
-    AppContext, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
-    ParentElement, Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window,
-    div, px,
+    AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
+    Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, ResizableState, h_resizable, input::Escape, resizable_panel, v_resizable,
@@ -30,7 +29,10 @@ use crate::{
         history_panel::{HistoryPanel, HistoryPanelEvent},
     },
     status_bar::StatusBar,
-    ui::loading_bar::{GlobalLoading, LoadingBar},
+    ui::{
+        clipboard::copy_with_notification,
+        loading_bar::{GlobalLoading, LoadingBar},
+    },
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -107,9 +109,10 @@ impl Workspace {
             },
         );
 
-        let history_panel_sub = cx.subscribe(
+        let history_panel_sub = cx.subscribe_in(
             &history_panel,
-            |this, _, event: &HistoryPanelEvent, cx| match event {
+            window,
+            |this, _, event: &HistoryPanelEvent, window, cx| match event {
                 HistoryPanelEvent::Open(id) => {
                     let id = *id;
                     this.history
@@ -122,12 +125,13 @@ impl Workspace {
                 }
                 HistoryPanelEvent::CopyAsCurl(id) => {
                     let request = this.history.read(cx).request(*id, cx);
-                    cx.spawn(async move |_, cx| {
+                    cx.spawn_in(window, async move |_, cx| {
                         if let Some(request) = request.await {
                             let command = curl::to_curl(&request);
-                            cx.update(|cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(command))
-                            });
+                            cx.update(|window, cx| {
+                                copy_with_notification(command, "Copied as cURL", window, cx)
+                            })
+                            .ok();
                         }
                     })
                     .detach();

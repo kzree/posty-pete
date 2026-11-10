@@ -2,9 +2,9 @@ use std::ops::Range;
 
 use chrono::{Datelike, Local, NaiveDate};
 use gpui::{
-    App, AppContext, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, div, px,
+    App, AppContext, Context, DismissEvent, Entity, EventEmitter, InteractiveElement, IntoElement,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
+    WeakEntity, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IndexPath, Sizable, StyledExt, WindowExt,
@@ -21,7 +21,7 @@ use gpui_kit_assets::IconName as LucideIcon;
 use crate::{
     actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
     domain::store::history::{self, HistorySummary, Outcome},
-    ui::status_tag::status_tag,
+    ui::{clipboard::copy_with_notification, status_tag::status_tag},
 };
 
 pub enum HistoryPanelEvent {
@@ -359,9 +359,11 @@ fn context_menu(
         menu = menu
             .item(open_item("Open", false))
             .item(open_item("Send again", true))
-            .item(PopupMenuItem::new("Copy URL").on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
-            }))
+            .item(
+                PopupMenuItem::new("Copy URL").on_click(move |_, window, cx| {
+                    copy_with_notification(url.clone(), "URL copied", window, cx);
+                }),
+            )
             .item(PopupMenuItem::new("Copy as cURL").on_click({
                 let panel = panel.clone();
                 move |_, _, cx| {
