@@ -9,6 +9,7 @@ gpui_kit_assets::icon_assets!(
         Dot,
         FlaskConical,
         FolderPlus,
+        House,
         LibraryBig,
         RotateCcwClock,
         Trash

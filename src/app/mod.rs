@@ -16,8 +16,8 @@ use uuid::Uuid;
 use self::routes::AppRoute;
 use crate::{
     actions::{
-        FocusUrl, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SaveRequest, SendRequest,
-        ToggleSidebar, WORKSPACE_CONTEXT,
+        FocusUrl, NewRequest, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SaveRequest,
+        SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
     collection_view::{CollectionView, CollectionViewEvent},
     collections::{Collections, CollectionsEvent},
@@ -324,6 +324,24 @@ impl Workspace {
         self.set_open_request(Some((collection_id, request_id)), window, cx);
     }
 
+    /// Opens a blank, unlinked request on `/`, discarding unsaved edits.
+    fn new_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        if self.current_route != AppRoute::Request {
+            self.navigate(AppRoute::Request, window, cx);
+        }
+        self.request_editor.update(cx, |editor, cx| {
+            editor.load_request(&domain::request::Request::default(), window, cx)
+        });
+        self.response_view
+            .update(cx, |view, cx| view.clear(window, cx));
+        self.set_open_request(None, window, cx);
+        self.request_editor
+            .update(cx, |editor, cx| editor.focus_url(window, cx));
+    }
+
     /// Shows a toast and returns `true` while a request is in flight.
     fn refuse_while_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.pending.is_none() {
@@ -504,6 +522,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {
                 this.save_request(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
+                this.new_request(window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.toggle_left_panel(cx);
             }))
@@ -531,7 +552,11 @@ impl Render for Workspace {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(WindowTitleBar::new("Posty pete"))
+            .child(
+                WindowTitleBar::new("Posty pete").on_new_request(
+                    cx.listener(|this, _, window, cx| this.new_request(window, cx)),
+                ),
+            )
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .child(self.status_bar.clone())
     }

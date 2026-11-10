@@ -5,6 +5,7 @@ actions!(
     [
         SendRequest,
         SaveRequest,
+        NewRequest,
         ToggleSidebar,
         OpenLibrary,
         OpenHistory,
@@ -27,6 +28,7 @@ const INPUT_CONTEXT: &str = "Input";
 mod keys {
     pub const SEND: &str = "cmd-enter";
     pub const SAVE: &str = "cmd-s";
+    pub const NEW_REQUEST: &str = "cmd-n";
     pub const TOGGLE_SIDEBAR: &str = "cmd-b";
     pub const LIBRARY: &str = "cmd-1";
     pub const HISTORY: &str = "cmd-2";
@@ -40,6 +42,7 @@ mod keys {
 mod keys {
     pub const SEND: &str = "ctrl-enter";
     pub const SAVE: &str = "ctrl-s";
+    pub const NEW_REQUEST: &str = "ctrl-n";
     pub const TOGGLE_SIDEBAR: &str = "ctrl-b";
     pub const LIBRARY: &str = "ctrl-1";
     pub const HISTORY: &str = "ctrl-2";
@@ -57,6 +60,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::SEND, SendRequest, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::SAVE, SaveRequest, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::SAVE, SaveRequest, Some(INPUT_CONTEXT)),
+        KeyBinding::new(keys::NEW_REQUEST, NewRequest, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new(keys::NEW_REQUEST, NewRequest, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::TOGGLE_SIDEBAR, ToggleSidebar, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::LIBRARY, OpenLibrary, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::HISTORY_ALT, OpenHistory, Some(WORKSPACE_CONTEXT)),
