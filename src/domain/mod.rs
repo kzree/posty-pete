@@ -4,6 +4,7 @@ pub mod curl;
 pub mod history;
 pub mod http;
 pub mod navigation;
+pub mod quick_open;
 pub mod request;
 pub mod resolved;
 pub mod response;

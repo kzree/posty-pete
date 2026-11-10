@@ -10,6 +10,7 @@ mod collections;
 mod domain;
 mod history;
 mod menus;
+mod quick_open;
 mod request_editor;
 mod response_view;
 mod settings_page;

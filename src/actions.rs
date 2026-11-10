@@ -14,6 +14,7 @@ actions!(
         OpenTests,
         OpenSettings,
         FocusUrl,
+        QuickOpen,
         DeleteHistoryEntry,
         SendHistoryEntryAgain,
         Quit,
@@ -44,6 +45,7 @@ mod keys {
     pub const TESTS: &str = "cmd-3";
     pub const SETTINGS: &str = "cmd-,";
     pub const FOCUS_URL: &str = "cmd-l";
+    pub const QUICK_OPEN: &str = "cmd-p";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["backspace", "delete"];
     pub const QUIT: &str = "cmd-q";
     pub const HIDE: &str = "cmd-h";
@@ -64,6 +66,7 @@ mod keys {
     pub const TESTS: &str = "ctrl-3";
     pub const SETTINGS: &str = "ctrl-,";
     pub const FOCUS_URL: &str = "ctrl-l";
+    pub const QUICK_OPEN: &str = "ctrl-p";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["delete"];
     pub const QUIT: &str = "ctrl-q";
 }
@@ -85,6 +88,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::TESTS, OpenTests, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::SETTINGS, OpenSettings, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::FOCUS_URL, FocusUrl, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new(keys::QUICK_OPEN, QuickOpen, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new(keys::QUICK_OPEN, QuickOpen, Some(INPUT_CONTEXT)),
         KeyBinding::new(keys::QUIT, Quit, None),
     ]);
     #[cfg(target_os = "macos")]

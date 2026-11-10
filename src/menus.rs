@@ -3,7 +3,7 @@ use gpui_component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 
 use crate::actions::{
     FocusUrl, GoBack, GoForward, Hide, HideOthers, NewRequest, OpenHistory, OpenLibrary,
-    OpenSettings, Quit, SaveRequest, ShowAll, ToggleSidebar,
+    OpenSettings, QuickOpen, Quit, SaveRequest, ShowAll, ToggleSidebar,
 };
 
 /// Must run after `actions::bind_keys`: the menus read their shortcuts from the keymap.
@@ -38,6 +38,7 @@ pub fn init(app_name: &str, cx: &mut App) {
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),
             MenuItem::separator(),
+            MenuItem::action("Quick Open…", QuickOpen),
             MenuItem::action("Focus URL", FocusUrl),
         ]),
     ]);

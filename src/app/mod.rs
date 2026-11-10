@@ -6,7 +6,7 @@ mod response_cache;
 mod routes;
 mod send;
 
-use std::time::Duration;
+use std::{cell::Cell, time::Duration};
 
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, MouseButton,
@@ -29,12 +29,13 @@ use self::{
 use crate::{
     actions::{
         FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings, OpenTests,
-        SaveRequest, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
+        QuickOpen, SaveRequest, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
     collection_view::{CollectionView, CollectionViewEvent},
     collections::{Collections, CollectionsEvent},
     domain::{self, history::OpenMode},
     history::{History, HistoryEvent},
+    quick_open::{self, QuickOpenEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::{ResponseView, ResponseViewEvent},
     sidebar::{
@@ -108,6 +109,7 @@ pub struct Workspace {
     discard_prompt: Option<Continuation>,
     /// Set while a continuation runs, after the user saved or discarded.
     discard_confirmed: bool,
+    quick_open_subscription: Option<Subscription>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -194,6 +196,7 @@ impl Workspace {
             persisted_navigation: PersistedNavigation::new(),
             discard_prompt: None,
             discard_confirmed: false,
+            quick_open_subscription: None,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -443,6 +446,49 @@ impl Workspace {
             window,
             cx,
         );
+    }
+
+    fn open_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let entries = domain::quick_open::entries(self.collections.read(cx).all());
+        let quick_open = cx.new(|cx| quick_open::QuickOpen::new(entries, window, cx));
+        self.quick_open_subscription = Some(cx.subscribe_in(
+            &quick_open,
+            window,
+            |this, _, event, window, cx| this.on_quick_open_event(event, window, cx),
+        ));
+        // The builder reruns on every rebuild of the dialog layer.
+        let initial_focus = Cell::new(true);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            if initial_focus.replace(false) {
+                quick_open.update(cx, |quick_open, cx| quick_open.focus(window, cx));
+            }
+            dialog
+                .w(px(560.))
+                .p_0()
+                .close_button(false)
+                .child(quick_open.clone())
+        });
+    }
+
+    fn on_quick_open_event(
+        &mut self,
+        event: &QuickOpenEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.close_dialog(cx);
+        match *event {
+            QuickOpenEvent::OpenCollection(id) => {
+                self.navigate(AppRoute::Collection(id), window, cx)
+            }
+            QuickOpenEvent::OpenRequest {
+                collection_id,
+                request_id,
+            } => self.open_saved_request(collection_id, request_id, window, cx),
+        }
     }
 
     /// Runs `then` if the editor has no unsaved changes; otherwise asks to save
@@ -838,6 +884,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &FocusUrl, window, cx| {
                 this.request_editor
                     .update(cx, |editor, cx| editor.focus_url(window, cx));
+            }))
+            .on_action(cx.listener(|this, _: &QuickOpen, window, cx| {
+                this.open_quick_open(window, cx);
             }))
             .on_action(cx.listener(|this, _: &Escape, window, cx| {
                 window.focus(&this.focus_handle, cx);
