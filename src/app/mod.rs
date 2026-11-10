@@ -29,7 +29,7 @@ use self::{
 use crate::{
     actions::{
         FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings, OpenTests,
-        QuickOpen, SaveRequest, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
+        QuickOpen, RevertRequest, SaveRequest, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
     collection_view::{CollectionView, CollectionViewEvent},
     collections::{Collections, CollectionsEvent},
@@ -45,6 +45,7 @@ use crate::{
     },
     status_bar::StatusBar,
     ui::{
+        confirm_dialog::open_confirm_dialog,
         loading_bar::LoadingBar,
         save_changes_dialog::{SaveChoice, open_save_changes_dialog},
     },
@@ -356,6 +357,18 @@ impl Workspace {
                 collection_id,
                 parent,
             } => self.add_saved_request(*collection_id, *parent, window, cx),
+            LibraryPanelEvent::RevertRequest {
+                collection_id,
+                request_id,
+            } => {
+                let content = EditorContent::Saved {
+                    collection_id: *collection_id,
+                    request_id: *request_id,
+                };
+                if self.editor_content == content {
+                    self.revert_request(window, cx);
+                }
+            }
         }
     }
 
@@ -580,6 +593,22 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.load_request(content, request, window, cx);
+        let kept = self.responses.get(content).cloned();
+        self.response_view.update(cx, |view, cx| match kept {
+            Some(kept) => view.set_response(kept.result, kept.body_text, window, cx),
+            None => view.clear(window, cx),
+        });
+    }
+
+    /// `load_editor` without touching the response view.
+    fn load_request(
+        &mut self,
+        content: EditorContent,
+        request: &domain::request::Request,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_dirty() && !self.discard_confirmed {
             tracing::error!("unsaved changes replaced without confirm_discard");
             window.push_notification(
@@ -605,14 +634,65 @@ impl Workspace {
             )),
             EditorContent::Draft => None,
         };
-        let kept = self.responses.get(content).cloned();
-        self.response_view.update(cx, |view, cx| match kept {
-            Some(kept) => view.set_response(kept.result, kept.body_text, window, cx),
-            None => view.clear(window, cx),
-        });
         self.sync_editor_name(window, cx);
         self.refresh_dirty(window, cx);
         self.schedule_navigation_save(cx);
+    }
+
+    /// Asks to throw away the unsaved changes to the editor's saved request,
+    /// then reloads the stored request. The shown response stays.
+    fn revert_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let EditorContent::Saved {
+            collection_id,
+            request_id,
+        } = self.editor_content
+        else {
+            return;
+        };
+        if !self.is_dirty() || window.has_active_dialog(cx) {
+            return;
+        }
+        if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        let Some(name) = self
+            .find_saved_request(collection_id, request_id, cx)
+            .map(|saved| saved.name.trim().to_string())
+        else {
+            return;
+        };
+        let this = cx.weak_entity();
+        open_confirm_dialog(
+            format!("Revert changes to “{name}”?"),
+            "Your unsaved changes will be lost.",
+            "Revert",
+            move |window, cx| {
+                this.update(cx, |this, cx| this.reload_editor(window, cx))
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Loads the stored version of the editor's saved request, keeping the response view as is.
+    fn reload_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let EditorContent::Saved {
+            collection_id,
+            request_id,
+        } = self.editor_content
+        else {
+            return;
+        };
+        let Some(request) = self
+            .find_saved_request(collection_id, request_id, cx)
+            .map(|saved| saved.request.clone())
+        else {
+            return;
+        };
+        self.discard_confirmed = true;
+        self.load_request(self.editor_content, &request, window, cx);
+        self.discard_confirmed = false;
     }
 
     fn drop_deleted_responses(&mut self, cx: &App) {
@@ -651,6 +731,12 @@ impl Workspace {
                 }),
             _ => false,
         };
+        let dirty_request = match self.editor_content {
+            EditorContent::Saved { request_id, .. } if dirty => Some(request_id),
+            _ => None,
+        };
+        self.library_panel
+            .update(cx, |panel, _| panel.set_dirty_request(dirty_request));
         if dirty == self.dirty {
             return;
         }
@@ -864,6 +950,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {
                 this.save_request(window, cx);
             }))
+            // Only while there's something to revert, so the menu item greys out otherwise.
+            .when(self.shows_dirty_request(), |this| {
+                this.on_action(cx.listener(|this, _: &RevertRequest, window, cx| {
+                    this.revert_request(window, cx);
+                }))
+            })
             .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
                 this.new_request(window, cx);
             }))

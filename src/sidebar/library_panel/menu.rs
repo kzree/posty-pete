@@ -146,6 +146,30 @@ pub(super) fn context_menu(
         .detach();
 
     let mut menu = menu;
+    if let MenuTarget::Request {
+        collection_id,
+        request_id,
+    } = target
+        && panel
+            .upgrade()
+            .is_some_and(|panel| panel.read(cx).dirty_request == Some(request_id))
+    {
+        let panel = panel.clone();
+        menu = menu
+            .item(
+                PopupMenuItem::new("Revert changes…").on_click(move |_, _, cx| {
+                    panel
+                        .update(cx, |_, cx| {
+                            cx.emit(LibraryPanelEvent::RevertRequest {
+                                collection_id,
+                                request_id,
+                            })
+                        })
+                        .ok();
+                }),
+            )
+            .separator();
+    }
     if let Some(parent) = target.container() {
         let (add_request_panel, add_folder_panel) = (panel.clone(), panel.clone());
         menu = menu

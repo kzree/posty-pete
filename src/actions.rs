@@ -5,6 +5,7 @@ actions!(
     [
         SendRequest,
         SaveRequest,
+        RevertRequest,
         NewRequest,
         GoBack,
         GoForward,

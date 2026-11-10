@@ -50,10 +50,16 @@ pub enum LibraryPanelEvent {
         collection_id: Uuid,
         parent: Option<Uuid>,
     },
+    RevertRequest {
+        collection_id: Uuid,
+        request_id: Uuid,
+    },
 }
 
 pub struct LibraryPanel {
     list: Entity<ListState<LibraryDelegate>>,
+    /// The open request, while it has unsaved changes.
+    dirty_request: Option<Uuid>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -91,6 +97,7 @@ impl LibraryPanel {
         });
         Self {
             list,
+            dirty_request: None,
             _subscriptions: vec![list_sub],
         }
     }
@@ -113,6 +120,11 @@ impl LibraryPanel {
         self.list
             .update(cx, |list, _| list.delegate_mut().selected = id);
         self.sync_selection(window, cx);
+    }
+
+    /// Only read when a context menu opens, so nothing needs repainting.
+    pub fn set_dirty_request(&mut self, id: Option<Uuid>) {
+        self.dirty_request = id;
     }
 
     fn sync_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {

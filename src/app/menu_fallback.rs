@@ -11,6 +11,8 @@ use crate::actions::{
 /// Workspace (nothing focused, a toast) its handlers wouldn't run and the items
 /// would be disabled. These app-level handlers only run when nothing on the
 /// focus path handled the action; they focus the Workspace and dispatch again.
+/// `RevertRequest` isn't forwarded: a global handler would keep its menu item
+/// enabled even when there's nothing to revert.
 pub fn init(cx: &mut App) {
     forward::<SendRequest>(cx);
     forward::<SaveRequest>(cx);
