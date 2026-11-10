@@ -81,7 +81,7 @@ impl LibraryPanel {
                 let (collection, request) =
                     (delegate.collection_at(ix.row), delegate.request_at(ix.row));
                 this.update_rows(cx, |delegate| delegate.toggle_at(ix.row));
-                // The selection marks the open request, not the clicked collection or folder.
+                // The selection marks what the main pane shows, not the clicked row.
                 if request.is_none() {
                     this.sync_selection(window, cx);
                 }
@@ -115,22 +115,17 @@ impl LibraryPanel {
         self.sync_selection(window, cx);
     }
 
-    /// The request open in the editor; its row stays selected across refreshes.
-    pub fn set_selected_request(
-        &mut self,
-        id: Option<Uuid>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// The collection or request shown in the main pane; its row stays selected across refreshes.
+    pub fn set_selected(&mut self, id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) {
         self.list
-            .update(cx, |list, _| list.delegate_mut().selected_request = id);
+            .update(cx, |list, _| list.delegate_mut().selected = id);
         self.sync_selection(window, cx);
     }
 
     fn sync_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| {
             let delegate = list.delegate();
-            let row = delegate.selected_request.and_then(|id| delegate.row_of(id));
+            let row = delegate.selected.and_then(|id| delegate.row_of(id));
             list.set_selected_index(row.map(IndexPath::new), window, cx);
             cx.notify();
         });
@@ -262,7 +257,12 @@ impl LibraryPanel {
                         .icon(Icon::new(LucideIcon::FolderPlus))
                         .on_click(move |_, _, cx| {
                             panel
-                                .update(cx, |_, cx| cx.emit(LibraryPanelEvent::CreateCollection))
+                                .update(cx, |panel, cx| {
+                                    panel.update_rows(cx, |delegate| {
+                                        delegate.section_expanded = true
+                                    });
+                                    cx.emit(LibraryPanelEvent::CreateCollection)
+                                })
                                 .ok();
                         }),
                 )
@@ -428,7 +428,7 @@ struct LibraryDelegate {
     section_expanded: bool,
     /// Expanded collections and folders.
     expanded: HashSet<Uuid>,
-    selected_request: Option<Uuid>,
+    selected: Option<Uuid>,
     rows: Vec<Row>,
 }
 
@@ -438,7 +438,7 @@ impl Default for LibraryDelegate {
             collections: Vec::new(),
             section_expanded: true,
             expanded: HashSet::new(),
-            selected_request: None,
+            selected: None,
             rows: Vec::new(),
         }
     }

@@ -35,6 +35,7 @@ impl Workspace {
                 .update(cx, |view, cx| view.show(id, collection, window, cx));
         }
         self.current_route = route;
+        self.sync_library_selection(window, cx);
         use_navigate(window, cx).push(route.path());
     }
 

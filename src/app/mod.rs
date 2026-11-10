@@ -357,11 +357,19 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.open_request = open_request;
-        let request_id = open_request.map(|(_, request_id)| request_id);
-        self.library_panel.update(cx, |panel, cx| {
-            panel.set_selected_request(request_id, window, cx)
-        });
+        self.sync_library_selection(window, cx);
         self.sync_editor_name(window, cx);
+    }
+
+    /// Selects the library row for what the main pane shows.
+    fn sync_library_selection(&mut self, window: &mut Window, cx: &mut App) {
+        let selected = match self.current_route {
+            AppRoute::Request => self.open_request.map(|(_, request_id)| request_id),
+            AppRoute::Collection(id) => Some(id),
+            AppRoute::Settings => None,
+        };
+        self.library_panel
+            .update(cx, |panel, cx| panel.set_selected(selected, window, cx));
     }
 
     /// Hands the editor the stored name of the open request.
