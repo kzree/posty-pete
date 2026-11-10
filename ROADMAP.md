@@ -24,9 +24,12 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## Collections
 
-- [ ] **Collection variables.** The collection view's Variables tab is a placeholder. Decide the requirements (scope, secret values, how they combine with environments) and build the editor, likely on top of `ui::key_value_editor`.
+- [ ] **Environments.** Named sets of variables to switch between, layered in front of collection variables (environment wins; `Variables::layered` in `domain/variables.rs` already takes sources in priority order). Needs a picker, an editor, and storage.
+- [ ] **Variable autocomplete and highlighting.** Suggest names after typing `{{` and highlight references (resolved vs unresolved) in the URL, key/value and body inputs. `domain::variables::references` returns byte ranges for this.
+- [ ] **Folder-level variables.** Variables on folders, overriding the collection's for requests inside them.
+- [ ] **Unresolved-variable hint without layout shift.** The hint under the URL bar pushes the tabs down when it appears; reserve the line or move it into the tab bar if that turns out to be distracting.
 - [ ] **Manage requests in collections.** Duplicate and move requests (and move folders) in the library tree, including drag and drop.
-- [ ] **Unsaved changes on Dock Quit / logout.** cmd+Q, the Quit menu item and closing the window ask before discarding edits, but Dock "Quit", logout and shutdown bypass the app's Quit action (gpui-macos 0.3.11 doesn't implement `applicationShouldTerminate:`), so edits are dropped without asking.
+- [ ] **Unsaved changes on Dock Quit / logout.** cmd+Q, the Quit menu item and closing the window ask before discarding edits, but Dock "Quit", logout and shutdown bypass the app's Quit action (gpui-macos 0.3.11 doesn't implement `applicationShouldTerminate:`), so edits are dropped without asking. Relatedly, a collection-variables edit made in the last half second before a Dock quit may not be written: gpui waits only 200 ms for quit handlers.
 - [ ] **Unsaved collection name edits.** `CollectionView::show` keeps a typed but unsaved name when you leave a collection and come back to it. Decide whether it should be discarded instead.
 - [ ] **Single source for the editor's saved-request link.** `Workspace.open_request` and `RequestEditor.saved_name` both hold the link, kept in sync only because every caller runs `load_request` then `set_open_request`. Pass the saved name into `load_request` (or let `Workspace` unlink explicitly) so they can't drift apart.
 
@@ -34,7 +37,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 - [ ] **In-window menu bar on Windows/Linux.** The native menu bar (`src/menus.rs`) only shows on macOS.
 - [ ] **Settings page.** Settings moved out of the sidebar; the status bar button and cmd+, only log for now (`OpenSettings` in `app.rs`). Needs a router to show it as its own page (theme, request timeout, history retention, ...).
-- [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
 - [ ] **History retention setting.** 14 days is hard-coded (`RETENTION_DAYS` in `domain/history.rs`); make it configurable on the Settings page.
 - [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
