@@ -132,7 +132,6 @@ impl Collections {
             .then_some(id)
     }
 
-    #[expect(dead_code, reason = "used by save request (task 17)")]
     pub fn update_request(
         &mut self,
         collection_id: Uuid,

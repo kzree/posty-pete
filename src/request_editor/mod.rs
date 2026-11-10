@@ -24,6 +24,7 @@ use tabs::RequestTab;
 
 pub enum RequestEditorEvent {
     SendRequested(Request),
+    Save,
 }
 
 pub struct RequestEditor {
@@ -35,6 +36,7 @@ pub struct RequestEditor {
     body: Entity<BodyEditor>,
     auth: Entity<AuthEditor>,
     loading: bool,
+    can_save: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -71,12 +73,18 @@ impl RequestEditor {
             body,
             auth,
             loading: false,
+            can_save: false,
             _subscriptions: vec![sub],
         }
     }
 
     pub fn set_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
         self.loading = loading;
+        cx.notify();
+    }
+
+    pub fn set_can_save(&mut self, can_save: bool, cx: &mut Context<Self>) {
+        self.can_save = can_save;
         cx.notify();
     }
 
@@ -118,7 +126,7 @@ impl RequestEditor {
         self.url.read(cx).value().to_string().is_empty()
     }
 
-    fn build_request(&self, cx: &App) -> Request {
+    pub fn build_request(&self, cx: &App) -> Request {
         Request {
             method: self
                 .method

@@ -16,8 +16,8 @@ use uuid::Uuid;
 use self::routes::AppRoute;
 use crate::{
     actions::{
-        FocusUrl, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SendRequest, ToggleSidebar,
-        WORKSPACE_CONTEXT,
+        FocusUrl, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SaveRequest, SendRequest,
+        ToggleSidebar, WORKSPACE_CONTEXT,
     },
     collection_view::{CollectionView, CollectionViewEvent},
     collections::{Collections, CollectionsEvent},
@@ -360,6 +360,23 @@ impl Workspace {
         self.library_panel.update(cx, |panel, cx| {
             panel.set_selected_request(request_id, window, cx)
         });
+        self.request_editor.update(cx, |editor, cx| {
+            editor.set_can_save(open_request.is_some(), cx)
+        });
+    }
+
+    fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current_route != AppRoute::Request {
+            return;
+        }
+        let Some((collection_id, request_id)) = self.open_request else {
+            return;
+        };
+        let request = self.request_editor.read(cx).build_request(cx);
+        self.collections.update(cx, |collections, cx| {
+            collections.update_request(collection_id, request_id, request, cx)
+        });
+        window.push_notification(Notification::success("Saved"), cx);
     }
 
     fn on_collection_view_event(
@@ -406,6 +423,7 @@ impl Workspace {
             RequestEditorEvent::SendRequested(request) => {
                 self.send_request(request.clone(), window, cx)
             }
+            RequestEditorEvent::Save => self.save_request(window, cx),
         }
     }
 
@@ -459,6 +477,9 @@ impl Render for Workspace {
             .key_context(WORKSPACE_CONTEXT)
             .on_action(cx.listener(|this, _: &SendRequest, _, cx| {
                 this.request_editor.update(cx, |editor, cx| editor.send(cx));
+            }))
+            .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {
+                this.save_request(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.toggle_left_panel(cx);
