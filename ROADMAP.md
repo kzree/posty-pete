@@ -26,7 +26,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 - [ ] **Collection variables.** The collection view's Variables tab is a placeholder. Decide the requirements (scope, secret values, how they combine with environments) and build the editor, likely on top of `ui::key_value_editor`.
 - [ ] **Manage requests in collections.** Duplicate and move requests (and move folders) in the library tree, including drag and drop.
-- [ ] **Unsaved changes on quit.** Edited saved requests are marked and prompt before being replaced, but closing the window or quitting doesn't ask yet.
+- [ ] **Unsaved changes on Dock Quit / logout.** cmd+Q, the Quit menu item and closing the window ask before discarding edits, but Dock "Quit", logout and shutdown bypass the app's Quit action (gpui-macos 0.3.11 doesn't implement `applicationShouldTerminate:`), so edits are dropped without asking.
 - [ ] **Save as.** Save a request that isn't linked to a collection (a fresh one or one from history) into a chosen collection or folder.
 - [ ] **Unsaved collection name edits.** `CollectionView::show` keeps a typed but unsaved name when you leave a collection and come back to it. Decide whether it should be discarded instead.
 - [ ] **Cheaper library refresh.** Every `CollectionsEvent::Changed` clones all collections into `LibraryPanel::set_collections`. Fine at current sizes; revisit if collections get large.

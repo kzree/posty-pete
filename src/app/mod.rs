@@ -2,6 +2,7 @@ mod dirty;
 mod menu_fallback;
 mod navigation;
 mod persisted_navigation;
+mod quit;
 mod response_cache;
 mod routes;
 mod send;
@@ -14,8 +15,8 @@ use gpui::{
     Styled, Subscription, Task, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, ResizableState, WindowExt, h_resizable, input::Escape, notification::Notification,
-    resizable_panel,
+    ActiveTheme, ResizableState, Root, WindowExt, h_resizable, input::Escape,
+    notification::Notification, resizable_panel,
 };
 use uuid::Uuid;
 
@@ -52,7 +53,10 @@ use crate::{
     window_title_bar::WindowTitleBar,
 };
 
-pub use self::menu_fallback::init;
+pub fn init(cx: &mut App) {
+    menu_fallback::init(cx);
+    quit::init(cx);
+}
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -110,6 +114,8 @@ pub struct Workspace {
     discard_prompt: Option<Continuation>,
     /// Set while a continuation runs, after the user saved or discarded.
     discard_confirmed: bool,
+    /// Set once the user agreed to quit or close the window, so they aren't asked again.
+    closing: bool,
     quick_open_subscription: Option<Subscription>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
@@ -164,11 +170,10 @@ impl Workspace {
             }),
         ];
         let workspace = cx.weak_entity();
-        window.on_window_should_close(cx, move |_, cx| {
+        window.on_window_should_close(cx, move |window, cx| {
             workspace
-                .update(cx, |this, cx| this.save_navigation_now(cx))
-                .ok();
-            true
+                .update(cx, |this, cx| this.should_close_window(window, cx))
+                .unwrap_or(true)
         });
         Self::load_navigation(window, cx);
 
@@ -197,6 +202,7 @@ impl Workspace {
             persisted_navigation: PersistedNavigation::new(),
             discard_prompt: None,
             discard_confirmed: false,
+            closing: false,
             quick_open_subscription: None,
             pending: None,
             left_panel,
@@ -209,6 +215,12 @@ impl Workspace {
         };
         workspace.sync_window_title(window, cx);
         workspace
+    }
+
+    /// The Workspace shown in `window`, if any.
+    fn in_window(window: &Window, cx: &App) -> Option<Entity<Self>> {
+        let root = window.root::<Root>()??;
+        root.read(cx).view().clone().downcast::<Self>().ok()
     }
 
     fn on_history_event(

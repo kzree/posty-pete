@@ -1,5 +1,5 @@
 use gpui::{Action, App, Window};
-use gpui_component::{Root, WindowExt};
+use gpui_component::WindowExt;
 
 use super::Workspace;
 use crate::actions::{
@@ -13,7 +13,7 @@ use crate::actions::{
 /// focus path handled the action; they focus the Workspace and dispatch again.
 /// `RevertRequest` isn't forwarded: a global handler would keep its menu item
 /// enabled even when there's nothing to revert.
-pub fn init(cx: &mut App) {
+pub(super) fn init(cx: &mut App) {
     forward::<SendRequest>(cx);
     forward::<SaveRequest>(cx);
     forward::<NewRequest>(cx);
@@ -46,10 +46,7 @@ fn redispatch(action: Box<dyn Action>, window: &mut Window, cx: &mut App) {
     if window.has_active_dialog(cx) {
         return;
     }
-    let Some(Some(root)) = window.root::<Root>() else {
-        return;
-    };
-    let Ok(workspace) = root.read(cx).view().clone().downcast::<Workspace>() else {
+    let Some(workspace) = Workspace::in_window(window, cx) else {
         return;
     };
     let focus_handle = workspace.read(cx).focus_handle.clone();

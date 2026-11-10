@@ -1,5 +1,8 @@
 use anyhow::{Context as _, anyhow};
-use futures::{StreamExt, channel::mpsc};
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+};
 use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
@@ -208,6 +211,20 @@ impl Collections {
             self.changed(collection_id, cx);
         }
         added
+    }
+
+    /// Resolves once every save requested so far has finished or failed.
+    pub fn flushed(&self) -> impl Future<Output = ()> + use<> {
+        let (done, flushed) = oneshot::channel();
+        let job: Job = Box::new(move |_| {
+            done.send(()).ok();
+            None
+        });
+        // If the queue is gone, `done` is dropped and `flushed` resolves too.
+        self.jobs.unbounded_send(job).ok();
+        async move {
+            flushed.await.ok();
+        }
     }
 
     /// Runs `f` on the collection; returns what it returns, or `false` if there's no such collection.
