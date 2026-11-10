@@ -32,6 +32,7 @@ use crate::{
     },
     status_bar::StatusBar,
     ui::loading_bar::LoadingBar,
+    window_title_bar::WindowTitleBar,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -530,6 +531,7 @@ impl Render for Workspace {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
+            .child(WindowTitleBar::new("Posty pete"))
             .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .child(self.status_bar.clone())
     }

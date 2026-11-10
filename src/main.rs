@@ -1,5 +1,5 @@
 use gpui::{Anchor, App, AppContext, Bounds, WindowOptions, px, size};
-use gpui_component::{Root, Theme, ThemeMode};
+use gpui_component::{Root, Theme, ThemeMode, TitleBar};
 use gpui_platform::application;
 
 mod actions;
@@ -15,6 +15,7 @@ mod settings_page;
 mod sidebar;
 mod status_bar;
 mod ui;
+mod window_title_bar;
 
 use app::Workspace;
 use assets::AppAssets;
@@ -38,9 +39,9 @@ fn run() {
                 window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
                 titlebar: Some(gpui::TitlebarOptions {
                     title: Some(WINDOW_TITLE.into()),
-                    ..Default::default()
+                    ..TitleBar::title_bar_options()
                 }),
-                ..Default::default()
+                ..TitleBar::window_options()
             },
             |window, cx| {
                 let view = cx.new(|cx| Workspace::new(window, cx));
