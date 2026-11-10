@@ -24,7 +24,10 @@ use crate::{
     history::{History, HistoryEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
-    sidebar::{Sidebar, SidebarTab, history_panel::HistoryPanel},
+    sidebar::{
+        Sidebar, SidebarTab,
+        history_panel::{HistoryPanel, HistoryPanelEvent},
+    },
     status_bar::StatusBar,
     ui::loading_bar::{GlobalLoading, LoadingBar},
 };
@@ -75,12 +78,34 @@ impl Workspace {
         let loading_bar = cx.new(LoadingBar::new);
         let history = cx.new(History::new);
 
-        let history_sub = cx.subscribe(&history, |this, _, event: &HistoryEvent, cx| {
-            this.history_panel.update(cx, |panel, cx| match event {
-                HistoryEvent::Loaded(entries) => panel.set_entries(entries.clone(), cx),
-                HistoryEvent::Recorded(summary) => panel.push(summary.clone(), cx),
-            });
-        });
+        let history_sub = cx.subscribe_in(
+            &history,
+            window,
+            |this, _, event: &HistoryEvent, window, cx| match event {
+                HistoryEvent::Loaded(entries) => this
+                    .history_panel
+                    .update(cx, |panel, cx| panel.set_entries(entries.clone(), cx)),
+                HistoryEvent::Recorded(summary) => this
+                    .history_panel
+                    .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
+                HistoryEvent::Opened(request) => {
+                    this.request_editor
+                        .update(cx, |editor, cx| editor.load_request(request, window, cx));
+                    this.response_view
+                        .update(cx, |view, cx| view.clear(window, cx));
+                }
+            },
+        );
+
+        let history_panel_sub = cx.subscribe(
+            &history_panel,
+            |this, _, event: &HistoryPanelEvent, cx| match event {
+                HistoryPanelEvent::Open(id) => {
+                    let id = *id;
+                    this.history.update(cx, |history, cx| history.open(id, cx));
+                }
+            },
+        );
 
         let sub = cx.subscribe_in(
             &request_editor,
@@ -110,7 +135,7 @@ impl Workspace {
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
             focus_handle: cx.focus_handle(),
-            _subscriptions: vec![sub, history_sub],
+            _subscriptions: vec![sub, history_sub, history_panel_sub],
         }
     }
 

@@ -63,9 +63,37 @@ impl KeyValueEditor {
             .collect()
     }
 
+    /// Replaces all rows. Row ids keep counting up so element ids stay unique.
+    pub fn set_values(&mut self, values: &[KeyValue], window: &mut Window, cx: &mut Context<Self>) {
+        self.rows.clear();
+        for kv in values {
+            self.push_row(kv.enabled, kv.key.clone(), kv.value.clone(), window, cx);
+        }
+        self.add_row(window, cx);
+    }
+
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let key = cx.new(|cx| InputState::new(window, cx).placeholder("Key"));
-        let value = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
+        self.push_row(true, String::new(), String::new(), window, cx);
+    }
+
+    fn push_row(
+        &mut self,
+        enabled: bool,
+        key: String,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Key")
+                .default_value(key)
+        });
+        let value = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Value")
+                .default_value(value)
+        });
 
         let subscriptions = [&key, &value]
             .into_iter()
@@ -83,7 +111,7 @@ impl KeyValueEditor {
         self.next_row_id += 1;
         self.rows.push(Row {
             id,
-            enabled: true,
+            enabled,
             key,
             value,
             _subscriptions: subscriptions,

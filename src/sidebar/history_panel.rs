@@ -2,12 +2,12 @@ use std::ops::Range;
 
 use chrono::{Datelike, Local, NaiveDate};
 use gpui::{
-    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, IndexPath, Sizable, StyledExt, h_flex,
-    list::{List, ListDelegate, ListItem, ListState},
+    list::{List, ListDelegate, ListEvent, ListItem, ListState},
     tag::Tag,
     tooltip::Tooltip,
 };
@@ -17,15 +17,33 @@ use crate::{
     ui::status_tag::status_tag,
 };
 
+pub enum HistoryPanelEvent {
+    Open(i64),
+}
+
 pub struct HistoryPanel {
     list: Entity<ListState<HistoryDelegate>>,
+    _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<HistoryPanelEvent> for HistoryPanel {}
 
 impl HistoryPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let list =
-            cx.new(|cx| ListState::new(HistoryDelegate::default(), window, cx).selectable(false));
-        Self { list }
+        let list = cx.new(|cx| ListState::new(HistoryDelegate::default(), window, cx));
+        let list_sub = cx.subscribe(&list, |_, list, event: &ListEvent, cx| {
+            let ListEvent::Confirm(ix) = event else {
+                return;
+            };
+            let id = list.read(cx).delegate().entry(*ix).map(|entry| entry.id);
+            if let Some(id) = id {
+                cx.emit(HistoryPanelEvent::Open(id));
+            }
+        });
+        Self {
+            list,
+            _subscriptions: vec![list_sub],
+        }
     }
 
     pub fn set_entries(&mut self, entries: Vec<HistorySummary>, cx: &mut Context<Self>) {
@@ -35,9 +53,11 @@ impl HistoryPanel {
         });
     }
 
-    pub fn push(&mut self, entry: HistorySummary, cx: &mut Context<Self>) {
+    /// Clears the selection, since every row below the new entry shifts down one.
+    pub fn push(&mut self, entry: HistorySummary, window: &mut Window, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| {
             list.delegate_mut().push(entry);
+            list.set_selected_index(None, window, cx);
             cx.notify();
         });
     }

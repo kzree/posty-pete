@@ -66,6 +66,20 @@ impl HistoryStore {
         Ok(Self { conn })
     }
 
+    pub fn get(&self, id: i64) -> anyhow::Result<Option<Request>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT request FROM history WHERE id = ?1")?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            let request_json: String = row.get(0)?;
+            let request: Request = serde_json::from_str(&request_json)?;
+            Ok(Some(request))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn insert(&self, record: &HistoryRecord) -> anyhow::Result<HistorySummary> {
         let request = &record.request;
         let (status, elapsed_ms) = match record.outcome {
@@ -214,7 +228,7 @@ mod tests {
     use chrono::{FixedOffset, TimeDelta};
 
     use super::*;
-    use crate::domain::request::HttpMethod;
+    use crate::domain::request::{Auth, Body, HttpMethod, KeyValue, RawKind};
 
     fn record(sent_at: DateTime<Utc>, url: &str, outcome: Option<Outcome>) -> HistoryRecord {
         HistoryRecord {
@@ -276,6 +290,45 @@ mod tests {
         assert_eq!(entry.method, "GET");
         assert_eq!(entry.url, "https://a.test");
         assert_eq!(entry.outcome, Some(outcome));
+    }
+
+    #[test]
+    fn get_returns_the_full_request() {
+        let store = HistoryStore::open_in_memory().unwrap();
+        let mut sent = ok(at("2026-11-10T12:00:00Z"), "https://a.test");
+        sent.request.method = HttpMethod::Post;
+        sent.request.headers = vec![KeyValue {
+            enabled: false,
+            key: "X-Trace".into(),
+            value: "1".into(),
+        }];
+        sent.request.body = Body::Raw {
+            kind: RawKind::Json,
+            text: r#"{"a":1}"#.into(),
+        };
+        sent.request.auth = Auth::Bearer {
+            token: "secret".into(),
+        };
+        let id = store.insert(&sent).unwrap().id;
+
+        let request = store.get(id).unwrap().unwrap();
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.url, "https://a.test");
+        assert!(matches!(
+            request.headers.as_slice(),
+            [KeyValue { enabled: false, key, value }] if key == "X-Trace" && value == "1"
+        ));
+        assert!(matches!(
+            &request.body,
+            Body::Raw { kind: RawKind::Json, text } if text == r#"{"a":1}"#
+        ));
+        assert!(matches!(&request.auth, Auth::Bearer { token } if token == "secret"));
+    }
+
+    #[test]
+    fn get_unknown_id_is_none() {
+        let store = HistoryStore::open_in_memory().unwrap();
+        assert!(store.get(42).unwrap().is_none());
     }
 
     #[test]

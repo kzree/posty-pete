@@ -103,6 +103,35 @@ impl AuthEditor {
         }
     }
 
+    /// Inputs of the auth kinds `auth` doesn't use are cleared.
+    pub fn set_auth(&mut self, auth: &Auth, window: &mut Window, cx: &mut Context<Self>) {
+        let empty = String::new();
+        let (kind, api_key_name, api_key_value, username, password, token) = match auth {
+            Auth::None => (AuthKind::None, &empty, &empty, &empty, &empty, &empty),
+            Auth::ApiKey { key, value } => (AuthKind::ApiKey, key, value, &empty, &empty, &empty),
+            Auth::Basic { username, password } => {
+                (AuthKind::Basic, &empty, &empty, username, password, &empty)
+            }
+            Auth::Bearer { token } => (AuthKind::Bearer, &empty, &empty, &empty, &empty, token),
+        };
+
+        for (input, text) in [
+            (&self.api_key_name, api_key_name),
+            (&self.api_key_value, api_key_value),
+            (&self.username, username),
+            (&self.password, password),
+            (&self.token, token),
+        ] {
+            input.update(cx, |input, cx| input.set_value(text.clone(), window, cx));
+        }
+
+        self.kind = kind;
+        self.kind_select.update(cx, |select, cx| {
+            select.set_selected_value(&kind, window, cx)
+        });
+        cx.notify();
+    }
+
     pub fn auth(&self, cx: &App) -> Auth {
         let text = |input: &Entity<InputState>| input.read(cx).value().to_string();
         match self.kind {

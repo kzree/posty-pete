@@ -98,6 +98,28 @@ impl BodyEditor {
         }
     }
 
+    /// Content of the modes `body` doesn't use is cleared, so switching mode
+    /// doesn't bring back text from a previous request.
+    pub fn set_body(&mut self, body: &Body, window: &mut Window, cx: &mut Context<Self>) {
+        let (mode, fields, kind, text) = match body {
+            Body::None => (BodyMode::None, &[][..], RawKind::default(), ""),
+            Body::FormData(fields) => (BodyMode::FormData, &fields[..], RawKind::default(), ""),
+            Body::Raw { kind, text } => (BodyMode::Raw, &[][..], *kind, text.as_str()),
+        };
+
+        self.mode = mode;
+        self.form_data
+            .update(cx, |form, cx| form.set_values(fields, window, cx));
+        self.raw_kind.update(cx, |select, cx| {
+            select.set_selected_value(&kind, window, cx)
+        });
+        self.raw.update(cx, |raw, cx| {
+            raw.set_highlighter(editor_language(kind), cx);
+            raw.set_value(text.to_string(), window, cx);
+        });
+        cx.notify();
+    }
+
     pub fn body(&self, cx: &App) -> Body {
         match self.mode {
             BodyMode::None => Body::None,

@@ -7,12 +7,16 @@ use anyhow::Context as _;
 use chrono::Local;
 use gpui::{AppContext, Context, EventEmitter};
 
-use crate::domain::store::history::{self, HistoryRecord, HistoryStore, HistorySummary};
+use crate::domain::{
+    request::Request,
+    store::history::{self, HistoryRecord, HistoryStore, HistorySummary},
+};
 
 pub enum HistoryEvent {
     /// Sent once at startup. Always emitted before any `Recorded`.
     Loaded(Vec<HistorySummary>),
     Recorded(HistorySummary),
+    Opened(Request),
 }
 
 /// Owns the history database: opens it off the UI thread, prunes and loads it,
@@ -44,6 +48,29 @@ impl History {
         Self {
             state: State::Opening { queued: Vec::new() },
         }
+    }
+
+    pub fn open(&mut self, id: i64, cx: &mut Context<Self>) {
+        let store = match &mut self.state {
+            State::Ready(store) => store.clone(),
+            _ => return,
+        };
+
+        cx.spawn(async move |this, cx| {
+            let res = cx
+                .background_spawn(async move { lock(&store).get(id) })
+                .await;
+
+            match res {
+                Ok(Some(req)) => {
+                    this.update(cx, |_, cx| cx.emit(HistoryEvent::Opened(req)))
+                        .ok();
+                }
+                Ok(None) => tracing::warn!("history entry {id} not found"),
+                Err(e) => tracing::warn!("failed to get request from history: {e:#}"),
+            }
+        })
+        .detach();
     }
 
     pub fn record(&mut self, record: HistoryRecord, cx: &mut Context<Self>) {

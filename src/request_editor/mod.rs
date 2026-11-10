@@ -87,6 +87,25 @@ impl RequestEditor {
         });
     }
 
+    pub fn load_request(&mut self, request: &Request, window: &mut Window, cx: &mut Context<Self>) {
+        self.method.update(cx, |method, cx| {
+            method.set_selected_value(&request.method, window, cx)
+        });
+        self.url
+            .update(cx, |url, cx| url.set_value(request.url.clone(), window, cx));
+        self.params.update(cx, |params, cx| {
+            params.set_values(&request.params, window, cx)
+        });
+        self.headers.update(cx, |headers, cx| {
+            headers.set_values(&request.headers, window, cx)
+        });
+        self.body
+            .update(cx, |body, cx| body.set_body(&request.body, window, cx));
+        self.auth
+            .update(cx, |auth, cx| auth.set_auth(&request.auth, window, cx));
+        cx.notify();
+    }
+
     pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.loading || self.input_is_empty(cx) {
             return;

@@ -81,7 +81,7 @@ impl ResponseView {
         cx.notify();
     }
 
-    fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.response = None;
         self.body
             .update(cx, |state, cx| state.set_value("", window, cx));
