@@ -197,7 +197,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match *event {
+        match event {
             LibraryPanelEvent::CreateCollection => {
                 let id = self.collections.update(cx, |collections, cx| {
                     collections.create("New Collection", cx)
@@ -207,7 +207,17 @@ impl Workspace {
                     .update(cx, |view, cx| view.focus_name(window, cx));
             }
             LibraryPanelEvent::OpenCollection(id) => {
-                self.navigate(AppRoute::Collection(id), window, cx)
+                self.navigate(AppRoute::Collection(*id), window, cx)
+            }
+            LibraryPanelEvent::Rename {
+                collection_id,
+                item_id,
+                name,
+            } => {
+                let (collection_id, item_id, name) = (*collection_id, *item_id, name.clone());
+                self.collections.update(cx, |collections, cx| {
+                    collections.rename(collection_id, item_id, name, cx)
+                });
             }
         }
     }

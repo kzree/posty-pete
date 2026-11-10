@@ -1,15 +1,16 @@
 use std::collections::HashSet;
 
 use gpui::{
-    Anchor, App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder as _, px,
+    Anchor, App, AppContext, Context, DismissEvent, Entity, EventEmitter, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
+    div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, IndexPath, Sizable, StyledExt,
     button::{Button, ButtonVariants},
     h_flex,
     list::{List, ListDelegate, ListEvent, ListItem, ListState},
-    menu::{DropdownMenu, PopupMenuItem},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
     v_flex,
 };
 use gpui_kit_assets::IconName as LucideIcon;
@@ -21,12 +22,18 @@ use crate::{
         collection::{Collection, Item},
         request::HttpMethod,
     },
-    ui::method_label::method_label,
+    ui::{method_label::method_label, rename_dialog::open_rename_dialog},
 };
 
 pub enum LibraryPanelEvent {
     CreateCollection,
     OpenCollection(Uuid),
+    /// `item_id` equals `collection_id` when renaming the collection itself.
+    Rename {
+        collection_id: Uuid,
+        item_id: Uuid,
+        name: String,
+    },
 }
 
 pub struct LibraryPanel {
@@ -68,8 +75,35 @@ impl LibraryPanel {
         cx: &mut Context<Self>,
     ) {
         self.update_rows(cx, |delegate| delegate.set_collections(collections));
-        self.list
-            .update(cx, |list, cx| list.set_selected_index(None, window, cx));
+        self.list.update(cx, |list, cx| {
+            list.set_selected_index(None, window, cx);
+            list.set_right_clicked_index(None, window, cx);
+        });
+    }
+
+    fn rename_collection(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.list.read(cx).delegate().collection_name(id) else {
+            return;
+        };
+        let panel = cx.weak_entity();
+        open_rename_dialog(
+            "Rename collection",
+            name,
+            "Save",
+            move |name, _, cx| {
+                panel
+                    .update(cx, |_, cx| {
+                        cx.emit(LibraryPanelEvent::Rename {
+                            collection_id: id,
+                            item_id: id,
+                            name,
+                        })
+                    })
+                    .ok();
+            },
+            window,
+            cx,
+        );
     }
 
     fn update_rows(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut LibraryDelegate)) {
@@ -107,13 +141,67 @@ impl LibraryPanel {
 
 impl Render for LibraryPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let panel = cx.weak_entity();
+        let list = self.list.downgrade();
         v_flex().size_full().child(self.render_header(cx)).child(
             div()
+                .id("library-list")
                 .flex_1()
                 .min_h_0()
-                .child(List::new(&self.list).size_full()),
+                .child(List::new(&self.list).size_full())
+                .context_menu(move |menu, window, cx| {
+                    context_menu(&panel, &list, menu, window, cx)
+                }),
         )
     }
+}
+
+fn context_menu(
+    panel: &WeakEntity<LibraryPanel>,
+    list: &WeakEntity<ListState<LibraryDelegate>>,
+    menu: PopupMenu,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let Some(list_state) = list.upgrade() else {
+        return menu;
+    };
+    let state = list_state.read(cx);
+    let Some(collection_id) = state
+        .right_clicked_index()
+        .and_then(|ix| state.delegate().collection_at(ix.row))
+    else {
+        return menu;
+    };
+
+    // The list outlines the right-clicked row until this is reset.
+    let menu_entity = cx.entity();
+    window
+        .subscribe(&menu_entity, cx, {
+            let list = list.clone();
+            move |_, _: &DismissEvent, window, cx| {
+                list.update(cx, |list, cx| {
+                    list.set_right_clicked_index(None, window, cx)
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+    let panel = panel.clone();
+    menu.item(PopupMenuItem::new("Add request").disabled(true))
+        .item(PopupMenuItem::new("Add folder").disabled(true))
+        .separator()
+        .item(
+            PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
+                panel
+                    .update(cx, |panel, cx| {
+                        panel.rename_collection(collection_id, window, cx)
+                    })
+                    .ok();
+            }),
+        )
+        .item(PopupMenuItem::new("Delete…").disabled(true))
 }
 
 struct LibraryDelegate {
@@ -169,6 +257,13 @@ impl LibraryDelegate {
             }) => Some(*id),
             _ => None,
         }
+    }
+
+    fn collection_name(&self, id: Uuid) -> Option<String> {
+        self.collections
+            .iter()
+            .find(|collection| collection.id == id)
+            .map(|collection| collection.name.clone())
     }
 
     fn rebuild_rows(&mut self) {
@@ -288,6 +383,8 @@ enum Row {
 #[derive(Clone, Debug, PartialEq)]
 struct Node {
     id: Uuid,
+    /// The collection this node belongs to; equals `id` for collections.
+    collection_id: Uuid,
     name: SharedString,
     /// 0 for collections.
     depth: usize,
@@ -320,6 +417,7 @@ fn flatten(
         let is_expanded = expanded.contains(&collection.id);
         rows.push(Row::Node(Node {
             id: collection.id,
+            collection_id: collection.id,
             name: collection.name.clone().into(),
             depth: 0,
             kind: NodeKind::Collection {
@@ -327,19 +425,26 @@ fn flatten(
             },
         }));
         if is_expanded {
-            flatten_items(&collection.items, 1, expanded, &mut rows);
+            flatten_items(collection.id, &collection.items, 1, expanded, &mut rows);
         }
     }
     rows
 }
 
-fn flatten_items(items: &[Item], depth: usize, expanded: &HashSet<Uuid>, rows: &mut Vec<Row>) {
+fn flatten_items(
+    collection_id: Uuid,
+    items: &[Item],
+    depth: usize,
+    expanded: &HashSet<Uuid>,
+    rows: &mut Vec<Row>,
+) {
     for item in items {
         match item {
             Item::Folder(folder) => {
                 let is_expanded = expanded.contains(&folder.id);
                 rows.push(Row::Node(Node {
                     id: folder.id,
+                    collection_id,
                     name: folder.name.clone().into(),
                     depth,
                     kind: NodeKind::Folder {
@@ -347,11 +452,12 @@ fn flatten_items(items: &[Item], depth: usize, expanded: &HashSet<Uuid>, rows: &
                     },
                 }));
                 if is_expanded {
-                    flatten_items(&folder.items, depth + 1, expanded, rows);
+                    flatten_items(collection_id, &folder.items, depth + 1, expanded, rows);
                 }
             }
             Item::Request(saved) => rows.push(Row::Node(Node {
                 id: saved.id,
+                collection_id,
                 name: saved.name.clone().into(),
                 depth,
                 kind: NodeKind::Request(saved.request.method),
