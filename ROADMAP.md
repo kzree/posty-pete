@@ -12,7 +12,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Friendlier TLS errors.** When the error chain contains rustls `InvalidContentType` (server answered in plain HTTP), show a hint: "The server didn't respond with TLS. Did you mean http://?"
-- [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `main.rs`) is hard-coded; make it configurable in the Settings tab and per request.
+- [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `app.rs`) is hard-coded; make it configurable in the Settings tab and per request.
 - [ ] **Cancel in-flight requests.** Send is disabled while a request runs; a Cancel button could take its place. Dropping `pending` alone doesn't stop the request on tokio (abort the `JoinHandle`).
 
 ## Responses
@@ -30,7 +30,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **History retention setting.** 14 days is hard-coded (`RETENTION_DAYS` in `domain/store/history.rs`); make it configurable in the Settings tab.
 - [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
 - [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
-- [ ] **Extract `Workspace` into `app.rs`.** `BaseLayout` currently lives in `main.rs`.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
 ## Look and feel
