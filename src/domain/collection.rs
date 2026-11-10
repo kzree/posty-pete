@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::request::Request;
+use super::request::{KeyValue, Request};
 
 /// A named tree of folders and saved requests, stored as one JSON file.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -11,6 +11,8 @@ pub struct Collection {
     pub id: Uuid,
     pub name: String,
     pub items: Vec<Item>,
+    #[serde(default)]
+    pub variables: Vec<KeyValue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -141,6 +143,7 @@ impl Collection {
             id: Uuid::new_v4(),
             name: name.into(),
             items: Vec::new(),
+            variables: Vec::new(),
         }
     }
 
@@ -384,6 +387,36 @@ mod tests {
             serde_json::to_value(&loaded).unwrap(),
             serde_json::to_value(&f.collection).unwrap()
         );
+    }
+
+    #[test]
+    fn json_without_variables_loads_and_saving_writes_them() {
+        let json = r#"{
+            "id": "6f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f",
+            "name": "Old",
+            "items": [{"type": "request", "id": "7f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f",
+                       "name": "R", "request": {"method": "Get", "url": "x", "params": [],
+                       "headers": [], "body": "None", "auth": "None"}}]
+        }"#;
+        let mut loaded: Collection = serde_json::from_str(json).unwrap();
+        assert!(loaded.variables.is_empty());
+        assert_eq!(loaded.items.len(), 1);
+
+        loaded.variables.push(KeyValue {
+            enabled: true,
+            key: "host".into(),
+            value: "example.com".into(),
+        });
+        let value = serde_json::to_value(&loaded).unwrap();
+        assert_eq!(value["variables"][0]["key"], "host");
+        let reloaded: Collection = serde_json::from_value(value).unwrap();
+        assert_eq!(reloaded.variables, loaded.variables);
+    }
+
+    #[test]
+    fn new_collection_writes_empty_variables() {
+        let value = serde_json::to_value(Collection::new("API")).unwrap();
+        assert_eq!(value["variables"], serde_json::json!([]));
     }
 
     #[test]
