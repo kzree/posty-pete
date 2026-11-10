@@ -71,7 +71,8 @@ impl History {
         let request = self.request(id, cx);
         cx.spawn(async move |this, cx| {
             let event = match request.await {
-                Ok(request) => HistoryEvent::Opened { request, mode },
+                Ok(Some(request)) => HistoryEvent::Opened { request, mode },
+                Ok(None) => HistoryEvent::Deleted(id),
                 Err(error) => HistoryEvent::Failed {
                     title: "Couldn't open request",
                     error,
@@ -82,18 +83,13 @@ impl History {
         .detach();
     }
 
-    /// Loads an entry's full request.
-    pub fn request(&self, id: i64, cx: &App) -> Task<anyhow::Result<Request>> {
+    /// Loads an entry's full request; `None` if it's no longer in history.
+    pub fn request(&self, id: i64, cx: &App) -> Task<anyhow::Result<Option<Request>>> {
         let State::Ready(store) = &self.state else {
             return Task::ready(Err(anyhow!("history is unavailable")));
         };
         let store = store.clone();
-
-        cx.background_spawn(async move {
-            lock(&store)
-                .get(id)?
-                .ok_or_else(|| anyhow!("history entry {id} not found"))
-        })
+        cx.background_spawn(async move { lock(&store).get(id) })
     }
 
     pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
@@ -107,11 +103,8 @@ impl History {
                 .background_spawn(async move { lock(&store).delete(id) })
                 .await;
             let event = match deleted {
-                Ok(true) => HistoryEvent::Deleted(id),
-                Ok(false) => {
-                    tracing::warn!("history entry {id} not found");
-                    return;
-                }
+                // Already gone counts as deleted, so the panel drops the row.
+                Ok(_) => HistoryEvent::Deleted(id),
                 Err(error) => HistoryEvent::Failed {
                     title: "Couldn't delete request",
                     error,

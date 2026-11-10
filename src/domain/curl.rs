@@ -8,7 +8,14 @@ use super::{
 pub fn to_curl(request: &Request) -> String {
     let mut args = vec!["curl".to_string()];
 
-    let has_body = !matches!(request.body, Body::None);
+    // curl rejects `--head` together with a body, and a HEAD body has no
+    // defined meaning, so it's left out.
+    let body = if request.method == HttpMethod::Head {
+        &Body::None
+    } else {
+        &request.body
+    };
+    let has_body = !matches!(body, Body::None);
     let implied = if has_body {
         HttpMethod::Post
     } else {
@@ -24,7 +31,7 @@ pub fn to_curl(request: &Request) -> String {
 
     let mut headers: Vec<(&str, &str)> = active(&request.headers)
         .filter(|(key, _)| {
-            !(matches!(request.body, Body::FormData(_)) && key.eq_ignore_ascii_case("content-type"))
+            !(matches!(body, Body::FormData(_)) && key.eq_ignore_ascii_case("content-type"))
         })
         .collect();
     let has_header = |headers: &[(&str, &str)], name: &str| {
@@ -41,7 +48,7 @@ pub fn to_curl(request: &Request) -> String {
         headers.push((key, value));
     }
     let content_type;
-    if let Body::Raw { kind, .. } = &request.body
+    if let Body::Raw { kind, .. } = body
         && !has_header(&headers, "content-type")
     {
         content_type = kind.mime();
@@ -72,7 +79,7 @@ pub fn to_curl(request: &Request) -> String {
         args.push(format!("-H {}", quote(&header)));
     }
 
-    match &request.body {
+    match body {
         Body::None => {}
         // `--form-string` doesn't treat values starting with `@` or `<` as files.
         Body::FormData(fields) => args.extend(
@@ -208,6 +215,22 @@ mod tests {
             value: "secret".into(),
         };
         assert!(to_curl(&request).contains("-H 'X-Key: secret'"));
+    }
+
+    #[test]
+    fn head_leaves_body_out() {
+        let request = Request {
+            method: HttpMethod::Head,
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: "{}".into(),
+            },
+            ..get("https://example.com")
+        };
+        assert_eq!(
+            to_curl(&request),
+            "curl \\\n  --head \\\n  'https://example.com'"
+        );
     }
 
     #[test]

@@ -101,6 +101,13 @@ impl Workspace {
                 HistoryEvent::Recorded(summary) => this
                     .history_panel
                     .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
+                HistoryEvent::Opened { .. } if this.pending.is_some() => {
+                    window.push_notification(
+                        Notification::info("Wait for it to finish, then try again.")
+                            .title("A request is still running"),
+                        cx,
+                    );
+                }
                 HistoryEvent::Opened { request, mode } => {
                     this.request_editor
                         .update(cx, |editor, cx| editor.load_request(request, window, cx));
@@ -136,15 +143,19 @@ impl Workspace {
                 }
                 HistoryPanelEvent::CopyAsCurl(id) => {
                     let request = this.history.read(cx).request(*id, cx);
-                    cx.spawn_in(window, async move |_, cx| {
+                    let id = *id;
+                    cx.spawn_in(window, async move |this, cx| {
                         let request = request.await;
-                        cx.update(|window, cx| match request {
-                            Ok(request) => copy_with_notification(
+                        this.update_in(cx, |this, window, cx| match request {
+                            Ok(Some(request)) => copy_with_notification(
                                 curl::to_curl(&request),
                                 "Copied as cURL",
                                 window,
                                 cx,
                             ),
+                            Ok(None) => this
+                                .history_panel
+                                .update(cx, |panel, cx| panel.remove(id, window, cx)),
                             Err(error) => show_error("Couldn't copy as cURL", &error, window, cx),
                         })
                         .ok();
