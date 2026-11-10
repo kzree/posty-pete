@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use chrono::Utc;
 use gpui::{
@@ -28,6 +28,7 @@ use crate::{
     history::{History, HistoryEvent},
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
+    settings_page::SettingsPage,
     sidebar::{
         Sidebar, SidebarTab,
         history_panel::{HistoryPanel, HistoryPanelEvent},
@@ -286,7 +287,6 @@ impl Workspace {
         cx.notify();
     }
 
-    #[expect(dead_code, reason = "used once the main pane has more routes")]
     fn navigate(&mut self, path: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
         use_navigate(window, cx).push(path);
     }
@@ -311,6 +311,13 @@ impl Workspace {
         })
     }
 
+    fn settings_route(&self, cx: &mut Context<Self>) -> Route {
+        let on_back = Rc::new(cx.listener(|this, _, window, cx| this.navigate("/", window, cx)));
+        Route::new()
+            .path("settings")
+            .element(move |_, _| SettingsPage::new(on_back.clone()))
+    }
+
     fn open_sidebar_tab(&mut self, tab: SidebarTab, cx: &mut Context<Self>) {
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_active_tab(tab, cx));
@@ -322,7 +329,9 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let main_content = Routes::new().child(self.request_response_route());
+        let main_content = Routes::new()
+            .child(self.request_response_route())
+            .child(self.settings_route(cx));
 
         // A hidden panel would still leave its resize handle behind.
         let body = if self.left_panel == LeftPanelState::Open {
@@ -362,8 +371,8 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &OpenTests, _, cx| {
                 this.open_sidebar_tab(SidebarTab::Tests, cx);
             }))
-            .on_action(cx.listener(|_, _: &OpenSettings, _, _| {
-                tracing::info!("settings page isn't implemented yet");
+            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
+                this.navigate("/settings", window, cx);
             }))
             .on_action(cx.listener(|this, _: &FocusUrl, window, cx| {
                 this.request_editor

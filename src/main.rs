@@ -9,6 +9,7 @@ mod domain;
 mod history;
 mod request_editor;
 mod response_view;
+mod settings_page;
 mod sidebar;
 mod status_bar;
 mod ui;
