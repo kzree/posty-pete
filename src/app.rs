@@ -288,6 +288,8 @@ impl Workspace {
     }
 
     fn navigate(&mut self, path: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+        // The focused element may not exist on the new route, which would drop workspace keybindings.
+        window.focus(&self.focus_handle, cx);
         use_navigate(window, cx).push(path);
     }
 
