@@ -52,26 +52,36 @@ impl Workspace {
 
     /// The window's should-close handler. With unsaved changes it keeps the
     /// window open and asks first; the window is closed once the user chose.
+    /// A variables edit waiting to be saved is saved before the window closes.
     pub(super) fn should_close_window(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.closing || !self.is_dirty_now(window, cx) {
+        if self.closing {
             self.save_navigation_now(cx);
             return true;
         }
-        self.confirm_discard(
-            |this, window, cx| this.close(Close::Window, window, cx),
-            window,
-            cx,
-        );
-        false
+        if self.is_dirty_now(window, cx) {
+            self.confirm_discard(
+                |this, window, cx| this.close(Close::Window, window, cx),
+                window,
+                cx,
+            );
+            return false;
+        }
+        if self.flush_collection_variables(cx) {
+            self.close(Close::Window, window, cx);
+            return false;
+        }
+        self.save_navigation_now(cx);
+        true
     }
 
     /// Closes once the collection saves are on disk, so choosing Save isn't lost.
     fn close(&mut self, close: Close, window: &mut Window, cx: &mut Context<Self>) {
         self.closing = true;
+        self.flush_collection_variables(cx);
         let saved = self.collections.read(cx).flushed();
         cx.spawn_in(window, async move |this, cx| {
             if saved

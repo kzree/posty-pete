@@ -94,6 +94,24 @@ pub fn modify(
         .is_some_and(|collection| f(Arc::make_mut(collection)))
 }
 
+/// Replaces the collection's variables. Returns `false`, changing (and
+/// copying) nothing, if there's no such collection or they're the same.
+pub fn set_variables(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    variables: Vec<KeyValue>,
+) -> bool {
+    let unchanged = collections
+        .iter()
+        .find(|collection| collection.id == collection_id)
+        .is_none_or(|collection| collection.variables == variables);
+    !unchanged
+        && modify(collections, collection_id, |collection| {
+            collection.variables = variables;
+            true
+        })
+}
+
 /// The name and location Save As starts with. A saved request (`linked`, as
 /// collection and request ids) goes next to itself, named `typed_name` or
 /// else its stored name; a draft goes to the first collection's root.
@@ -736,5 +754,53 @@ mod tests {
     fn modify_a_missing_collection_does_nothing() {
         let mut collections = vec![Arc::new(Collection::new("API"))];
         assert!(!modify(&mut collections, Uuid::new_v4(), |_| true));
+    }
+
+    fn variable(key: &str, value: &str) -> KeyValue {
+        KeyValue {
+            enabled: true,
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    #[test]
+    fn set_variables_replaces_them() {
+        let mut collections = vec![Arc::new(Collection::new("API"))];
+        let id = collections[0].id;
+        let held = collections.clone();
+        let variables = vec![variable("host", "example.com"), variable("token", "t")];
+
+        assert!(set_variables(&mut collections, id, variables.clone()));
+
+        assert_eq!(collections[0].variables, variables);
+        assert!(held[0].variables.is_empty());
+    }
+
+    #[test]
+    fn set_variables_to_the_same_ones_changes_nothing() {
+        let mut collection = Collection::new("API");
+        collection.variables = vec![variable("host", "example.com")];
+        let mut collections = vec![Arc::new(collection)];
+        let id = collections[0].id;
+        let held = collections.clone();
+
+        assert!(!set_variables(
+            &mut collections,
+            id,
+            vec![variable("host", "example.com")]
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+    }
+
+    #[test]
+    fn set_variables_of_a_missing_collection_does_nothing() {
+        let mut collections = vec![Arc::new(Collection::new("API"))];
+        assert!(!set_variables(
+            &mut collections,
+            Uuid::new_v4(),
+            vec![variable("host", "example.com")]
+        ));
+        assert!(collections[0].variables.is_empty());
     }
 }

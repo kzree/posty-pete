@@ -208,7 +208,15 @@ impl Workspace {
             }),
             cx.on_app_quit(|this, cx| {
                 this.save_navigation_now(cx);
-                async {}
+                // Best effort: gpui waits only briefly for quit handlers.
+                let flushed = this
+                    .flush_collection_variables(cx)
+                    .then(|| this.collections.read(cx).flushed());
+                async move {
+                    if let Some(flushed) = flushed {
+                        flushed.await;
+                    }
+                }
             }),
         ]
     }

@@ -1,11 +1,12 @@
 use gpui::{Context, Window};
 use gpui_component::WindowExt;
+use uuid::Uuid;
 
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
     collection_view::CollectionViewEvent,
     collections::CollectionsEvent,
-    domain::{collection::NEW_COLLECTION_NAME, history::OpenMode},
+    domain::{collection::NEW_COLLECTION_NAME, history::OpenMode, request::KeyValue},
     history::HistoryEvent,
     quick_open::QuickOpenEvent,
     request_editor::RequestEditorEvent,
@@ -181,8 +182,35 @@ impl Workspace {
                 self.collections
                     .update(cx, |collections, cx| collections.rename(id, id, name, cx));
             }
+            CollectionViewEvent::VariablesChanged { id, variables } => {
+                self.save_collection_variables(*id, variables.clone(), cx)
+            }
             CollectionViewEvent::Back => self.go_back_or_to_editor(window, cx),
         }
+    }
+
+    fn save_collection_variables(
+        &mut self,
+        id: Uuid,
+        variables: Vec<KeyValue>,
+        cx: &mut Context<Self>,
+    ) {
+        self.collections.update(cx, |collections, cx| {
+            collections.set_variables(id, variables, cx)
+        });
+    }
+
+    /// Saves a variables edit still waiting for its save delay. Returns
+    /// whether there was one.
+    pub(super) fn flush_collection_variables(&mut self, cx: &mut Context<Self>) -> bool {
+        let pending = self
+            .collection_view
+            .update(cx, |view, cx| view.take_pending_variables(cx));
+        let Some((id, variables)) = pending else {
+            return false;
+        };
+        self.save_collection_variables(id, variables, cx);
+        true
     }
 
     pub(super) fn on_history_panel_event(

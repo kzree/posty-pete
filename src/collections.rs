@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     collection::{self, Collection, Folder, Item, Location, SavedRequest},
-    request::Request,
+    request::{KeyValue, Request},
     store::{self, collection::CollectionStore},
 };
 
@@ -196,6 +196,18 @@ impl Collections {
             self.changed(collection_id, cx);
         }
         updated
+    }
+
+    /// Saves only if `variables` differ from the stored ones.
+    pub fn set_variables(
+        &mut self,
+        collection_id: Uuid,
+        variables: Vec<KeyValue>,
+        cx: &mut Context<Self>,
+    ) {
+        if collection::set_variables(&mut self.collections, collection_id, variables) {
+            self.changed(collection_id, cx);
+        }
     }
 
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {

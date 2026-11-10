@@ -45,6 +45,8 @@ pub enum KeyValueEditorEvent {
 pub struct KeyValueEditor {
     /// Noun for one row in accessible names, e.g. "header".
     item_name: &'static str,
+    key_label: &'static str,
+    value_label: &'static str,
     rows: Vec<Row>,
     next_row_id: usize,
 }
@@ -53,8 +55,21 @@ impl EventEmitter<KeyValueEditorEvent> for KeyValueEditor {}
 
 impl KeyValueEditor {
     pub fn new(item_name: &'static str, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_column_labels(item_name, "Key", "Value", window, cx)
+    }
+
+    /// Like `new`, with other column headers (also used as placeholders).
+    pub fn with_column_labels(
+        item_name: &'static str,
+        key_label: &'static str,
+        value_label: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut this = Self {
             item_name,
+            key_label,
+            value_label,
             rows: Vec::new(),
             next_row_id: 0,
         };
@@ -91,14 +106,15 @@ impl KeyValueEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let (key_label, value_label) = (self.key_label, self.value_label);
         let key = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Key")
+                .placeholder(key_label)
                 .default_value(key)
         });
         let value = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Value")
+                .placeholder(value_label)
                 .default_value(value)
         });
 
@@ -148,8 +164,8 @@ impl Render for KeyValueEditor {
             .text_xs()
             .text_color(cx.theme().muted_foreground)
             .child(div().w_6().flex_none())
-            .child(div().flex_1().child("Key"))
-            .child(div().flex_1().child("Value"))
+            .child(div().flex_1().child(self.key_label))
+            .child(div().flex_1().child(self.value_label))
             .child(div().w_6().flex_none());
 
         let rows = self
