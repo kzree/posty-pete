@@ -3,6 +3,7 @@ use std::rc::Rc;
 use gpui::{App, Context, ParentElement, SharedString, Styled, Window, div};
 use gpui_component::{resizable_panel, v_resizable};
 use gpui_router::{Route, Routes, use_navigate};
+use uuid::Uuid;
 
 use super::Workspace;
 use crate::settings_page::SettingsPage;
@@ -11,6 +12,7 @@ use crate::settings_page::SettingsPage;
 pub(super) enum AppRoute {
     Request,
     Settings,
+    Collection(Uuid),
 }
 
 impl AppRoute {
@@ -18,6 +20,7 @@ impl AppRoute {
         match self {
             AppRoute::Request => "/".into(),
             AppRoute::Settings => "/settings".into(),
+            AppRoute::Collection(id) => format!("/collections/{id}").into(),
         }
     }
 }
@@ -26,6 +29,11 @@ impl Workspace {
     pub(super) fn navigate(&mut self, route: AppRoute, window: &mut Window, cx: &mut App) {
         // The focused element may not exist on the new route, which would drop workspace keybindings.
         window.focus(&self.focus_handle, cx);
+        if let AppRoute::Collection(id) = route {
+            let collection = self.collections.read(cx).get(id).cloned();
+            self.collection_view
+                .update(cx, |view, cx| view.show(id, collection, window, cx));
+        }
         use_navigate(window, cx).push(route.path());
     }
 
@@ -33,6 +41,7 @@ impl Workspace {
         Routes::new()
             .child(self.request_response_route())
             .child(self.settings_route(cx))
+            .child(self.collection_route())
     }
 
     fn request_response_route(&self) -> Route {
@@ -62,5 +71,12 @@ impl Workspace {
         Route::new()
             .path("settings")
             .element(move |_, _| SettingsPage::new(on_back.clone()))
+    }
+
+    fn collection_route(&self) -> Route {
+        let collection_view = self.collection_view.clone();
+        Route::new()
+            .path("collections/:id")
+            .element(move |_, _| collection_view.clone())
     }
 }

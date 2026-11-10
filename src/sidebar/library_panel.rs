@@ -26,6 +26,7 @@ use crate::{
 
 pub enum LibraryPanelEvent {
     CreateCollection,
+    OpenCollection(Uuid),
 }
 
 pub struct LibraryPanel {
@@ -46,8 +47,12 @@ impl LibraryPanel {
         });
         let list_sub = cx.subscribe(&list, |this, _, event, cx| {
             if let ListEvent::Confirm(ix) = event {
+                let collection = this.list.read(cx).delegate().collection_at(ix.row);
                 // Rows above a toggled row don't move, so its row stays selected.
                 this.update_rows(cx, |delegate| delegate.toggle_at(ix.row));
+                if let Some(id) = collection {
+                    cx.emit(LibraryPanelEvent::OpenCollection(id));
+                }
             }
         });
         Self {
@@ -153,6 +158,17 @@ impl LibraryDelegate {
             Some(Row::Node(_)) | None => return,
         }
         self.rebuild_rows();
+    }
+
+    fn collection_at(&self, row: usize) -> Option<Uuid> {
+        match self.rows.get(row)? {
+            Row::Node(Node {
+                id,
+                kind: NodeKind::Collection { .. },
+                ..
+            }) => Some(*id),
+            _ => None,
+        }
     }
 
     fn rebuild_rows(&mut self) {
@@ -514,6 +530,20 @@ mod tests {
         delegate.toggle_at(1);
         delegate.toggle_at(2);
         assert_eq!(delegate.expanded, HashSet::from([ids.collection]));
+    }
+
+    #[test]
+    fn only_collection_rows_open_a_collection() {
+        let (collections, ids) = fixture();
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(collections);
+        delegate.toggle_at(1);
+        delegate.toggle_at(3);
+        assert_eq!(delegate.collection_at(0), None);
+        assert_eq!(delegate.collection_at(1), Some(ids.collection));
+        assert_eq!(delegate.collection_at(2), None);
+        assert_eq!(delegate.collection_at(3), None);
+        assert_eq!(delegate.collection_at(99), None);
     }
 
     #[test]

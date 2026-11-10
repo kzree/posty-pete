@@ -84,7 +84,6 @@ impl Collections {
     }
 
     /// Renames the collection itself when `id == collection_id`.
-    #[expect(dead_code, reason = "used by rename (tasks 11 and 14)")]
     pub fn rename(
         &mut self,
         collection_id: Uuid,

@@ -18,6 +18,7 @@ use crate::{
         FocusUrl, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SendRequest, ToggleSidebar,
         WORKSPACE_CONTEXT,
     },
+    collection_view::{CollectionView, CollectionViewEvent},
     collections::{Collections, CollectionsEvent},
     domain::{self, history::OpenMode},
     history::{History, HistoryEvent},
@@ -56,6 +57,7 @@ pub struct Workspace {
     sidebar: Entity<Sidebar>,
     history_panel: Entity<HistoryPanel>,
     library_panel: Entity<LibraryPanel>,
+    collection_view: Entity<CollectionView>,
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
     history: Entity<History>,
@@ -77,6 +79,7 @@ impl Workspace {
         let history_panel = cx.new(|cx| HistoryPanel::new(window, cx));
         let library_panel = cx.new(|cx| LibraryPanel::new(window, cx));
         let sidebar = cx.new(|_| Sidebar::new(library_panel.clone(), history_panel.clone()));
+        let collection_view = cx.new(|cx| CollectionView::new(window, cx));
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
         let collections = cx.new(Collections::new);
@@ -88,8 +91,11 @@ impl Workspace {
             cx.subscribe_in(&collections, window, |this, _, event, window, cx| {
                 this.on_collections_event(event, window, cx)
             }),
-            cx.subscribe(&library_panel, |this, _, event, _| {
-                this.on_library_panel_event(event)
+            cx.subscribe_in(&library_panel, window, |this, _, event, window, cx| {
+                this.on_library_panel_event(event, window, cx)
+            }),
+            cx.subscribe_in(&collection_view, window, |this, _, event, window, cx| {
+                this.on_collection_view_event(event, window, cx)
             }),
             cx.subscribe_in(&history_panel, window, |this, _, event, window, cx| {
                 this.on_history_panel_event(event, window, cx)
@@ -106,6 +112,7 @@ impl Workspace {
             sidebar,
             history_panel,
             library_panel,
+            collection_view,
             loading_bar,
             client: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
@@ -174,14 +181,43 @@ impl Workspace {
                 self.library_panel.update(cx, |panel, cx| {
                     panel.set_collections(collections, window, cx)
                 });
+                if let Some(id) = self.collection_view.read(cx).id() {
+                    let collection = self.collections.read(cx).get(id).cloned();
+                    self.collection_view
+                        .update(cx, |view, cx| view.show(id, collection, window, cx));
+                }
             }
             CollectionsEvent::Failed { title, error } => show_error(title, error, window, cx),
         }
     }
 
-    fn on_library_panel_event(&mut self, event: &LibraryPanelEvent) {
-        match event {
+    fn on_library_panel_event(
+        &mut self,
+        event: &LibraryPanelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match *event {
             LibraryPanelEvent::CreateCollection => tracing::info!("create collection requested"),
+            LibraryPanelEvent::OpenCollection(id) => {
+                self.navigate(AppRoute::Collection(id), window, cx)
+            }
+        }
+    }
+
+    fn on_collection_view_event(
+        &mut self,
+        event: &CollectionViewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            CollectionViewEvent::Rename { id, name } => {
+                let (id, name) = (*id, name.clone());
+                self.collections
+                    .update(cx, |collections, cx| collections.rename(id, id, name, cx));
+            }
+            CollectionViewEvent::Back => self.navigate(AppRoute::Request, window, cx),
         }
     }
 

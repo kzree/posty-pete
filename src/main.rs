@@ -5,6 +5,7 @@ use gpui_platform::application;
 mod actions;
 mod app;
 mod assets;
+mod collection_view;
 mod collections;
 mod domain;
 mod history;
