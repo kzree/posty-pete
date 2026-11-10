@@ -9,6 +9,13 @@ use crate::domain::{
     store::collection::CollectionStore,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadState {
+    Loading,
+    Loaded,
+    Failed,
+}
+
 pub enum CollectionsEvent {
     Changed,
     /// Sent once, after the initial load finished or failed.
@@ -28,7 +35,7 @@ pub enum CollectionsEvent {
 pub struct Collections {
     /// Sorted by name, case-insensitively.
     collections: Vec<Collection>,
-    loaded: bool,
+    load_state: LoadState,
     jobs: mpsc::UnboundedSender<Job>,
 }
 
@@ -64,7 +71,7 @@ impl Collections {
 
         Self {
             collections: Vec::new(),
-            loaded: false,
+            load_state: LoadState::Loading,
             jobs,
         }
     }
@@ -73,9 +80,8 @@ impl Collections {
         &self.collections
     }
 
-    /// Whether the initial load finished, successfully or not.
-    pub fn is_loaded(&self) -> bool {
-        self.loaded
+    pub fn load_state(&self) -> LoadState {
+        self.load_state
     }
 
     pub fn get(&self, id: Uuid) -> Option<&Collection> {
@@ -253,10 +259,10 @@ impl Collections {
         opened: anyhow::Result<(CollectionStore, anyhow::Result<Vec<Collection>>)>,
         cx: &mut Context<Self>,
     ) -> Option<CollectionStore> {
-        self.loaded = true;
         let (store, loaded) = match opened {
             Ok(opened) => opened,
             Err(error) => {
+                self.load_state = LoadState::Failed;
                 cx.emit(CollectionsEvent::Failed {
                     title: "Collections are unavailable",
                     error,
@@ -268,15 +274,19 @@ impl Collections {
 
         match loaded {
             Ok(loaded) => {
+                self.load_state = LoadState::Loaded;
                 self.collections.extend(loaded);
                 self.sort();
                 cx.emit(CollectionsEvent::Changed);
                 cx.notify();
             }
-            Err(error) => cx.emit(CollectionsEvent::Failed {
-                title: "Couldn't load collections",
-                error,
-            }),
+            Err(error) => {
+                self.load_state = LoadState::Failed;
+                cx.emit(CollectionsEvent::Failed {
+                    title: "Couldn't load collections",
+                    error,
+                });
+            }
         }
         cx.emit(CollectionsEvent::Loaded);
         Some(store)

@@ -93,15 +93,15 @@ impl Workspace {
         route_title(self.current_route(), self.collections.read(cx).all())
     }
 
-    /// Keeps the OS window title in step with the title bar. Setting it is an
-    /// AppKit call on macOS, so it only happens when the title changes.
+    /// Keeps the OS window title and edited dot in step. Each is an AppKit call
+    /// on macOS, so it only happens when the value changes.
     pub(super) fn sync_window_title(&mut self, window: &mut Window, cx: &App) {
         let title = self.title(cx).os_title();
         if self.os_window_title != title {
             window.set_window_title(&title);
             self.os_window_title = title;
         }
-        let edited = self.shows_dirty_request();
+        let edited = self.is_dirty();
         if self.os_window_edited != edited {
             window.set_window_edited(edited);
             self.os_window_edited = edited;

@@ -12,10 +12,13 @@ use super::{
     EditorContent, Workspace,
     routes::{AppRoute, RouteHistory},
 };
-use crate::domain::{
-    navigation::{NavEntry, SavedNavigation},
-    request::Request,
-    store::navigation::NavigationStore,
+use crate::{
+    collections::LoadState,
+    domain::{
+        navigation::{NavEntry, SavedNavigation},
+        request::Request,
+        store::navigation::NavigationStore,
+    },
 };
 
 const SAVE_DELAY: Duration = Duration::from_millis(500);
@@ -35,6 +38,8 @@ enum Phase {
     },
     /// Saving starts only here, so a stored history is never overwritten before it was restored.
     Saving(Writer),
+    /// Also used for the rest of the session when the collections failed to
+    /// load, so the stored history survives a temporary failure.
     Unavailable,
 }
 
@@ -44,6 +49,36 @@ impl PersistedNavigation {
             phase: Phase::Loading,
             scheduled_save: None,
         }
+    }
+
+    fn is_waiting_for_collections(&self) -> bool {
+        matches!(self.phase, Phase::Loaded { .. })
+    }
+
+    /// Ends the wait for the collections. Starts saving and returns the stored
+    /// navigation to restore if they loaded; otherwise never saves.
+    fn collections_loaded(&mut self, collections: LoadState) -> Option<SavedNavigation> {
+        let Phase::Loaded { store, saved } = mem::replace(&mut self.phase, Phase::Unavailable)
+        else {
+            return None;
+        };
+        if collections == LoadState::Failed {
+            tracing::warn!("collections failed to load: not restoring or saving navigation");
+            return None;
+        }
+        self.phase = Phase::Saving(Writer::new(store));
+        saved
+    }
+
+    fn save_job(&mut self, saved: SavedNavigation) -> Option<impl FnOnce() + Send + 'static> {
+        match &mut self.phase {
+            Phase::Saving(writer) => Some(writer.job(saved)),
+            _ => None,
+        }
+    }
+
+    fn is_saving(&self) -> bool {
+        matches!(self.phase, Phase::Saving(_))
     }
 }
 
@@ -136,18 +171,13 @@ impl Workspace {
 
     /// Restores the stored navigation if both it and the collections are loaded.
     pub(super) fn restore_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let persisted = &mut self.persisted_navigation;
-        if !self.collections.read(cx).is_loaded()
-            || !matches!(persisted.phase, Phase::Loaded { .. })
+        let collections = self.collections.read(cx).load_state();
+        if collections == LoadState::Loading
+            || !self.persisted_navigation.is_waiting_for_collections()
         {
             return;
         }
-        let Phase::Loaded { store, saved } = mem::replace(&mut persisted.phase, Phase::Unavailable)
-        else {
-            return;
-        };
-        persisted.phase = Phase::Saving(Writer::new(store));
-        match saved {
+        match self.persisted_navigation.collections_loaded(collections) {
             Some(saved) if self.navigation_untouched(cx) => {
                 self.apply_saved_navigation(saved, window, cx)
             }
@@ -201,7 +231,7 @@ impl Workspace {
     /// Saves the navigation a moment later, so bursts of changes write once.
     pub(super) fn schedule_navigation_save(&mut self, cx: &mut Context<Self>) {
         let persisted = &mut self.persisted_navigation;
-        if !matches!(persisted.phase, Phase::Saving(_)) || persisted.scheduled_save.is_some() {
+        if !persisted.is_saving() || persisted.scheduled_save.is_some() {
             return;
         }
         persisted.scheduled_save = Some(cx.spawn(async move |this, cx| {
@@ -225,7 +255,7 @@ impl Workspace {
     }
 
     fn navigation_save_job(&mut self, cx: &App) -> Option<impl FnOnce() + Send + 'static> {
-        if !matches!(self.persisted_navigation.phase, Phase::Saving(_)) {
+        if !self.persisted_navigation.is_saving() {
             return None;
         }
         let draft = match self.editor_content {
@@ -242,10 +272,7 @@ impl Workspace {
             index: self.route_history.index(),
             draft,
         };
-        let Phase::Saving(writer) = &mut self.persisted_navigation.phase else {
-            return None;
-        };
-        Some(writer.job(saved))
+        self.persisted_navigation.save_job(saved)
     }
 }
 
@@ -263,9 +290,88 @@ fn open_and_load() -> anyhow::Result<(NavigationStore, Option<SavedNavigation>)>
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
     use uuid::Uuid;
 
     use super::*;
+
+    struct TempFile(PathBuf);
+
+    impl TempFile {
+        fn new() -> Self {
+            let name = format!("posty-pete-test-{}-{}", std::process::id(), Uuid::new_v4());
+            let dir = std::env::temp_dir().join(name);
+            Self(dir.join("navigation.json"))
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            if let Some(dir) = self.0.parent() {
+                let _ = fs::remove_dir_all(dir);
+            }
+        }
+    }
+
+    fn navigation(entries: Vec<NavEntry>) -> SavedNavigation {
+        SavedNavigation {
+            entries,
+            index: 0,
+            draft: None,
+        }
+    }
+
+    /// `navigation.json` already holds `stored`, as read at startup.
+    fn loaded(file: &TempFile, stored: &SavedNavigation) -> PersistedNavigation {
+        let store = NavigationStore::new(file.0.clone());
+        store.save(stored).unwrap();
+        PersistedNavigation {
+            phase: Phase::Loaded {
+                store,
+                saved: Some(stored.clone()),
+            },
+            scheduled_save: None,
+        }
+    }
+
+    #[test]
+    fn failed_collections_skip_the_restore_and_leave_the_file_alone() {
+        let file = TempFile::new();
+        let stored = navigation(vec![NavEntry::Settings]);
+        let mut persisted = loaded(&file, &stored);
+        let before = fs::read(&file.0).unwrap();
+
+        assert!(persisted.collections_loaded(LoadState::Failed).is_none());
+        assert!(!persisted.is_saving());
+        assert!(
+            persisted
+                .save_job(navigation(vec![NavEntry::Draft]))
+                .is_none()
+        );
+        assert_eq!(fs::read(&file.0).unwrap(), before);
+    }
+
+    #[test]
+    fn loaded_collections_restore_and_start_saving() {
+        let file = TempFile::new();
+        let stored = navigation(vec![NavEntry::Settings]);
+        let mut persisted = loaded(&file, &stored);
+
+        assert_eq!(
+            persisted.collections_loaded(LoadState::Loaded),
+            Some(stored)
+        );
+        let job = persisted
+            .save_job(navigation(vec![NavEntry::Draft]))
+            .unwrap();
+        job();
+        let store = NavigationStore::new(file.0.clone());
+        assert_eq!(
+            store.load().unwrap(),
+            Some(navigation(vec![NavEntry::Draft]))
+        );
+    }
 
     #[test]
     fn routes_round_trip_through_nav_entries() {

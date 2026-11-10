@@ -4,7 +4,7 @@ use gpui_component::{Root, WindowExt};
 use super::Workspace;
 use crate::actions::{
     FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings, QuickOpen,
-    SaveRequest, ToggleSidebar,
+    SaveRequest, SendRequest, ToggleSidebar,
 };
 
 /// Menu items dispatch to the focused element, so with focus outside the
@@ -12,6 +12,7 @@ use crate::actions::{
 /// would be disabled. These app-level handlers only run when nothing on the
 /// focus path handled the action; they focus the Workspace and dispatch again.
 pub fn init(cx: &mut App) {
+    forward::<SendRequest>(cx);
     forward::<SaveRequest>(cx);
     forward::<NewRequest>(cx);
     forward::<GoBack>(cx);

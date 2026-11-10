@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
-use gpui::{App, ParentElement as _, SharedString, Window};
+use gpui::{App, ParentElement as _, SharedString, Styled as _, Window};
 use gpui_component::{
     WindowExt as _,
     button::{Button, ButtonVariants as _},
     dialog::DialogFooter,
+    h_flex,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,7 +15,8 @@ pub enum SaveChoice {
     Cancel,
 }
 
-/// Asks whether to save changes to `name` before they're replaced. Enter picks
+/// Asks whether to save changes to `name` before they're replaced. Laid out
+/// like macOS: Discard on the left, Cancel and Save on the right. Enter picks
 /// Save and Escape picks Cancel. The dialog is closed before `on_choice` runs.
 pub fn open_save_changes_dialog(
     name: impl Into<SharedString>,
@@ -52,6 +54,7 @@ pub fn open_save_changes_dialog(
             })
             .footer(
                 DialogFooter::new()
+                    .justify_between()
                     .child(
                         Button::new("discard")
                             .label("Discard")
@@ -59,15 +62,19 @@ pub fn open_save_changes_dialog(
                             .on_click(move |_, window, cx| discard(window, cx)),
                     )
                     .child(
-                        Button::new("cancel")
-                            .label("Cancel")
-                            .on_click(move |_, window, cx| cancel(window, cx)),
-                    )
-                    .child(
-                        Button::new("save")
-                            .label("Save")
-                            .primary()
-                            .on_click(move |_, window, cx| save(window, cx)),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("cancel")
+                                    .label("Cancel")
+                                    .on_click(move |_, window, cx| cancel(window, cx)),
+                            )
+                            .child(
+                                Button::new("save")
+                                    .label("Save")
+                                    .primary()
+                                    .on_click(move |_, window, cx| save(window, cx)),
+                            ),
                     ),
             )
     });

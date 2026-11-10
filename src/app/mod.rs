@@ -510,7 +510,12 @@ impl Workspace {
                 request_id,
             } => self
                 .find_saved_request(collection_id, request_id, cx)
-                .map(|saved| saved.name.clone()),
+                .map(|saved| {
+                    self.request_editor
+                        .read(cx)
+                        .name(cx)
+                        .unwrap_or_else(|| saved.name.clone())
+                }),
             EditorContent::Draft => None,
         };
         // Ignored while a prompt is already open.
@@ -575,10 +580,14 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        debug_assert!(
-            !self.is_dirty() || self.discard_confirmed,
-            "unsaved changes replaced without confirm_discard"
-        );
+        if self.is_dirty() && !self.discard_confirmed {
+            tracing::error!("unsaved changes replaced without confirm_discard");
+            window.push_notification(
+                Notification::error("Your unsaved changes to the request were discarded.")
+                    .title("Unsaved changes lost"),
+                cx,
+            );
+        }
         self.draft = match (self.editor_content, content) {
             (EditorContent::Draft, EditorContent::Saved { .. }) => {
                 Some(self.request_editor.read(cx).build_request(cx))
