@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 use gpui::{
-    AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, ParentElement,
-    Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window, div, px,
+    AppContext, ClipboardItem, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    ParentElement, Render, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window,
+    div, px,
 };
 use gpui_component::{
     ActiveTheme, ResizableState, h_resizable, input::Escape, resizable_panel, v_resizable,
@@ -16,7 +17,7 @@ use crate::{
         WORKSPACE_CONTEXT,
     },
     domain::{
-        self, http,
+        self, curl, http,
         request::Request,
         response::Response,
         store::history::{HistoryRecord, Outcome},
@@ -118,6 +119,18 @@ impl Workspace {
                     let id = *id;
                     this.history
                         .update(cx, |history, cx| history.open(id, OpenMode::Send, cx));
+                }
+                HistoryPanelEvent::CopyAsCurl(id) => {
+                    let request = this.history.read(cx).request(*id, cx);
+                    cx.spawn(async move |_, cx| {
+                        if let Some(request) = request.await {
+                            let command = curl::to_curl(&request);
+                            cx.update(|cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(command))
+                            });
+                        }
+                    })
+                    .detach();
                 }
                 HistoryPanelEvent::Delete(id) => {
                     let id = *id;

@@ -21,7 +21,7 @@ fn form_data(fields: &[KeyValue]) -> Form {
     })
 }
 
-fn active(items: &[KeyValue]) -> impl Iterator<Item = (&str, &str)> {
+pub(super) fn active(items: &[KeyValue]) -> impl Iterator<Item = (&str, &str)> {
     items
         .iter()
         .filter(|kv| kv.enabled && !kv.key.is_empty())

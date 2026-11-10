@@ -1,7 +1,13 @@
-use gpui::{Context, IntoElement};
-use gpui_component::tab::TabBar;
+use gpui::{Anchor, ClipboardItem, Context, IntoElement};
+use gpui_component::{
+    IconName, Sizable,
+    button::{Button, ButtonVariants},
+    menu::{DropdownMenu, PopupMenuItem},
+    tab::TabBar,
+};
 
 use super::RequestEditor;
+use crate::domain::curl;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum RequestTab {
@@ -38,5 +44,28 @@ impl RequestEditor {
                 cx.notify();
             }))
             .children(RequestTab::ALL.map(RequestTab::label))
+            .suffix(self.render_more_menu(cx))
+    }
+
+    fn render_more_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor = cx.weak_entity();
+        Button::new("request-more")
+            .icon(IconName::Ellipsis)
+            .ghost()
+            .xsmall()
+            .tooltip("More actions")
+            .accessibility_label("More actions")
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                let editor = editor.clone();
+                menu.item(
+                    PopupMenuItem::new("Copy as cURL").on_click(move |_, _, cx| {
+                        let command = editor
+                            .read_with(cx, |editor, cx| curl::to_curl(&editor.build_request(cx)));
+                        if let Ok(command) = command {
+                            cx.write_to_clipboard(ClipboardItem::new_string(command));
+                        }
+                    }),
+                )
+            })
     }
 }

@@ -28,6 +28,7 @@ pub enum HistoryPanelEvent {
     Open(i64),
     /// Open the entry and send it right away.
     SendAgain(i64),
+    CopyAsCurl(i64),
     Delete(i64),
     /// The user confirmed clearing all history.
     Clear,
@@ -360,6 +361,14 @@ fn context_menu(
             .item(open_item("Send again", true))
             .item(PopupMenuItem::new("Copy URL").on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+            }))
+            .item(PopupMenuItem::new("Copy as cURL").on_click({
+                let panel = panel.clone();
+                move |_, _, cx| {
+                    panel
+                        .update(cx, |_, cx| cx.emit(HistoryPanelEvent::CopyAsCurl(id)))
+                        .ok();
+                }
             }))
             .separator()
             .item(

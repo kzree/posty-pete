@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context as _;
 use chrono::Local;
-use gpui::{AppContext, Context, EventEmitter};
+use gpui::{App, AppContext, Context, EventEmitter, Task};
 
 use crate::domain::{
     request::Request,
@@ -63,28 +63,36 @@ impl History {
     }
 
     pub fn open(&mut self, id: i64, mode: OpenMode, cx: &mut Context<Self>) {
-        let store = match &mut self.state {
-            State::Ready(store) => store.clone(),
-            _ => return,
-        };
-
+        let request = self.request(id, cx);
         cx.spawn(async move |this, cx| {
-            let res = cx
-                .background_spawn(async move { lock(&store).get(id) })
-                .await;
-
-            match res {
-                Ok(Some(req)) => {
-                    this.update(cx, |_, cx| {
-                        cx.emit(HistoryEvent::Opened { request: req, mode })
-                    })
+            if let Some(request) = request.await {
+                this.update(cx, |_, cx| cx.emit(HistoryEvent::Opened { request, mode }))
                     .ok();
-                }
-                Ok(None) => tracing::warn!("history entry {id} not found"),
-                Err(e) => tracing::warn!("failed to get request from history: {e:#}"),
             }
         })
         .detach();
+    }
+
+    /// Loads an entry's full request. Failures are logged and give `None`.
+    pub fn request(&self, id: i64, cx: &App) -> Task<Option<Request>> {
+        let State::Ready(store) = &self.state else {
+            return Task::ready(None);
+        };
+        let store = store.clone();
+
+        cx.background_spawn(async move {
+            match lock(&store).get(id) {
+                Ok(Some(request)) => Some(request),
+                Ok(None) => {
+                    tracing::warn!("history entry {id} not found");
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!("failed to get request from history: {e:#}");
+                    None
+                }
+            }
+        })
     }
 
     pub fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
