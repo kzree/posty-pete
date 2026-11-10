@@ -132,7 +132,7 @@ impl ListDelegate for HistoryDelegate {
                 .text_sm()
                 .child(
                     h_flex()
-                        .flex_1()
+                        .w_full()
                         .min_w_0()
                         .gap_2()
                         .child(
@@ -144,9 +144,9 @@ impl ListDelegate for HistoryDelegate {
                                 .text_color(cx.theme().muted_foreground)
                                 .child(method),
                         )
-                        .child(div().flex_1().min_w_0().truncate().child(url)),
-                )
-                .child(status),
+                        .child(div().flex_1().min_w_0().truncate().child(url))
+                        .child(status.flex_none()),
+                ),
         )
     }
 
