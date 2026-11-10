@@ -27,7 +27,9 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Settings tab content.** The sidebar's Settings tab is a placeholder (theme, request timeout, ...).
 - [ ] **Library, history, environments.** Content for the sidebar's Library and History tabs, persistence, and `{{variable}}` substitution (see Planned scope in AGENTS.md).
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
-- [ ] **History retention setting.** 14 days is hard-coded (`RETENTION` in `domain/history.rs`); make it configurable in the Settings tab.
+- [ ] **History retention setting.** 14 days is hard-coded (`RETENTION_DAYS` in `domain/store/history.rs`); make it configurable in the Settings tab.
+- [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
+- [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
 - [ ] **Extract `Workspace` into `app.rs`.** `BaseLayout` currently lives in `main.rs`.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
