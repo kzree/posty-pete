@@ -7,6 +7,7 @@ actions!(
         ToggleSidebar,
         OpenLibrary,
         OpenHistory,
+        OpenTests,
         OpenSettings,
         FocusUrl
     ]
@@ -23,6 +24,7 @@ mod keys {
     pub const LIBRARY: &str = "cmd-1";
     pub const HISTORY: &str = "cmd-2";
     pub const HISTORY_ALT: &str = "cmd-y";
+    pub const TESTS: &str = "cmd-3";
     pub const SETTINGS: &str = "cmd-,";
     pub const FOCUS_URL: &str = "cmd-l";
 }
@@ -33,6 +35,7 @@ mod keys {
     pub const LIBRARY: &str = "ctrl-1";
     pub const HISTORY: &str = "ctrl-2";
     pub const HISTORY_ALT: &str = "ctrl-h";
+    pub const TESTS: &str = "ctrl-3";
     pub const SETTINGS: &str = "ctrl-,";
     pub const FOCUS_URL: &str = "ctrl-l";
 }
@@ -46,6 +49,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::LIBRARY, OpenLibrary, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::HISTORY_ALT, OpenHistory, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::HISTORY, OpenHistory, Some(WORKSPACE_CONTEXT)),
+        KeyBinding::new(keys::TESTS, OpenTests, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::SETTINGS, OpenSettings, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::FOCUS_URL, FocusUrl, Some(WORKSPACE_CONTEXT)),
     ]);

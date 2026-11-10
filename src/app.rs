@@ -12,7 +12,7 @@ use tokio::task::JoinError;
 
 use crate::{
     actions::{
-        FocusUrl, OpenHistory, OpenLibrary, OpenSettings, SendRequest, ToggleSidebar,
+        FocusUrl, OpenHistory, OpenLibrary, OpenSettings, OpenTests, SendRequest, ToggleSidebar,
         WORKSPACE_CONTEXT,
     },
     domain::{
@@ -239,8 +239,11 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &OpenHistory, _, cx| {
                 this.open_sidebar_tab(SidebarTab::History, cx);
             }))
-            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| {
-                this.open_sidebar_tab(SidebarTab::Settings, cx);
+            .on_action(cx.listener(|this, _: &OpenTests, _, cx| {
+                this.open_sidebar_tab(SidebarTab::Tests, cx);
+            }))
+            .on_action(cx.listener(|_, _: &OpenSettings, _, _| {
+                tracing::info!("settings page isn't implemented yet");
             }))
             .on_action(cx.listener(|this, _: &FocusUrl, window, cx| {
                 this.request_editor

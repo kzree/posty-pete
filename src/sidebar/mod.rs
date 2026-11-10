@@ -3,7 +3,7 @@ use gpui::{
     Styled, Window, div,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Icon, IconName,
+    ActiveTheme, Colorize, Icon,
     tab::{Tab, TabBar},
     tooltip::Tooltip,
     v_flex,
@@ -20,17 +20,17 @@ pub enum SidebarTab {
     #[default]
     Library,
     History,
-    Settings,
+    Tests,
 }
 
 impl SidebarTab {
-    const ALL: [SidebarTab; 3] = [Self::Library, Self::History, Self::Settings];
+    const ALL: [SidebarTab; 3] = [Self::Library, Self::History, Self::Tests];
 
     fn label(self) -> &'static str {
         match self {
             Self::Library => "Library",
             Self::History => "History",
-            Self::Settings => "Settings",
+            Self::Tests => "Tests",
         }
     }
 
@@ -38,7 +38,7 @@ impl SidebarTab {
         match self {
             Self::Library => Icon::new(LucideIcon::LibraryBig),
             Self::History => Icon::new(LucideIcon::RotateCcwClock),
-            Self::Settings => Icon::new(IconName::Settings),
+            Self::Tests => Icon::new(LucideIcon::FlaskConical),
         }
     }
 
@@ -86,7 +86,7 @@ impl Render for Sidebar {
         let content = match self.active_tab {
             SidebarTab::History => content.child(self.history_panel.clone()),
             SidebarTab::Library => content.child(placeholder("Your library is empty.", cx)),
-            SidebarTab::Settings => content.child(placeholder("Settings coming soon.", cx)),
+            SidebarTab::Tests => content.child(placeholder("Tests coming soon.", cx)),
         };
 
         v_flex()

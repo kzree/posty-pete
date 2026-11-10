@@ -3,7 +3,10 @@ use std::borrow::Cow;
 use gpui::{AssetSource, Result, SharedString};
 
 // Lucide icons beyond the default set that `Assets` embeds.
-gpui_kit_assets::icon_assets!(ExtraIcons, [Dot, LibraryBig, RotateCcwClock, Trash]);
+gpui_kit_assets::icon_assets!(
+    ExtraIcons,
+    [Dot, FlaskConical, LibraryBig, RotateCcwClock, Trash]
+);
 
 pub struct AppAssets;
 
