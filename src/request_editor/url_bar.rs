@@ -26,7 +26,7 @@ impl RequestEditor {
                 Button::new("save")
                     .outline()
                     .label("Save")
-                    .disabled(!self.can_save)
+                    .disabled(!self.can_save())
                     .tooltip_with_action("Save request", &SaveRequest, Some(WORKSPACE_CONTEXT))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(RequestEditorEvent::Save))),
             )

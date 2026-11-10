@@ -194,6 +194,8 @@ impl Workspace {
                         .is_none()
                 {
                     self.set_open_request(None, window, cx);
+                } else {
+                    self.sync_editor_name(window, cx);
                 }
                 if let Some(id) = self.collection_view.read(cx).id() {
                     let collection = self.collections.read(cx).get(id).cloned();
@@ -307,7 +309,7 @@ impl Workspace {
         }
         let Some(request) = self
             .find_saved_request(collection_id, request_id, cx)
-            .cloned()
+            .map(|saved| saved.request.clone())
         else {
             return;
         };
@@ -341,12 +343,11 @@ impl Workspace {
         collection_id: Uuid,
         request_id: Uuid,
         cx: &'a App,
-    ) -> Option<&'a domain::request::Request> {
+    ) -> Option<&'a domain::collection::SavedRequest> {
         self.collections
             .read(cx)
             .get(collection_id)?
             .find_request(request_id)
-            .map(|saved| &saved.request)
     }
 
     fn set_open_request(
@@ -360,9 +361,19 @@ impl Workspace {
         self.library_panel.update(cx, |panel, cx| {
             panel.set_selected_request(request_id, window, cx)
         });
-        self.request_editor.update(cx, |editor, cx| {
-            editor.set_can_save(open_request.is_some(), cx)
-        });
+        self.sync_editor_name(window, cx);
+    }
+
+    /// Hands the editor the stored name of the open request.
+    fn sync_editor_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self
+            .open_request
+            .and_then(|(collection_id, request_id)| {
+                self.find_saved_request(collection_id, request_id, cx)
+            })
+            .map(|saved| saved.name.clone());
+        self.request_editor
+            .update(cx, |editor, cx| editor.set_saved_name(name, window, cx));
     }
 
     fn save_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -372,9 +383,12 @@ impl Workspace {
         let Some((collection_id, request_id)) = self.open_request else {
             return;
         };
-        let request = self.request_editor.read(cx).build_request(cx);
+        let (request, name) = self.request_editor.update(cx, |editor, cx| {
+            editor.tidy_name(window, cx);
+            (editor.build_request(cx), editor.name(cx))
+        });
         self.collections.update(cx, |collections, cx| {
-            collections.update_request(collection_id, request_id, request, cx)
+            collections.update_request(collection_id, request_id, request, name, cx)
         });
         window.push_notification(Notification::success("Saved"), cx);
     }

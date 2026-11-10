@@ -132,11 +132,13 @@ impl Collections {
             .then_some(id)
     }
 
+    /// Replaces the saved request, and renames it too if `name` is given.
     pub fn update_request(
         &mut self,
         collection_id: Uuid,
         request_id: Uuid,
         request: Request,
+        name: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let updated = self.modify(collection_id, |collection| {
@@ -144,6 +146,9 @@ impl Collections {
                 return false;
             };
             saved.request = request;
+            if let Some(name) = name {
+                saved.name = name;
+            }
             true
         });
         if updated {

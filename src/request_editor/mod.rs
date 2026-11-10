@@ -6,11 +6,11 @@ mod url_bar;
 
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window, div,
+    Subscription, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
-    IndexPath,
-    input::{InputEvent, InputState},
+    IndexPath, StyledExt,
+    input::{Input, InputEvent, InputState},
     scroll::ScrollableElement,
     select::SelectState,
     v_flex,
@@ -28,6 +28,9 @@ pub enum RequestEditorEvent {
 }
 
 pub struct RequestEditor {
+    name: Entity<InputState>,
+    /// The stored name of the linked saved request; `None` while unlinked.
+    saved_name: Option<String>,
     method: Entity<SelectState<Vec<MethodItem>>>,
     url: Entity<InputState>,
     active_tab: RequestTab,
@@ -36,7 +39,6 @@ pub struct RequestEditor {
     body: Entity<BodyEditor>,
     auth: Entity<AuthEditor>,
     loading: bool,
-    can_save: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -59,12 +61,21 @@ impl RequestEditor {
             },
         );
 
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Request name"));
+        let name_sub = cx.subscribe(&name, |_, _, event: &InputEvent, cx| {
+            if let InputEvent::PressEnter { .. } = event {
+                cx.emit(RequestEditorEvent::Save);
+            }
+        });
+
         let params = cx.new(|cx| KeyValueEditor::new("parameter", window, cx));
         let headers = cx.new(|cx| KeyValueEditor::new("header", window, cx));
         let body = cx.new(|cx| BodyEditor::new(window, cx));
         let auth = cx.new(|cx| AuthEditor::new(window, cx));
 
         Self {
+            name,
+            saved_name: None,
             method,
             url,
             active_tab: RequestTab::Params,
@@ -73,8 +84,7 @@ impl RequestEditor {
             body,
             auth,
             loading: false,
-            can_save: false,
-            _subscriptions: vec![sub],
+            _subscriptions: vec![sub, name_sub],
         }
     }
 
@@ -83,9 +93,50 @@ impl RequestEditor {
         cx.notify();
     }
 
-    pub fn set_can_save(&mut self, can_save: bool, cx: &mut Context<Self>) {
-        self.can_save = can_save;
+    fn can_save(&self) -> bool {
+        self.saved_name.is_some()
+    }
+
+    /// Links the editor to a saved request with this stored name (`None` unlinks).
+    /// When only the stored name changes, an unsaved edit of the name field is kept.
+    pub fn set_saved_name(
+        &mut self,
+        saved_name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let value = self.name.read(cx).value();
+        let current = value.trim();
+        let replace = match (&self.saved_name, &saved_name) {
+            (Some(old), Some(new)) => old != new && (current == old || current == new),
+            _ => true,
+        };
+        if replace {
+            self.set_name_value(saved_name.clone().unwrap_or_default(), window, cx);
+        }
+        self.saved_name = saved_name;
         cx.notify();
+    }
+
+    /// The trimmed name, or `None` if it's empty.
+    pub fn name(&self, cx: &App) -> Option<String> {
+        let value = self.name.read(cx).value();
+        let name = value.trim();
+        (!name.is_empty()).then(|| name.to_string())
+    }
+
+    /// Trims the name field, or puts the stored name back if it's empty.
+    pub fn tidy_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(value) = self.name(cx).or_else(|| self.saved_name.clone()) {
+            self.set_name_value(value, window, cx);
+        }
+    }
+
+    fn set_name_value(&mut self, value: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.name.read(cx).value() != value {
+            self.name
+                .update(cx, |input, cx| input.set_value(value, window, cx));
+        }
     }
 
     pub fn focus_url(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -95,7 +146,9 @@ impl RequestEditor {
         });
     }
 
+    /// Loads `request` unlinked; call `set_saved_name` afterwards to link it.
     pub fn load_request(&mut self, request: &Request, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_saved_name(None, window, cx);
         self.method.update(cx, |method, cx| {
             method.set_selected_value(&request.method, window, cx)
         });
@@ -164,6 +217,15 @@ impl Render for RequestEditor {
             .size_full()
             .p_4()
             .gap_2()
+            .when(self.saved_name.is_some(), |this| {
+                this.child(
+                    Input::new(&self.name)
+                        .appearance(false)
+                        .text_lg()
+                        .font_semibold()
+                        .aria_label("Request name"),
+                )
+            })
             .child(self.render_url_bar(cx))
             .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().child(content))
