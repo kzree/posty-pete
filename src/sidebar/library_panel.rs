@@ -140,6 +140,7 @@ impl LibraryPanel {
         let title = match target {
             MenuTarget::Collection(_) => "Rename collection",
             MenuTarget::Folder { .. } => "Rename folder",
+            MenuTarget::Request { .. } => "Rename request",
         };
         let panel = cx.weak_entity();
         open_rename_dialog(
@@ -177,6 +178,10 @@ impl LibraryPanel {
                 "Delete folder?",
                 format!("“{name}” and everything in it will be deleted. This can't be undone."),
             ),
+            MenuTarget::Request { .. } => (
+                "Delete request?",
+                format!("“{name}” will be deleted. This can't be undone."),
+            ),
         };
         let panel = cx.weak_entity();
         open_confirm_dialog(
@@ -186,13 +191,12 @@ impl LibraryPanel {
             move |_, cx| {
                 let event = match target {
                     MenuTarget::Collection(id) => LibraryPanelEvent::DeleteCollection(id),
-                    MenuTarget::Folder {
-                        collection_id,
-                        folder_id,
-                    } => LibraryPanelEvent::DeleteItem {
-                        collection_id,
-                        item_id: folder_id,
-                    },
+                    MenuTarget::Folder { .. } | MenuTarget::Request { .. } => {
+                        LibraryPanelEvent::DeleteItem {
+                            collection_id: target.collection_id(),
+                            item_id: target.id(),
+                        }
+                    }
                 };
                 panel.update(cx, |_, cx| cx.emit(event)).ok();
             },
@@ -201,7 +205,7 @@ impl LibraryPanel {
         );
     }
 
-    fn add_folder(&mut self, target: MenuTarget, window: &mut Window, cx: &mut Context<Self>) {
+    fn add_folder(&mut self, parent: Container, window: &mut Window, cx: &mut Context<Self>) {
         let panel = cx.weak_entity();
         open_rename_dialog(
             "New folder",
@@ -210,10 +214,10 @@ impl LibraryPanel {
             move |name, _, cx| {
                 panel
                     .update(cx, |this, cx| {
-                        this.update_rows(cx, |delegate| delegate.expand(target.id()));
+                        this.update_rows(cx, |delegate| delegate.expand(parent.id()));
                         cx.emit(LibraryPanelEvent::AddFolder {
-                            collection_id: target.collection_id(),
-                            parent: target.folder_id(),
+                            collection_id: parent.collection_id,
+                            parent: parent.folder_id,
                             name,
                         })
                     })
@@ -224,11 +228,11 @@ impl LibraryPanel {
         );
     }
 
-    fn add_request(&mut self, target: MenuTarget, cx: &mut Context<Self>) {
-        self.update_rows(cx, |delegate| delegate.expand(target.id()));
+    fn add_request(&mut self, parent: Container, cx: &mut Context<Self>) {
+        self.update_rows(cx, |delegate| delegate.expand(parent.id()));
         cx.emit(LibraryPanelEvent::AddRequest {
-            collection_id: target.collection_id(),
-            parent: target.folder_id(),
+            collection_id: parent.collection_id,
+            parent: parent.folder_id,
         });
     }
 
@@ -314,45 +318,52 @@ fn context_menu(
         })
         .detach();
 
-    let (add_request_panel, add_folder_panel, rename_panel, delete_panel) =
-        (panel.clone(), panel.clone(), panel.clone(), panel.clone());
-    let add_request = PopupMenuItem::new("Add request").on_click(move |_, _, cx| {
-        add_request_panel
-            .update(cx, |panel, cx| panel.add_request(target, cx))
-            .ok();
-    });
-    menu.item(add_request)
-        .item(
-            PopupMenuItem::new("Add folder").on_click(move |_, window, cx| {
-                add_folder_panel
-                    .update(cx, |panel, cx| panel.add_folder(target, window, cx))
+    let mut menu = menu;
+    if let Some(parent) = target.container() {
+        let (add_request_panel, add_folder_panel) = (panel.clone(), panel.clone());
+        menu = menu
+            .item(PopupMenuItem::new("Add request").on_click(move |_, _, cx| {
+                add_request_panel
+                    .update(cx, |panel, cx| panel.add_request(parent, cx))
                     .ok();
-            }),
-        )
-        .separator()
-        .item(
-            PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
-                rename_panel
-                    .update(cx, |panel, cx| panel.rename(target, window, cx))
-                    .ok();
-            }),
-        )
-        .item(
-            PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
-                delete_panel
-                    .update(cx, |panel, cx| panel.delete(target, window, cx))
-                    .ok();
-            }),
-        )
+            }))
+            .item(
+                PopupMenuItem::new("Add folder").on_click(move |_, window, cx| {
+                    add_folder_panel
+                        .update(cx, |panel, cx| panel.add_folder(parent, window, cx))
+                        .ok();
+                }),
+            )
+            .separator();
+    }
+    let (rename_panel, delete_panel) = (panel.clone(), panel.clone());
+    menu.item(
+        PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
+            rename_panel
+                .update(cx, |panel, cx| panel.rename(target, window, cx))
+                .ok();
+        }),
+    )
+    .item(
+        PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
+            delete_panel
+                .update(cx, |panel, cx| panel.delete(target, window, cx))
+                .ok();
+        }),
+    )
 }
 
-/// A collection or folder row: anything that can hold folders and requests.
+/// A collection, folder or request row that has a context menu.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum MenuTarget {
     Collection(Uuid),
     Folder {
         collection_id: Uuid,
         folder_id: Uuid,
+    },
+    Request {
+        collection_id: Uuid,
+        request_id: Uuid,
     },
 }
 
@@ -361,6 +372,7 @@ impl MenuTarget {
         match self {
             Self::Collection(id) => id,
             Self::Folder { folder_id, .. } => folder_id,
+            Self::Request { request_id, .. } => request_id,
         }
     }
 
@@ -369,15 +381,42 @@ impl MenuTarget {
             Self::Collection(id)
             | Self::Folder {
                 collection_id: id, ..
+            }
+            | Self::Request {
+                collection_id: id, ..
             } => id,
         }
     }
 
-    fn folder_id(self) -> Option<Uuid> {
+    /// `None` for requests, which can't hold anything.
+    fn container(self) -> Option<Container> {
         match self {
-            Self::Collection(_) => None,
-            Self::Folder { folder_id, .. } => Some(folder_id),
+            Self::Collection(collection_id) => Some(Container {
+                collection_id,
+                folder_id: None,
+            }),
+            Self::Folder {
+                collection_id,
+                folder_id,
+            } => Some(Container {
+                collection_id,
+                folder_id: Some(folder_id),
+            }),
+            Self::Request { .. } => None,
         }
+    }
+}
+
+/// Where new folders and requests go; `folder_id` is `None` for the collection root.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Container {
+    collection_id: Uuid,
+    folder_id: Option<Uuid>,
+}
+
+impl Container {
+    fn id(self) -> Uuid {
+        self.folder_id.unwrap_or(self.collection_id)
     }
 }
 
@@ -449,7 +488,16 @@ impl LibraryDelegate {
                 collection_id: *collection_id,
                 folder_id: *id,
             }),
-            _ => None,
+            Row::Node(Node {
+                id,
+                collection_id,
+                kind: NodeKind::Request(_),
+                ..
+            }) => Some(MenuTarget::Request {
+                collection_id: *collection_id,
+                request_id: *id,
+            }),
+            Row::Section { .. } => None,
         }
     }
 
@@ -494,6 +542,9 @@ impl LibraryDelegate {
             MenuTarget::Folder { folder_id, .. } => collection
                 .find_folder(folder_id)
                 .map(|folder| folder.name.clone()),
+            MenuTarget::Request { request_id, .. } => collection
+                .find_request(request_id)
+                .map(|request| request.name.clone()),
         }
     }
 
@@ -747,6 +798,7 @@ mod tests {
         outer: Uuid,
         inner: Uuid,
         root: Uuid,
+        deep: Uuid,
     }
 
     /// API: Root request, Outer > Inner > Deep request.
@@ -755,19 +807,18 @@ mod tests {
         let outer = Folder::new("Outer");
         let inner = Folder::new("Inner");
         let root = SavedRequest::new("Root", request(HttpMethod::Get));
+        let deep = SavedRequest::new("Deep", request(HttpMethod::Post));
         let ids = Ids {
             collection: collection.id,
             outer: outer.id,
             inner: inner.id,
             root: root.id,
+            deep: deep.id,
         };
         collection.add_item(None, Item::Request(root));
         collection.add_item(None, Item::Folder(outer));
         collection.add_item(Some(ids.outer), Item::Folder(inner));
-        collection.add_item(
-            Some(ids.inner),
-            Item::Request(SavedRequest::new("Deep", request(HttpMethod::Post))),
-        );
+        collection.add_item(Some(ids.inner), Item::Request(deep));
         (vec![collection, Collection::new("Empty")], ids)
     }
 
@@ -925,18 +976,36 @@ mod tests {
     }
 
     #[test]
-    fn menu_targets_are_collections_and_folders() {
+    fn menu_targets_are_collections_folders_and_requests() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
         delegate.set_collections(collections);
         delegate.toggle_at(1);
         delegate.toggle_at(3);
         assert_eq!(delegate.menu_target_at(0), None);
+        let collection = delegate.menu_target_at(1).unwrap();
+        assert_eq!(collection, MenuTarget::Collection(ids.collection));
         assert_eq!(
-            delegate.menu_target_at(1),
-            Some(MenuTarget::Collection(ids.collection))
+            collection.container(),
+            Some(Container {
+                collection_id: ids.collection,
+                folder_id: None
+            })
         );
-        assert_eq!(delegate.menu_target_at(2), None);
+        assert_eq!(collection.container().unwrap().id(), ids.collection);
+
+        let request = delegate.menu_target_at(2).unwrap();
+        assert_eq!(
+            request,
+            MenuTarget::Request {
+                collection_id: ids.collection,
+                request_id: ids.root
+            }
+        );
+        assert_eq!(request.id(), ids.root);
+        assert_eq!(request.collection_id(), ids.collection);
+        assert_eq!(request.container(), None);
+
         let folder = delegate.menu_target_at(3).unwrap();
         assert_eq!(
             folder,
@@ -947,13 +1016,19 @@ mod tests {
         );
         assert_eq!(folder.id(), ids.outer);
         assert_eq!(folder.collection_id(), ids.collection);
-        assert_eq!(folder.folder_id(), Some(ids.outer));
-        assert_eq!(MenuTarget::Collection(ids.collection).folder_id(), None);
+        assert_eq!(
+            folder.container(),
+            Some(Container {
+                collection_id: ids.collection,
+                folder_id: Some(ids.outer)
+            })
+        );
+        assert_eq!(folder.container().unwrap().id(), ids.outer);
         assert_eq!(delegate.menu_target_at(99), None);
     }
 
     #[test]
-    fn target_names_come_from_collections_and_nested_folders() {
+    fn target_names_come_from_collections_and_nested_items() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
         delegate.set_collections(collections);
@@ -970,6 +1045,14 @@ mod tests {
             Some("Inner".into())
         );
         assert_eq!(delegate.target_name(folder(Uuid::new_v4())), None);
+        let request = |request_id| MenuTarget::Request {
+            collection_id: ids.collection,
+            request_id,
+        };
+        assert_eq!(delegate.target_name(request(ids.root)), Some("Root".into()));
+        assert_eq!(delegate.target_name(request(ids.deep)), Some("Deep".into()));
+        assert_eq!(delegate.target_name(request(ids.inner)), None);
+        assert_eq!(delegate.target_name(folder(ids.deep)), None);
         assert_eq!(
             delegate.target_name(MenuTarget::Collection(Uuid::new_v4())),
             None
