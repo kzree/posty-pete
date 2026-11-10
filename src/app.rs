@@ -21,7 +21,7 @@ use crate::{
         response::Response,
         store::history::{HistoryRecord, Outcome},
     },
-    history::{History, HistoryEvent},
+    history::{History, HistoryEvent, OpenMode},
     request_editor::{RequestEditor, RequestEditorEvent},
     response_view::ResponseView,
     sidebar::{
@@ -88,11 +88,14 @@ impl Workspace {
                 HistoryEvent::Recorded(summary) => this
                     .history_panel
                     .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
-                HistoryEvent::Opened(request) => {
+                HistoryEvent::Opened { request, mode } => {
                     this.request_editor
                         .update(cx, |editor, cx| editor.load_request(request, window, cx));
                     this.response_view
                         .update(cx, |view, cx| view.clear(window, cx));
+                    if *mode == OpenMode::Send {
+                        this.request_editor.update(cx, |editor, cx| editor.send(cx));
+                    }
                 }
                 HistoryEvent::Deleted(id) => this
                     .history_panel
@@ -108,7 +111,13 @@ impl Workspace {
             |this, _, event: &HistoryPanelEvent, cx| match event {
                 HistoryPanelEvent::Open(id) => {
                     let id = *id;
-                    this.history.update(cx, |history, cx| history.open(id, cx));
+                    this.history
+                        .update(cx, |history, cx| history.open(id, OpenMode::Load, cx));
+                }
+                HistoryPanelEvent::SendAgain(id) => {
+                    let id = *id;
+                    this.history
+                        .update(cx, |history, cx| history.open(id, OpenMode::Send, cx));
                 }
                 HistoryPanelEvent::Delete(id) => {
                     let id = *id;

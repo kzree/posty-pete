@@ -10,12 +10,15 @@ actions!(
         OpenTests,
         OpenSettings,
         FocusUrl,
-        DeleteHistoryEntry
+        DeleteHistoryEntry,
+        SendHistoryEntryAgain
     ]
 );
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 pub const HISTORY_PANEL_CONTEXT: &str = "HistoryPanel";
+/// Outranks the list's own cmd-enter (`Confirm { secondary: true }`).
+const HISTORY_LIST_CONTEXT: &str = "HistoryPanel > List";
 const INPUT_CONTEXT: &str = "Input";
 
 // gpui-pre 0.3.11's `KeyBinding::new` can't parse "secondary-".
@@ -61,5 +64,9 @@ pub fn bind_keys(cx: &mut App) {
         keys::DELETE_HISTORY_ENTRY
             .iter()
             .map(|key| KeyBinding::new(key, DeleteHistoryEntry, Some(HISTORY_PANEL_CONTEXT))),
+    );
+    cx.bind_keys(
+        [HISTORY_PANEL_CONTEXT, HISTORY_LIST_CONTEXT]
+            .map(|context| KeyBinding::new(keys::SEND, SendHistoryEntryAgain, Some(context))),
     );
 }

@@ -19,13 +19,15 @@ use gpui_component::{
 use gpui_kit_assets::IconName as LucideIcon;
 
 use crate::{
-    actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT},
+    actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
     domain::store::history::{self, HistorySummary, Outcome},
     ui::status_tag::status_tag,
 };
 
 pub enum HistoryPanelEvent {
     Open(i64),
+    /// Open the entry and send it right away.
+    SendAgain(i64),
     Delete(i64),
     /// The user confirmed clearing all history.
     Clear,
@@ -92,14 +94,21 @@ impl HistoryPanel {
         cx.notify();
     }
 
-    fn delete_selected(&mut self, cx: &mut Context<Self>) {
+    fn selected_id(&self, cx: &App) -> Option<i64> {
         let list = self.list.read(cx);
-        let id = list
-            .selected_index()
-            .and_then(|ix| list.delegate().entry(ix))
-            .map(|entry| entry.id);
-        if let Some(id) = id {
+        let ix = list.selected_index()?;
+        list.delegate().entry(ix).map(|entry| entry.id)
+    }
+
+    fn delete_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.selected_id(cx) {
             cx.emit(HistoryPanelEvent::Delete(id));
+        }
+    }
+
+    fn send_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.selected_id(cx) {
+            cx.emit(HistoryPanelEvent::SendAgain(id));
         }
     }
 
@@ -159,6 +168,7 @@ impl Render for HistoryPanel {
         v_flex()
             .key_context(HISTORY_PANEL_CONTEXT)
             .on_action(cx.listener(|this, _: &DeleteHistoryEntry, _, cx| this.delete_selected(cx)))
+            .on_action(cx.listener(|this, _: &SendHistoryEntryAgain, _, cx| this.send_selected(cx)))
             .size_full()
             .child(self.render_header(cx))
             .child(
@@ -326,17 +336,28 @@ fn context_menu(
 
     let mut menu = menu;
     if let Some((ix, id, url)) = target {
+        let open_item = |label: &'static str, send: bool| {
+            let (panel, list) = (panel.clone(), list.clone());
+            let item = PopupMenuItem::new(label);
+            let item = if send {
+                item.action(Box::new(SendHistoryEntryAgain))
+            } else {
+                item
+            };
+            item.on_click(move |_, window, cx| {
+                list.update(cx, |list, cx| list.set_selected_index(Some(ix), window, cx))
+                    .ok();
+                let event = if send {
+                    HistoryPanelEvent::SendAgain(id)
+                } else {
+                    HistoryPanelEvent::Open(id)
+                };
+                panel.update(cx, |_, cx| cx.emit(event)).ok();
+            })
+        };
         menu = menu
-            .item(PopupMenuItem::new("Open").on_click({
-                let (panel, list) = (panel.clone(), list.clone());
-                move |_, window, cx| {
-                    list.update(cx, |list, cx| list.set_selected_index(Some(ix), window, cx))
-                        .ok();
-                    panel
-                        .update(cx, |_, cx| cx.emit(HistoryPanelEvent::Open(id)))
-                        .ok();
-                }
-            }))
+            .item(open_item("Open", false))
+            .item(open_item("Send again", true))
             .item(PopupMenuItem::new("Copy URL").on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
             }))

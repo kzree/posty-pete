@@ -16,9 +16,19 @@ pub enum HistoryEvent {
     /// Sent once at startup. Always emitted before any `Recorded`.
     Loaded(Vec<HistorySummary>),
     Recorded(HistorySummary),
-    Opened(Request),
+    Opened {
+        request: Request,
+        mode: OpenMode,
+    },
     Deleted(i64),
     Cleared,
+}
+
+/// What to do with a history entry once its full request is loaded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenMode {
+    Load,
+    Send,
 }
 
 /// Owns the history database: opens it off the UI thread, prunes and loads it,
@@ -52,7 +62,7 @@ impl History {
         }
     }
 
-    pub fn open(&mut self, id: i64, cx: &mut Context<Self>) {
+    pub fn open(&mut self, id: i64, mode: OpenMode, cx: &mut Context<Self>) {
         let store = match &mut self.state {
             State::Ready(store) => store.clone(),
             _ => return,
@@ -65,8 +75,10 @@ impl History {
 
             match res {
                 Ok(Some(req)) => {
-                    this.update(cx, |_, cx| cx.emit(HistoryEvent::Opened(req)))
-                        .ok();
+                    this.update(cx, |_, cx| {
+                        cx.emit(HistoryEvent::Opened { request: req, mode })
+                    })
+                    .ok();
                 }
                 Ok(None) => tracing::warn!("history entry {id} not found"),
                 Err(e) => tracing::warn!("failed to get request from history: {e:#}"),
