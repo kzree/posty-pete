@@ -215,6 +215,16 @@ impl HistoryDelegate {
         let (_, range) = self.days.get(ix.section)?;
         self.entries.get(range.start + ix.row)
     }
+
+    fn index_of(&self, id: i64) -> Option<IndexPath> {
+        let position = self.entries.iter().position(|entry| entry.id == id)?;
+        let section = self
+            .days
+            .iter()
+            .position(|(_, range)| range.contains(&position))?;
+        let row = position - self.days[section].1.start;
+        Some(IndexPath::new(row).section(section))
+    }
 }
 
 impl ListDelegate for HistoryDelegate {
@@ -317,7 +327,7 @@ fn context_menu(
     let state = list_state.read(cx);
     let target = state.right_clicked_index().and_then(|ix| {
         let entry = state.delegate().entry(ix)?;
-        Some((ix, entry.id, entry.url.clone()))
+        Some((entry.id, entry.url.clone()))
     });
     let has_entries = !state.delegate().entries.is_empty();
 
@@ -336,7 +346,7 @@ fn context_menu(
         .detach();
 
     let mut menu = menu;
-    if let Some((ix, id, url)) = target {
+    if let Some((id, url)) = target {
         let open_item = |label: &'static str, send: bool| {
             let (panel, list) = (panel.clone(), list.clone());
             let item = PopupMenuItem::new(label);
@@ -346,8 +356,12 @@ fn context_menu(
                 item
             };
             item.on_click(move |_, window, cx| {
-                list.update(cx, |list, cx| list.set_selected_index(Some(ix), window, cx))
-                    .ok();
+                // Rows may have shifted since the menu opened.
+                list.update(cx, |list, cx| {
+                    let ix = list.delegate().index_of(id);
+                    list.set_selected_index(ix, window, cx)
+                })
+                .ok();
                 let event = if send {
                     HistoryPanelEvent::SendAgain(id)
                 } else {
@@ -440,6 +454,42 @@ mod tests {
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn summary(id: i64, day: NaiveDate, hour: u32) -> HistorySummary {
+        use chrono::{TimeZone, Utc};
+        let local = Local
+            .from_local_datetime(&day.and_hms_opt(hour, 0, 0).unwrap())
+            .earliest()
+            .unwrap();
+        HistorySummary {
+            id,
+            sent_at: local.with_timezone(&Utc),
+            method: "GET".into(),
+            url: format!("https://example.com/{id}"),
+            outcome: None,
+        }
+    }
+
+    #[test]
+    fn index_of_follows_shifted_rows() {
+        let (today, yesterday) = (date(2026, 11, 10), date(2026, 11, 9));
+        let mut delegate = HistoryDelegate::default();
+        delegate.set_entries(vec![
+            summary(3, today, 12),
+            summary(2, today, 10),
+            summary(1, yesterday, 12),
+        ]);
+        assert_eq!(delegate.index_of(3), Some(IndexPath::new(0).section(0)));
+        assert_eq!(delegate.index_of(1), Some(IndexPath::new(0).section(1)));
+        assert_eq!(delegate.index_of(9), None);
+
+        delegate.push(summary(4, today, 14));
+        assert_eq!(delegate.index_of(2), Some(IndexPath::new(2).section(0)));
+
+        delegate.remove(4);
+        assert_eq!(delegate.index_of(2), Some(IndexPath::new(1).section(0)));
+        assert_eq!(delegate.index_of(4), None);
     }
 
     #[test]
