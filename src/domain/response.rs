@@ -9,10 +9,10 @@ use super::body_format::BodyFormat;
 pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-    /// `None` when the body is binary or can't be decoded faithfully.
-    pub text: Option<String>,
     pub elapsed: Duration,
+    body_len: usize,
+    /// `None` when the body is binary or can't be decoded faithfully.
+    text: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,11 +46,11 @@ impl Response {
         let mut response = Self {
             status,
             headers,
-            body,
-            text: None,
             elapsed,
+            body_len: body.len(),
+            text: None,
         };
-        response.text = decode_body(&response.body, response.content_type());
+        response.text = decode_body(&body, response.content_type());
         response
     }
 
@@ -75,17 +75,19 @@ impl Response {
         BodyFormat::from_content_type(self.content_type())
     }
 
-    pub fn pretty_body(&self) -> String {
-        let Some(text) = &self.text else {
+    /// Moves the body text out for display, so the response doesn't keep a
+    /// second copy of a large body.
+    pub fn take_display_body(&mut self) -> String {
+        let Some(text) = self.text.take() else {
             return format!(
                 "<binary or non-UTF-8 body, {} bytes, not shown>",
-                self.body.len()
+                self.body_len
             );
         };
         if self.body_format() != BodyFormat::Json {
-            return text.clone();
+            return text;
         }
-        pretty_json(text).unwrap_or_else(|| text.clone())
+        pretty_json(&text).unwrap_or(text)
     }
 }
 
@@ -231,8 +233,8 @@ mod tests {
     }
 
     #[test]
-    fn pretty_body_marks_binary() {
-        let response = Response::new(
+    fn display_body_marks_binary() {
+        let mut response = Response::new(
             200,
             vec![("content-type".into(), "image/png".into())],
             vec![0x89, b'P', b'N', b'G', 0xFF],
@@ -240,7 +242,7 @@ mod tests {
         );
         assert_eq!(response.text, None);
         assert_eq!(
-            response.pretty_body(),
+            response.take_display_body(),
             "<binary or non-UTF-8 body, 5 bytes, not shown>"
         );
     }
@@ -276,13 +278,14 @@ mod tests {
     fn malformed_json_is_shown_raw() {
         assert_eq!(pretty_json(r#"{"a":1,}"#), None);
         assert_eq!(pretty_json("{\"a\":1} x"), None);
-        let response = Response::new(
+        let mut response = Response::new(
             200,
             vec![("content-type".into(), "application/json".into())],
             b"{\"a\": [1,".to_vec(),
             Duration::ZERO,
         );
-        assert_eq!(response.pretty_body(), "{\"a\": [1,");
+        assert_eq!(response.take_display_body(), "{\"a\": [1,");
+        assert_eq!(response.text, None);
     }
 
     #[test]

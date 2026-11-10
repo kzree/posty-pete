@@ -223,9 +223,10 @@ impl Workspace {
             });
             let (result, body_text) = cx
                 .background_spawn(async move {
+                    let mut result = result;
                     let text = result
-                        .as_ref()
-                        .map(|resp| resp.pretty_body())
+                        .as_mut()
+                        .map(Response::take_display_body)
                         .unwrap_or_default();
                     (result, text)
                 })

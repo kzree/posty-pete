@@ -52,6 +52,7 @@ impl HistoryStore {
     fn init(conn: Connection) -> anyhow::Result<Self> {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
+             PRAGMA synchronous = NORMAL;
              CREATE TABLE IF NOT EXISTS history (
                  id         INTEGER PRIMARY KEY,
                  sent_at    INTEGER NOT NULL,
