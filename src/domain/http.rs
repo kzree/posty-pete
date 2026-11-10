@@ -4,41 +4,16 @@ use tokio::{runtime::Runtime, task::JoinHandle};
 
 use anyhow::Context as _;
 use reqwest::{
-    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+    header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue},
     multipart::Form,
     redirect::{Attempt, Policy},
 };
 
 use super::{
-    request::{Auth, Body, KeyValue, Request},
+    request::Request,
+    resolved::ResolvedBody,
     response::{Response, header_value_text},
-    url_scheme::with_default_scheme,
 };
-
-fn form_data(fields: &[KeyValue]) -> Form {
-    active(fields).fold(Form::new(), |form, (key, value)| {
-        form.text(key.to_owned(), value.to_owned())
-    })
-}
-
-pub(super) fn active(items: &[KeyValue]) -> impl Iterator<Item = (&str, &str)> {
-    items
-        .iter()
-        .filter(|kv| kv.enabled && !kv.key.is_empty())
-        .map(|kv| (kv.key.as_str(), kv.value.as_str()))
-}
-
-fn header_map(items: &[KeyValue]) -> anyhow::Result<HeaderMap> {
-    let mut map = HeaderMap::new();
-    for (key, value) in active(items) {
-        let name = HeaderName::from_bytes(key.as_bytes())
-            .with_context(|| format!("invalid header name: {key:?}"))?;
-        let value = HeaderValue::from_str(value)
-            .with_context(|| format!("invalid value for header {key:?}"))?;
-        map.append(name, value); // repeated headers are allowed
-    }
-    Ok(map)
-}
 
 fn same_origin(a: &reqwest::Url, b: &reqwest::Url) -> bool {
     a.origin() == b.origin()
@@ -71,56 +46,37 @@ fn runtime() -> &'static Runtime {
 }
 
 fn build_request(client: &reqwest::Client, request: Request) -> anyhow::Result<reqwest::Request> {
-    let query: Vec<_> = active(&request.params).collect();
-    let mut headers = header_map(&request.headers)?;
-    let user_set_authorization = headers.contains_key(AUTHORIZATION);
+    let resolved = request.resolve();
 
-    if let Auth::ApiKey { key, value } = &request.auth
-        && !key.is_empty()
-    {
+    let mut headers = HeaderMap::new();
+    for (key, value) in &resolved.headers {
         let name = HeaderName::from_bytes(key.as_bytes())
-            .with_context(|| format!("invalid API key header name: {key:?}"))?;
-        if !headers.contains_key(&name) {
-            let value = HeaderValue::from_str(value)
-                .with_context(|| format!("invalid API key value for {key:?}"))?;
-            headers.insert(name, value);
-        }
+            .with_context(|| format!("invalid header name: {key:?}"))?;
+        let mut value = HeaderValue::from_str(value)
+            .with_context(|| format!("invalid value for header {key:?}"))?;
+        value.set_sensitive(name == AUTHORIZATION);
+        headers.append(name, value); // repeated headers are allowed
     }
-
-    match &request.body {
-        // reqwest sets the multipart Content-Type with its boundary.
-        Body::FormData(_) => {
-            headers.remove(CONTENT_TYPE);
-        }
-        Body::Raw { kind, .. } if !headers.contains_key(CONTENT_TYPE) => {
-            headers.insert(CONTENT_TYPE, HeaderValue::from_str(kind.mime().as_ref())?);
-        }
-        _ => {}
-    }
-
-    let url = with_default_scheme(&request.url);
 
     let builder = client
-        .request(request.method.into(), url.as_ref())
-        .query(&query)
+        .request(resolved.method.into(), resolved.url.as_ref())
+        .query(&resolved.query)
         .headers(headers);
 
-    let builder = match &request.auth {
-        Auth::Basic { username, password }
-            if !user_set_authorization && !(username.is_empty() && password.is_empty()) =>
-        {
-            builder.basic_auth(username, Some(password))
-        }
-        Auth::Bearer { token } if !user_set_authorization && !token.is_empty() => {
-            builder.bearer_auth(token)
-        }
-        _ => builder,
+    let builder = match resolved.basic_auth {
+        Some((username, password)) => builder.basic_auth(username, Some(password)),
+        None => builder,
     };
 
-    let builder = match request.body {
-        Body::None => builder,
-        Body::FormData(fields) => builder.multipart(form_data(&fields)),
-        Body::Raw { text, .. } => builder.body(text),
+    let builder = match resolved.body {
+        ResolvedBody::None => builder,
+        ResolvedBody::FormData(fields) => {
+            let form = fields.into_iter().fold(Form::new(), |form, (key, value)| {
+                form.text(key.to_owned(), value.to_owned())
+            });
+            builder.multipart(form)
+        }
+        ResolvedBody::Raw(text) => builder.body(text.to_owned()),
     };
 
     Ok(builder.build()?)
@@ -169,8 +125,10 @@ pub fn spawn_send(
 
 #[cfg(test)]
 mod tests {
+    use reqwest::header::CONTENT_TYPE;
+
     use super::*;
-    use crate::domain::request::HttpMethod;
+    use crate::domain::request::{Auth, Body, HttpMethod, KeyValue, RawKind};
 
     fn header(key: &str, value: &str, enabled: bool) -> KeyValue {
         KeyValue {
@@ -292,6 +250,27 @@ mod tests {
         assert_eq!(
             authorization(headers, bearer).as_deref(),
             Some("Bearer xyz")
+        );
+    }
+
+    #[test]
+    fn built_request_has_query_and_content_type() {
+        let request = Request {
+            method: HttpMethod::Post,
+            url: "example.com/a?x=1".into(),
+            params: vec![header("q", "a b", true), header("off", "1", false)],
+            headers: vec![],
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: "{}".into(),
+            },
+            auth: Auth::None,
+        };
+        let built = build_request(&reqwest::Client::new(), request).unwrap();
+        assert_eq!(built.url().as_str(), "https://example.com/a?x=1&q=a+b");
+        assert_eq!(
+            built.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
         );
     }
 }
