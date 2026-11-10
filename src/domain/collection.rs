@@ -41,10 +41,6 @@ impl Collection {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by open saved request (task 15)")
-    )]
     pub fn find_request(&self, id: Uuid) -> Option<&SavedRequest> {
         find_request_in(&self.items, id)
     }

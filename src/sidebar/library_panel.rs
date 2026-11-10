@@ -31,6 +31,10 @@ use crate::{
 pub enum LibraryPanelEvent {
     CreateCollection,
     OpenCollection(Uuid),
+    OpenRequest {
+        collection_id: Uuid,
+        request_id: Uuid,
+    },
     /// `item_id` equals `collection_id` when renaming the collection itself.
     Rename {
         collection_id: Uuid,
@@ -68,11 +72,19 @@ impl LibraryPanel {
         });
         let list_sub = cx.subscribe(&list, |this, _, event, cx| {
             if let ListEvent::Confirm(ix) = event {
-                let collection = this.list.read(cx).delegate().collection_at(ix.row);
+                let delegate = this.list.read(cx).delegate();
+                let (collection, request) =
+                    (delegate.collection_at(ix.row), delegate.request_at(ix.row));
                 // Rows above a toggled row don't move, so its row stays selected.
                 this.update_rows(cx, |delegate| delegate.toggle_at(ix.row));
                 if let Some(id) = collection {
                     cx.emit(LibraryPanelEvent::OpenCollection(id));
+                }
+                if let Some((collection_id, request_id)) = request {
+                    cx.emit(LibraryPanelEvent::OpenRequest {
+                        collection_id,
+                        request_id,
+                    });
                 }
             }
         });
@@ -90,8 +102,29 @@ impl LibraryPanel {
     ) {
         self.update_rows(cx, |delegate| delegate.set_collections(collections));
         self.list.update(cx, |list, cx| {
-            list.set_selected_index(None, window, cx);
-            list.set_right_clicked_index(None, window, cx);
+            list.set_right_clicked_index(None, window, cx)
+        });
+        self.sync_selection(window, cx);
+    }
+
+    /// The request open in the editor; its row stays selected across refreshes.
+    pub fn set_selected_request(
+        &mut self,
+        id: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.list
+            .update(cx, |list, _| list.delegate_mut().selected_request = id);
+        self.sync_selection(window, cx);
+    }
+
+    fn sync_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.list.update(cx, |list, cx| {
+            let delegate = list.delegate();
+            let row = delegate.selected_request.and_then(|id| delegate.row_of(id));
+            list.set_selected_index(row.map(IndexPath::new), window, cx);
+            cx.notify();
         });
     }
 
@@ -335,6 +368,7 @@ struct LibraryDelegate {
     section_expanded: bool,
     /// Expanded collections and folders.
     expanded: HashSet<Uuid>,
+    selected_request: Option<Uuid>,
     rows: Vec<Row>,
 }
 
@@ -344,6 +378,7 @@ impl Default for LibraryDelegate {
             collections: Vec::new(),
             section_expanded: true,
             expanded: HashSet::new(),
+            selected_request: None,
             rows: Vec::new(),
         }
     }
@@ -409,6 +444,26 @@ impl LibraryDelegate {
             }) => Some(*id),
             _ => None,
         }
+    }
+
+    /// `(collection_id, request_id)` of a request row.
+    fn request_at(&self, row: usize) -> Option<(Uuid, Uuid)> {
+        match self.rows.get(row)? {
+            Row::Node(Node {
+                id,
+                collection_id,
+                kind: NodeKind::Request(_),
+                ..
+            }) => Some((*collection_id, *id)),
+            _ => None,
+        }
+    }
+
+    /// The visible row showing the collection, folder or request `id`.
+    fn row_of(&self, id: Uuid) -> Option<usize> {
+        self.rows
+            .iter()
+            .position(|row| matches!(row, Row::Node(node) if node.id == id))
     }
 
     fn target_name(&self, target: MenuTarget) -> Option<String> {
@@ -664,6 +719,7 @@ mod tests {
         collection: Uuid,
         outer: Uuid,
         inner: Uuid,
+        root: Uuid,
     }
 
     /// API: Root request, Outer > Inner > Deep request.
@@ -671,15 +727,14 @@ mod tests {
         let mut collection = Collection::new("API");
         let outer = Folder::new("Outer");
         let inner = Folder::new("Inner");
+        let root = SavedRequest::new("Root", request(HttpMethod::Get));
         let ids = Ids {
             collection: collection.id,
             outer: outer.id,
             inner: inner.id,
+            root: root.id,
         };
-        collection.add_item(
-            None,
-            Item::Request(SavedRequest::new("Root", request(HttpMethod::Get))),
-        );
+        collection.add_item(None, Item::Request(root));
         collection.add_item(None, Item::Folder(outer));
         collection.add_item(Some(ids.outer), Item::Folder(inner));
         collection.add_item(
@@ -809,6 +864,37 @@ mod tests {
         assert_eq!(delegate.collection_at(2), None);
         assert_eq!(delegate.collection_at(3), None);
         assert_eq!(delegate.collection_at(99), None);
+    }
+
+    #[test]
+    fn only_request_rows_open_a_request() {
+        let (collections, ids) = fixture();
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(collections);
+        delegate.toggle_at(1);
+        assert_eq!(delegate.request_at(0), None);
+        assert_eq!(delegate.request_at(1), None);
+        assert_eq!(delegate.request_at(2), Some((ids.collection, ids.root)));
+        assert_eq!(delegate.request_at(3), None);
+        assert_eq!(delegate.request_at(99), None);
+    }
+
+    #[test]
+    fn row_of_finds_only_visible_rows() {
+        let (collections, ids) = fixture();
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(collections);
+        assert_eq!(delegate.row_of(ids.collection), Some(1));
+        assert_eq!(delegate.row_of(ids.root), None);
+
+        delegate.toggle_at(1);
+        assert_eq!(delegate.row_of(ids.root), Some(2));
+        assert_eq!(delegate.row_of(ids.outer), Some(3));
+        assert_eq!(delegate.row_of(ids.inner), None);
+        assert_eq!(delegate.row_of(Uuid::new_v4()), None);
+
+        delegate.toggle_at(0);
+        assert_eq!(delegate.row_of(ids.collection), None);
     }
 
     #[test]

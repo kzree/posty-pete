@@ -11,6 +11,7 @@ use gpui_component::{
     ActiveTheme, ResizableState, WindowExt, h_resizable, input::Escape, notification::Notification,
     resizable_panel,
 };
+use uuid::Uuid;
 
 use self::routes::AppRoute;
 use crate::{
@@ -63,6 +64,8 @@ pub struct Workspace {
     history: Entity<History>,
     collections: Entity<Collections>,
     current_route: AppRoute,
+    /// The saved request in the editor, as `(collection_id, request_id)`.
+    open_request: Option<(Uuid, Uuid)>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -123,6 +126,7 @@ impl Workspace {
             history,
             collections,
             current_route: AppRoute::Request,
+            open_request: None,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -153,6 +157,7 @@ impl Workspace {
                 );
             }
             HistoryEvent::Opened { request, mode } => {
+                self.set_open_request(None, window, cx);
                 self.request_editor
                     .update(cx, |editor, cx| editor.load_request(request, window, cx));
                 self.response_view
@@ -183,6 +188,13 @@ impl Workspace {
                 self.library_panel.update(cx, |panel, cx| {
                     panel.set_collections(collections, window, cx)
                 });
+                if let Some((collection_id, request_id)) = self.open_request
+                    && self
+                        .find_saved_request(collection_id, request_id, cx)
+                        .is_none()
+                {
+                    self.set_open_request(None, window, cx);
+                }
                 if let Some(id) = self.collection_view.read(cx).id() {
                     let collection = self.collections.read(cx).get(id).cloned();
                     self.collection_view
@@ -211,6 +223,10 @@ impl Workspace {
             LibraryPanelEvent::OpenCollection(id) => {
                 self.navigate(AppRoute::Collection(*id), window, cx)
             }
+            LibraryPanelEvent::OpenRequest {
+                collection_id,
+                request_id,
+            } => self.open_saved_request(*collection_id, *request_id, window, cx),
             LibraryPanelEvent::Rename {
                 collection_id,
                 item_id,
@@ -249,6 +265,65 @@ impl Workspace {
                 });
             }
         }
+    }
+
+    fn open_saved_request(
+        &mut self,
+        collection_id: Uuid,
+        request_id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending.is_some() {
+            window.push_notification(
+                Notification::info("Wait for it to finish, then try again.")
+                    .title("A request is still running"),
+                cx,
+            );
+            // The click selected the row; put the selection back.
+            self.set_open_request(self.open_request, window, cx);
+            return;
+        }
+        let Some(request) = self
+            .find_saved_request(collection_id, request_id, cx)
+            .cloned()
+        else {
+            return;
+        };
+        if self.current_route != AppRoute::Request {
+            self.navigate(AppRoute::Request, window, cx);
+        }
+        self.request_editor
+            .update(cx, |editor, cx| editor.load_request(&request, window, cx));
+        self.response_view
+            .update(cx, |view, cx| view.clear(window, cx));
+        self.set_open_request(Some((collection_id, request_id)), window, cx);
+    }
+
+    fn find_saved_request<'a>(
+        &self,
+        collection_id: Uuid,
+        request_id: Uuid,
+        cx: &'a App,
+    ) -> Option<&'a domain::request::Request> {
+        self.collections
+            .read(cx)
+            .get(collection_id)?
+            .find_request(request_id)
+            .map(|saved| &saved.request)
+    }
+
+    fn set_open_request(
+        &mut self,
+        open_request: Option<(Uuid, Uuid)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_request = open_request;
+        let request_id = open_request.map(|(_, request_id)| request_id);
+        self.library_panel.update(cx, |panel, cx| {
+            panel.set_selected_request(request_id, window, cx)
+        });
     }
 
     fn on_collection_view_event(
