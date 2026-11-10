@@ -23,23 +23,36 @@ impl RequestEditor {
             )
             .child(div().flex_1().child(Input::new(&self.url)))
             .child(
-                Button::new("save")
-                    .outline()
-                    .label("Save")
-                    // The dot's slot is always there so the button keeps its width.
+                div()
+                    .relative()
+                    .flex_none()
                     .child(
-                        div()
-                            .flex_none()
-                            .size_1p5()
-                            .rounded_full()
-                            .when(self.dirty, |dot| dot.bg(cx.theme().primary)),
+                        Button::new("save")
+                            .outline()
+                            .label("Save")
+                            .when(self.dirty, |button| {
+                                button.accessibility_label("Save, unsaved changes")
+                            })
+                            .disabled(!self.can_save())
+                            .tooltip_with_action(
+                                "Save request",
+                                &SaveRequest,
+                                Some(WORKSPACE_CONTEXT),
+                            )
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(RequestEditorEvent::Save))),
                     )
-                    .when(self.dirty, |button| {
-                        button.accessibility_label("Save, unsaved changes")
-                    })
-                    .disabled(!self.can_save())
-                    .tooltip_with_action("Save request", &SaveRequest, Some(WORKSPACE_CONTEXT))
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(RequestEditorEvent::Save))),
+                    // Overlaid so the label stays centred.
+                    .when(self.dirty, |this| {
+                        this.child(
+                            div()
+                                .absolute()
+                                .top(px(4.))
+                                .right(px(4.))
+                                .size_1p5()
+                                .rounded_full()
+                                .bg(cx.theme().primary),
+                        )
+                    }),
             )
             .child(
                 Button::new("send")
