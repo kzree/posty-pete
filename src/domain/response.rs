@@ -11,6 +11,7 @@ pub struct Response {
     pub headers: Vec<(String, String)>,
     pub elapsed: Duration,
     body_len: usize,
+    binary: bool,
     /// `None` when the body is binary or can't be decoded faithfully.
     text: Option<String>,
 }
@@ -48,10 +49,17 @@ impl Response {
             headers,
             elapsed,
             body_len: body.len(),
+            binary: false,
             text: None,
         };
         response.text = decode_body(&body, response.content_type());
+        response.binary = response.text.is_none();
         response
+    }
+
+    /// Binary or undecodable bodies are shown as a placeholder, not as text.
+    pub fn is_binary(&self) -> bool {
+        self.binary
     }
 
     pub fn status_text(&self) -> String {
@@ -263,6 +271,7 @@ mod tests {
             Duration::ZERO,
         );
         assert_eq!(response.text, None);
+        assert!(response.is_binary());
         assert_eq!(
             response.take_display_body(),
             "<binary or non-UTF-8 body, 5 bytes, not shown>"
@@ -308,6 +317,7 @@ mod tests {
         );
         assert_eq!(response.take_display_body(), "{\"a\": [1,");
         assert_eq!(response.text, None);
+        assert!(!response.is_binary());
     }
 
     #[test]

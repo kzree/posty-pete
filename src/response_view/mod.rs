@@ -3,7 +3,7 @@ use gpui::{
     div, relative,
 };
 use gpui_component::{
-    ActiveTheme, Icon, Sizable,
+    ActiveTheme, Disableable, Icon, IconName, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
     input::{Editor, EditorState},
@@ -14,7 +14,7 @@ use gpui_component::{
 
 use crate::{
     domain::{body_format::BodyFormat, response::Response},
-    ui::status_tag::status_tag,
+    ui::{clipboard::copy_with_notification, status_tag::status_tag},
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
@@ -86,6 +86,25 @@ impl ResponseView {
         self.body
             .update(cx, |state, cx| state.set_value("", window, cx));
         cx.notify();
+    }
+
+    fn copy_button(&self, response: &Response, cx: &mut Context<Self>) -> Button {
+        let label = if response.is_binary() {
+            "Binary body can't be copied"
+        } else {
+            "Copy response body"
+        };
+        Button::new("copy-response")
+            .ghost()
+            .xsmall()
+            .icon(Icon::new(IconName::Copy))
+            .tooltip(label)
+            .accessibility_label(label)
+            .disabled(response.is_binary())
+            .on_click(cx.listener(|this, _, window, cx| {
+                let body = this.body.read(cx).value().to_string();
+                copy_with_notification(body, "Response body copied", window, cx);
+            }))
     }
 
     fn clear_button(&self, cx: &mut Context<Self>) -> Button {
@@ -189,6 +208,7 @@ impl Render for ResponseView {
                                         .child(format!("{} ms", response.elapsed.as_millis())),
                                 )
                                 .child(separator())
+                                .child(self.copy_button(response, cx))
                                 .child(self.clear_button(cx))
                         }),
                 )
