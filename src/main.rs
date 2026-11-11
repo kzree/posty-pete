@@ -16,6 +16,7 @@ mod request_editor;
 mod response_view;
 mod save_as_dialog;
 mod settings_page;
+mod shared_environments;
 mod sidebar;
 mod status_bar;
 mod ui;

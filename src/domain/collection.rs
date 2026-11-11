@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
+    environment::{self, Environment, NEW_ENVIRONMENT_NAME, unique_name},
     request::{KeyValue, Request},
     variables::Variables,
 };
@@ -18,14 +19,6 @@ pub struct Collection {
     pub variables: Vec<KeyValue>,
     #[serde(default)]
     pub environments: Vec<Environment>,
-}
-
-/// A named set of variables layered in front of the collection's.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Environment {
-    pub id: Uuid,
-    pub name: String,
-    pub variables: Vec<KeyValue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -51,7 +44,6 @@ pub struct SavedRequest {
 
 pub const NEW_COLLECTION_NAME: &str = "New Collection";
 pub const NEW_REQUEST_NAME: &str = "New Request";
-pub const NEW_ENVIRONMENT_NAME: &str = "New environment";
 
 /// Where a new request goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,16 +205,41 @@ fn modify_environment(
     })
 }
 
-/// `base`, or `base 2`, `base 3`, ... whichever is the first not in `taken`.
-fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone) -> String {
-    let is_taken = |name: &str| taken.clone().any(|taken| taken == name);
-    if !is_taken(base) {
-        return base.to_string();
-    }
-    (2..)
-        .map(|n| format!("{base} {n}"))
-        .find(|name| !is_taken(name))
-        .expect("some number is free")
+/// Bases the environment on shared environment `base`, or unlinks it for
+/// `None`. Returns `false`, changing (and copying) nothing, if there's no such
+/// environment or the base is the same.
+#[cfg_attr(not(test), expect(dead_code, reason = "used from task 57"))]
+pub fn set_environment_base(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+    base: Option<Uuid>,
+) -> bool {
+    find_environment(collections, collection_id, environment_id)
+        .is_some_and(|environment| environment.base != base)
+        && modify_environment(collections, collection_id, environment_id, |environment| {
+            environment.base = base;
+        })
+}
+
+/// Unlinks every environment based on shared environment `base`, copying only
+/// the collections that have one. Returns their ids.
+#[cfg_attr(not(test), expect(dead_code, reason = "used from task 56"))]
+pub fn unlink_base(collections: &mut [Arc<Collection>], base: Uuid) -> Vec<Uuid> {
+    let is_based = |environment: &Environment| environment.base == Some(base);
+    collections
+        .iter_mut()
+        .filter(|collection| collection.environments.iter().any(is_based))
+        .map(|collection| {
+            let collection = Arc::make_mut(collection);
+            for environment in &mut collection.environments {
+                if is_based(environment) {
+                    environment.base = None;
+                }
+            }
+            collection.id
+        })
+        .collect()
 }
 
 /// The name and location Save As starts with. A saved request (`linked`, as
@@ -287,13 +304,24 @@ impl Collection {
         self.environments.iter().find(|env| env.id == id)
     }
 
-    /// The environment's variables in front of the collection's. An unknown
-    /// id gives just the collection's.
-    pub fn variables_with(&self, environment_id: Option<Uuid>) -> Variables {
-        let environment = environment_id
-            .and_then(|id| self.environment(id))
-            .map(|env| env.variables.as_slice());
-        Variables::layered(environment.into_iter().chain([self.variables.as_slice()]))
+    /// The environment's variables, then those of the shared environment it's
+    /// based on, then the collection's; the first wins. An unknown environment
+    /// or base is left out.
+    pub fn variables_with(
+        &self,
+        environment_id: Option<Uuid>,
+        shared: &[Arc<Environment>],
+    ) -> Variables {
+        let environment = environment_id.and_then(|id| self.environment(id));
+        let base = environment
+            .and_then(|env| env.base)
+            .and_then(|id| environment::find(shared, id));
+        let environments = environment.into_iter().chain(base);
+        Variables::layered(
+            environments
+                .map(|env| env.variables.as_slice())
+                .chain([self.variables.as_slice()]),
+        )
     }
 
     pub fn find_request(&self, id: Uuid) -> Option<&SavedRequest> {
@@ -367,16 +395,6 @@ impl Item {
         match self {
             Self::Folder(folder) => folder.id,
             Self::Request(request) => request.id,
-        }
-    }
-}
-
-impl Environment {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            name: name.into(),
-            variables: Vec::new(),
         }
     }
 }
@@ -999,16 +1017,157 @@ mod tests {
         ));
         let collection = &collections[0];
 
-        let variables = collection.variables_with(Some(environment_id));
+        let variables = collection.variables_with(Some(environment_id), &[]);
         assert_eq!(variables.get("host"), Some("staging"));
         assert_eq!(variables.get("token"), Some("t"));
 
-        let variables = collection.variables_with(None);
+        let variables = collection.variables_with(None, &[]);
         assert_eq!(variables.get("host"), Some("local"));
         assert_eq!(
-            collection.variables_with(Some(Uuid::new_v4())),
-            collection.variables_with(None)
+            collection.variables_with(Some(Uuid::new_v4()), &[]),
+            collection.variables_with(None, &[])
         );
+    }
+
+    /// A shared environment with `host`, `token` and `region`.
+    fn shared_base() -> Vec<Arc<Environment>> {
+        let mut shared = Vec::new();
+        let id = environment::add(&mut shared);
+        environment::set_variables(
+            &mut shared,
+            id,
+            vec![
+                variable("host", "shared-host"),
+                variable("token", "shared-token"),
+                variable("region", "eu"),
+            ],
+        );
+        shared
+    }
+
+    #[test]
+    fn variables_with_a_based_environment_layer_environment_base_collection() {
+        let shared = shared_base();
+        let mut disabled = variable("token", "own-token");
+        disabled.enabled = false;
+        let (mut collections, collection_id, environment_id) =
+            with_environment(vec![variable("host", "own-host"), disabled]);
+        set_variables(
+            &mut collections,
+            collection_id,
+            vec![
+                variable("region", "us"),
+                variable("token", "collection-token"),
+                variable("user", "me"),
+            ],
+        );
+        assert!(set_environment_base(
+            &mut collections,
+            collection_id,
+            environment_id,
+            Some(shared[0].id)
+        ));
+
+        let variables = collections[0].variables_with(Some(environment_id), &shared);
+        assert_eq!(variables.get("host"), Some("own-host"));
+        assert_eq!(variables.get("token"), Some("shared-token"));
+        assert_eq!(variables.get("region"), Some("eu"));
+        assert_eq!(variables.get("user"), Some("me"));
+
+        let without_environment = collections[0].variables_with(None, &shared);
+        assert_eq!(without_environment.get("region"), Some("us"));
+    }
+
+    #[test]
+    fn variables_with_a_missing_base_ignore_it() {
+        let (mut collections, collection_id, environment_id) =
+            with_environment(vec![variable("host", "own-host")]);
+        set_variables(
+            &mut collections,
+            collection_id,
+            vec![variable("region", "us")],
+        );
+        set_environment_base(
+            &mut collections,
+            collection_id,
+            environment_id,
+            Some(Uuid::new_v4()),
+        );
+
+        let variables = collections[0].variables_with(Some(environment_id), &shared_base());
+        assert_eq!(variables.get("host"), Some("own-host"));
+        assert_eq!(variables.get("region"), Some("us"));
+        assert_eq!(variables.get("token"), None);
+    }
+
+    #[test]
+    fn set_environment_base_only_when_it_changes() {
+        let (mut collections, collection_id, environment_id) = with_environment(Vec::new());
+        let base = Uuid::new_v4();
+        let held = collections.clone();
+
+        assert!(!set_environment_base(
+            &mut collections,
+            collection_id,
+            environment_id,
+            None
+        ));
+        assert!(!set_environment_base(
+            &mut collections,
+            collection_id,
+            Uuid::new_v4(),
+            Some(base)
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+
+        assert!(set_environment_base(
+            &mut collections,
+            collection_id,
+            environment_id,
+            Some(base)
+        ));
+        assert_eq!(collections[0].environments[0].base, Some(base));
+        assert_eq!(held[0].environments[0].base, None);
+        assert!(set_environment_base(
+            &mut collections,
+            collection_id,
+            environment_id,
+            None
+        ));
+        assert_eq!(collections[0].environments[0].base, None);
+    }
+
+    #[test]
+    fn unlink_base_touches_only_referencing_collections() {
+        let deleted = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let mut collections = Vec::new();
+        for base in [Some(deleted), Some(other), None] {
+            let (mut one, collection_id, environment_id) = with_environment(Vec::new());
+            set_environment_base(&mut one, collection_id, environment_id, base);
+            collections.append(&mut one);
+        }
+        let second = collections[1].id;
+        let also_based = add_environment(&mut collections, second).unwrap();
+        set_environment_base(&mut collections, second, also_based, Some(deleted));
+        let held = collections.clone();
+
+        let changed = unlink_base(&mut collections, deleted);
+        assert_eq!(changed, [collections[0].id, collections[1].id]);
+        assert_eq!(collections[0].environments[0].base, None);
+        assert_eq!(collections[1].environments[0].base, Some(other));
+        assert_eq!(collections[1].environment(also_based).unwrap().base, None);
+        assert!(Arc::ptr_eq(&collections[2], &held[2]));
+        assert_eq!(held[0].environments[0].base, Some(deleted));
+
+        assert!(unlink_base(&mut collections, deleted).is_empty());
+    }
+
+    #[test]
+    fn json_with_unbased_environments_writes_no_base() {
+        let (collections, _, _) = with_environment(Vec::new());
+        let value = serde_json::to_value(&*collections[0]).unwrap();
+        assert!(value["environments"][0].get("base").is_none());
     }
 
     #[test]

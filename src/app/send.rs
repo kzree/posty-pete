@@ -9,6 +9,7 @@ use crate::{
     domain::{
         collection::Collection,
         curl,
+        environment::Environment,
         environment_selection::EnvironmentSelection,
         history::{HistoryRecord, Outcome},
         http,
@@ -45,13 +46,14 @@ fn editor_collection<'a>(
 }
 
 /// The variables that apply to what the editor holds: its collection's, with
-/// that collection's active environment. `None` without a collection.
+/// that collection's active environment and its base. `None` without a collection.
 fn editor_variables(
     content: EditorContent,
     selection: &EnvironmentSelection,
     collections: &[Arc<Collection>],
+    shared: &[Arc<Environment>],
 ) -> Option<Variables> {
-    editor_collection(content, selection, collections).map(|c| selection.variables(c))
+    editor_collection(content, selection, collections).map(|c| selection.variables(c, shared))
 }
 
 fn resolve(request: Request, variables: Option<&Variables>) -> Request {
@@ -71,7 +73,8 @@ impl Workspace {
 
     fn editor_variables(&self, cx: &App) -> Option<Variables> {
         let collections = self.collections.read(cx).all();
-        editor_variables(self.editor_content, &self.environments, collections)
+        let shared = self.shared_environments.read(cx).all();
+        editor_variables(self.editor_content, &self.environments, collections, shared)
     }
 
     /// Hands the editor the variables `request` references but that don't
@@ -265,7 +268,7 @@ mod tests {
         ]);
         let collections = [other, own.clone()];
 
-        let variables = editor_variables(saved_in(own.id), &none(), &collections);
+        let variables = editor_variables(saved_in(own.id), &none(), &collections, &[]);
         let sent = resolve(templated(), variables.as_ref());
 
         assert_eq!(sent.url, "https://api/users/{{id}}");
@@ -275,7 +278,7 @@ mod tests {
     fn draft_and_missing_collection_are_sent_unchanged() {
         let collections = [collection(vec![row(true, "base", "https://api")])];
         for content in [EditorContent::Draft, saved_in(Uuid::new_v4())] {
-            let variables = editor_variables(content, &none(), &collections);
+            let variables = editor_variables(content, &none(), &collections, &[]);
             assert_eq!(variables, None);
             assert_eq!(resolve(templated(), variables.as_ref()), templated());
         }
@@ -284,7 +287,7 @@ mod tests {
     #[test]
     fn key_resolving_to_empty_is_dropped_when_sent() {
         let collections = [collection(vec![row(true, "k", "")])];
-        let variables = editor_variables(saved_in(collections[0].id), &none(), &collections);
+        let variables = editor_variables(saved_in(collections[0].id), &none(), &collections, &[]);
         let sent = resolve(templated(), variables.as_ref());
 
         assert_eq!(sent.headers, [row(true, "", "v")]);
@@ -299,11 +302,11 @@ mod tests {
         let mut selection = none();
         selection.set_active_environment(own.id, Some(staging));
 
-        let variables = editor_variables(saved_in(own.id), &selection, &collections);
+        let variables = editor_variables(saved_in(own.id), &selection, &collections, &[]);
         assert_eq!(variables.unwrap().get("base"), Some("https://staging"));
 
         selection.set_active_environment(own.id, None);
-        let variables = editor_variables(saved_in(own.id), &selection, &collections);
+        let variables = editor_variables(saved_in(own.id), &selection, &collections, &[]);
         assert_eq!(variables.unwrap().get("base"), Some("https://api"));
     }
 
@@ -315,13 +318,13 @@ mod tests {
         let mut selection = none();
         selection.set_draft_collection(Some(own.id), Some(staging));
 
-        let variables = editor_variables(EditorContent::Draft, &selection, &collections);
+        let variables = editor_variables(EditorContent::Draft, &selection, &collections, &[]);
         let sent = resolve(templated(), variables.as_ref());
         assert_eq!(sent.url, "https://staging/users/{{id}}");
 
         selection.set_draft_collection(None, None);
         assert_eq!(
-            editor_variables(EditorContent::Draft, &selection, &collections),
+            editor_variables(EditorContent::Draft, &selection, &collections, &[]),
             None
         );
     }
@@ -332,7 +335,7 @@ mod tests {
         let mut selection = none();
         selection.set_draft_collection(Some(Uuid::new_v4()), None);
         assert_eq!(
-            editor_variables(EditorContent::Draft, &selection, &collections),
+            editor_variables(EditorContent::Draft, &selection, &collections, &[]),
             None
         );
     }

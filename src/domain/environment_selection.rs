@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use uuid::Uuid;
 
-use super::{collection::Collection, variables::Variables};
+use super::{collection::Collection, environment::Environment, variables::Variables};
 
 /// Each collection's active environment, and the collection drafts resolve
 /// against. Ids of deleted collections or environments count as none.
@@ -63,9 +63,10 @@ impl EnvironmentSelection {
         }
     }
 
-    /// `collection`'s variables with its active environment in front.
-    pub fn variables(&self, collection: &Collection) -> Variables {
-        collection.variables_with(self.active_environment(collection))
+    /// `collection`'s variables with its active environment, and the shared
+    /// environment that's based on, in front.
+    pub fn variables(&self, collection: &Collection, shared: &[Arc<Environment>]) -> Variables {
+        collection.variables_with(self.active_environment(collection), shared)
     }
 
     /// This selection without the ids `collections` no longer have, as
@@ -86,10 +87,7 @@ impl EnvironmentSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
-        collection::{Environment, add_environment},
-        request::KeyValue,
-    };
+    use crate::domain::{collection::add_environment, request::KeyValue};
 
     fn variable(key: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -135,18 +133,24 @@ mod tests {
     fn variables_use_the_active_environment() {
         let (collection, staging) = collection();
         let mut selection = EnvironmentSelection::default();
-        assert_eq!(selection.variables(&collection).get("host"), Some("local"));
+        assert_eq!(
+            selection.variables(&collection, &[]).get("host"),
+            Some("local")
+        );
 
         selection.set_active_environment(collection.id, Some(staging));
         assert_eq!(selection.active_environment(&collection), Some(staging));
         assert_eq!(
-            selection.variables(&collection).get("host"),
+            selection.variables(&collection, &[]).get("host"),
             Some("staging")
         );
 
         selection.set_active_environment(collection.id, None);
         assert_eq!(selection.active_environment(&collection), None);
-        assert_eq!(selection.variables(&collection).get("host"), Some("local"));
+        assert_eq!(
+            selection.variables(&collection, &[]).get("host"),
+            Some("local")
+        );
     }
 
     #[test]
@@ -178,7 +182,10 @@ mod tests {
         let collections = [collection.clone()];
 
         assert_eq!(selection.active_environment(&collection), None);
-        assert_eq!(selection.variables(&collection).get("host"), Some("local"));
+        assert_eq!(
+            selection.variables(&collection, &[]).get("host"),
+            Some("local")
+        );
         assert!(selection.draft_collection(&collections).is_none());
         assert_eq!(selection.pruned(&collections), (HashMap::new(), None));
 

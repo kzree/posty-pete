@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 
 pub mod collection;
+pub mod environment;
 pub mod history;
+mod json_dir;
 pub mod navigation;
 #[cfg(test)]
 pub mod test_support;

@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use super::{CollectionTab, CollectionView, CollectionViewEvent, VariableSet};
 use crate::{
-    domain::collection::{Collection, Environment},
+    domain::{collection::Collection, environment::Environment},
     ui::{confirm_dialog::open_confirm_dialog, rename_dialog::open_rename_dialog},
 };
 

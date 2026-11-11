@@ -1,84 +1,47 @@
-use std::{
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
 
-use anyhow::Context as _;
 use uuid::Uuid;
 
+use super::json_dir::JsonDir;
 use crate::domain::collection::Collection;
 
 /// One `<uuid>.json` file per collection in `dir`.
 pub struct CollectionStore {
-    dir: PathBuf,
+    dir: JsonDir,
 }
 
 impl CollectionStore {
     pub fn new(dir: PathBuf) -> anyhow::Result<Self> {
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("creating collections directory {}", dir.display()))?;
-        Ok(Self { dir })
+        Ok(Self {
+            dir: JsonDir::new(dir)?,
+        })
     }
 
     /// Sorted by name, case-insensitively. Unreadable files are skipped with a warning.
     pub fn load_all(&self) -> anyhow::Result<Vec<Collection>> {
-        let entries = fs::read_dir(&self.dir)
-            .with_context(|| format!("reading collections directory {}", self.dir.display()))?;
-
-        let mut collections = Vec::new();
-        for entry in entries {
-            let path = entry
-                .with_context(|| format!("reading collections directory {}", self.dir.display()))?
-                .path();
-            if !path.is_file() || path.extension().is_none_or(|ext| ext != "json") {
-                continue;
-            }
-            match read_collection(&path) {
-                Ok(collection) => collections.push(collection),
-                Err(e) => tracing::warn!("skipping collection file {}: {e:#}", path.display()),
-            }
-        }
-
+        let mut collections: Vec<Collection> = self.dir.load_all()?;
         collections.sort_by_cached_key(|collection| collection.name.to_lowercase());
         Ok(collections)
     }
 
     pub fn save(&self, collection: &Collection) -> anyhow::Result<()> {
-        let path = self.path(collection.id);
-        let tmp = path.with_extension("json.tmp");
-        let json = serde_json::to_vec_pretty(collection)?;
-
-        fs::write(&tmp, json).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &path)
-            .with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))
+        self.dir.save(collection.id, collection)
     }
 
     pub fn delete(&self, id: Uuid) -> anyhow::Result<()> {
-        let path = self.path(id);
-        match fs::remove_file(&path) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => {
-                Err(e).with_context(|| format!("deleting {}", path.display()))
-            }
-            _ => Ok(()),
-        }
+        self.dir.delete(id)
     }
-
-    fn path(&self, id: Uuid) -> PathBuf {
-        self.dir.join(format!("{id}.json"))
-    }
-}
-
-fn read_collection(path: &Path) -> anyhow::Result<Collection> {
-    let json = fs::read(path)?;
-    Ok(serde_json::from_slice(&json)?)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
-    use crate::domain::store::test_support::TempDir;
+    use crate::domain::store::test_support::{TempDir, file_names};
     use crate::domain::{
-        collection::{Environment, Folder, Item, SavedRequest},
+        collection::{Folder, Item, SavedRequest},
+        environment::Environment,
         request::{Auth, Body, HttpMethod, KeyValue, Request},
     };
 
@@ -86,15 +49,6 @@ mod tests {
         let dir = TempDir::new();
         let store = CollectionStore::new(dir.path().to_path_buf()).unwrap();
         (dir, store)
-    }
-
-    fn file_names(dir: &Path) -> Vec<String> {
-        let mut names: Vec<_> = fs::read_dir(dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        names.sort();
-        names
     }
 
     fn nested_collection(name: &str) -> (Collection, Uuid) {

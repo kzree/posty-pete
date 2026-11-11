@@ -35,6 +35,7 @@ use crate::{
     quick_open,
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},
+    shared_environments::{SharedEnvironments, SharedEnvironmentsEvent},
     sidebar::{Sidebar, SidebarTab, history_panel::HistoryPanel, library_panel::LibraryPanel},
     status_bar::StatusBar,
     ui::loading_bar::LoadingBar,
@@ -88,6 +89,7 @@ pub struct Workspace {
     client: reqwest::Client,
     history: Entity<History>,
     collections: Entity<Collections>,
+    shared_environments: Entity<SharedEnvironments>,
     route_history: RouteHistory,
     editor_content: EditorContent,
     /// The draft, kept while the editor holds a saved request.
@@ -131,6 +133,7 @@ impl Workspace {
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
         let collections = cx.new(Collections::new);
+        let shared_environments = cx.new(SharedEnvironments::new);
 
         let mut workspace = Self {
             request_editor,
@@ -148,6 +151,7 @@ impl Workspace {
                 .expect("failed to build HTTP client"),
             history,
             collections,
+            shared_environments,
             route_history: RouteHistory::new(AppRoute::Request),
             editor_content: EditorContent::Draft,
             draft: None,
@@ -190,6 +194,15 @@ impl Workspace {
             cx.subscribe_in(&self.collections, window, |this, _, event, window, cx| {
                 this.on_collections_event(event, window, cx)
             }),
+            cx.subscribe_in(
+                &self.shared_environments,
+                window,
+                |_, _, event, window, cx| {
+                    if let SharedEnvironmentsEvent::Failed { title, error } = event {
+                        show_error(title, error, window, cx);
+                    }
+                },
+            ),
             cx.subscribe_in(&self.library_panel, window, |this, _, event, window, cx| {
                 this.on_library_panel_event(event, window, cx)
             }),

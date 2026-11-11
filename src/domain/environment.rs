@@ -1,0 +1,202 @@
+//! Environments: named variable sets. A collection's own environments live in
+//! its file; shared environments belong to no collection and are stored one
+//! per file.
+
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use super::{request::KeyValue, variables::Variables};
+
+pub const NEW_ENVIRONMENT_NAME: &str = "New environment";
+
+/// A named set of variables layered in front of the collection's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Environment {
+    pub id: Uuid,
+    pub name: String,
+    /// The shared environment a collection environment is based on. Always
+    /// `None` on shared environments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<Uuid>,
+    pub variables: Vec<KeyValue>,
+}
+
+impl Environment {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            base: None,
+            variables: Vec::new(),
+        }
+    }
+}
+
+pub fn find(shared: &[Arc<Environment>], id: Uuid) -> Option<&Environment> {
+    shared.iter().find(|env| env.id == id).map(|env| &**env)
+}
+
+/// The shared environment's variables alone, or `None` if there's no such
+/// environment.
+#[cfg_attr(not(test), expect(dead_code, reason = "used for drafts from task 55"))]
+pub fn shared_variables(shared: &[Arc<Environment>], id: Uuid) -> Option<Variables> {
+    find(shared, id).map(|env| Variables::layered([env.variables.as_slice()]))
+}
+
+/// Adds a shared environment named [`NEW_ENVIRONMENT_NAME`], numbered if
+/// that's taken, and returns its id.
+pub fn add(shared: &mut Vec<Arc<Environment>>) -> Uuid {
+    let names = shared.iter().map(|env| env.name.as_str());
+    let environment = Environment::new(unique_name(NEW_ENVIRONMENT_NAME, names));
+    let id = environment.id;
+    shared.push(Arc::new(environment));
+    id
+}
+
+/// Returns `false`, changing (and copying) nothing, if there's no such
+/// environment or the name is the same.
+pub fn rename(shared: &mut [Arc<Environment>], id: Uuid, name: impl Into<String>) -> bool {
+    let name = name.into();
+    find(shared, id).is_some_and(|env| env.name != name)
+        && modify(shared, id, |env| env.name = name)
+}
+
+/// Returns `false` if there's no such environment.
+pub fn delete(shared: &mut Vec<Arc<Environment>>, id: Uuid) -> bool {
+    let before = shared.len();
+    shared.retain(|env| env.id != id);
+    shared.len() != before
+}
+
+/// Replaces the environment's variables. Returns `false`, changing (and
+/// copying) nothing, if there's no such environment or they're the same.
+pub fn set_variables(shared: &mut [Arc<Environment>], id: Uuid, variables: Vec<KeyValue>) -> bool {
+    find(shared, id).is_some_and(|env| env.variables != variables)
+        && modify(shared, id, |env| env.variables = variables)
+}
+
+/// Runs `f` on the environment, copying it first if it's shared.
+fn modify(shared: &mut [Arc<Environment>], id: Uuid, f: impl FnOnce(&mut Environment)) -> bool {
+    shared
+        .iter_mut()
+        .find(|env| env.id == id)
+        .map(|env| f(Arc::make_mut(env)))
+        .is_some()
+}
+
+/// `base`, or `base 2`, `base 3`, ... whichever is the first not in `taken`.
+pub(super) fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone) -> String {
+    let is_taken = |name: &str| taken.clone().any(|taken| taken == name);
+    if !is_taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base} {n}"))
+        .find(|name| !is_taken(name))
+        .expect("some number is free")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn variable(key: &str, value: &str) -> KeyValue {
+        KeyValue {
+            enabled: true,
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    fn names(shared: &[Arc<Environment>]) -> Vec<&str> {
+        shared.iter().map(|env| env.name.as_str()).collect()
+    }
+
+    #[test]
+    fn json_without_base_loads_and_saves_without_it() {
+        let json =
+            r#"{"id": "6f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f", "name": "Old", "variables": []}"#;
+        let loaded: Environment = serde_json::from_str(json).unwrap();
+        assert_eq!(loaded.base, None);
+        let value = serde_json::to_value(&loaded).unwrap();
+        assert!(value.get("base").is_none());
+
+        let based = Environment {
+            base: Some(Uuid::new_v4()),
+            ..loaded
+        };
+        let value = serde_json::to_value(&based).unwrap();
+        let reloaded: Environment = serde_json::from_value(value).unwrap();
+        assert_eq!(reloaded, based);
+    }
+
+    #[test]
+    fn add_numbers_taken_default_names() {
+        let mut shared = Vec::new();
+        let first = add(&mut shared);
+        add(&mut shared);
+        assert!(rename(&mut shared, first, "Local"));
+        add(&mut shared);
+        assert_eq!(
+            names(&shared),
+            ["Local", "New environment 2", "New environment"]
+        );
+    }
+
+    #[test]
+    fn rename_only_when_it_changes() {
+        let mut shared = Vec::new();
+        let id = add(&mut shared);
+        let held = shared.clone();
+
+        assert!(!rename(&mut shared, id, NEW_ENVIRONMENT_NAME));
+        assert!(!rename(&mut shared, Uuid::new_v4(), "Prod"));
+        assert!(Arc::ptr_eq(&shared[0], &held[0]));
+
+        assert!(rename(&mut shared, id, "Prod"));
+        assert_eq!(names(&shared), ["Prod"]);
+        assert_eq!(names(&held), [NEW_ENVIRONMENT_NAME]);
+    }
+
+    #[test]
+    fn delete_removes_only_it() {
+        let mut shared = Vec::new();
+        let deleted = add(&mut shared);
+        let kept = add(&mut shared);
+
+        assert!(delete(&mut shared, deleted));
+        assert!(!delete(&mut shared, deleted));
+        assert!(find(&shared, deleted).is_none());
+        assert!(find(&shared, kept).is_some());
+    }
+
+    #[test]
+    fn set_variables_only_when_they_change() {
+        let mut shared = Vec::new();
+        let id = add(&mut shared);
+        let rows = vec![variable("host", "staging")];
+
+        assert!(set_variables(&mut shared, id, rows.clone()));
+        let held = shared.clone();
+        assert!(!set_variables(&mut shared, id, rows.clone()));
+        assert!(!set_variables(&mut shared, Uuid::new_v4(), Vec::new()));
+        assert!(Arc::ptr_eq(&shared[0], &held[0]));
+        assert_eq!(shared[0].variables, rows);
+    }
+
+    #[test]
+    fn shared_variables_are_the_environments_own() {
+        let mut shared = Vec::new();
+        let id = add(&mut shared);
+        let mut disabled = variable("token", "t");
+        disabled.enabled = false;
+        set_variables(&mut shared, id, vec![variable("host", "staging"), disabled]);
+
+        let variables = shared_variables(&shared, id).unwrap();
+        assert_eq!(variables.get("host"), Some("staging"));
+        assert_eq!(variables.get("token"), None);
+        assert_eq!(shared_variables(&shared, Uuid::new_v4()), None);
+    }
+}

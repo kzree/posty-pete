@@ -149,14 +149,10 @@ fn draft_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::collection::Environment;
+    use crate::domain::environment::Environment;
 
     fn environment(name: &str) -> Environment {
-        Environment {
-            id: Uuid::new_v4(),
-            name: name.into(),
-            variables: Vec::new(),
-        }
+        Environment::new(name)
     }
 
     fn collection(name: &str, environments: &[&str]) -> Arc<Collection> {
