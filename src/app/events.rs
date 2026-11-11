@@ -7,7 +7,8 @@ use crate::{
     collections::CollectionsEvent,
     command_palette::CommandPaletteEvent,
     domain::{
-        collection::NEW_COLLECTION_NAME, history::OpenMode, palette::Target, request::KeyValue,
+        collection::NEW_COLLECTION_NAME, history::OpenMode, palette::Target, recents::Recent,
+        request::KeyValue,
     },
     history::HistoryEvent,
     request_editor::RequestEditorEvent,
@@ -79,6 +80,7 @@ impl Workspace {
             self.keep_deleted_request_as_draft();
         }
         self.drop_deleted_responses(cx);
+        self.prune_recents(cx);
         if !self.route_exists(self.current_route(), cx) {
             self.replace_route(self.editor_route(), window, cx);
         } else {
@@ -110,9 +112,7 @@ impl Workspace {
     ) {
         match event {
             LibraryPanelEvent::CreateCollection => self.create_collection(window, cx),
-            LibraryPanelEvent::OpenCollection(id) => {
-                self.navigate(AppRoute::Collection(*id), window, cx)
-            }
+            LibraryPanelEvent::OpenCollection(id) => self.open_collection(*id, window, cx),
             LibraryPanelEvent::OpenRequest {
                 collection_id,
                 request_id,
@@ -177,7 +177,7 @@ impl Workspace {
         let id = self.collections.update(cx, |collections, cx| {
             collections.create(NEW_COLLECTION_NAME, cx)
         });
-        self.navigate(AppRoute::Collection(id), window, cx);
+        self.open_collection(id, window, cx);
         self.collection_view
             .update(cx, |view, cx| view.focus_name(window, cx));
     }
@@ -348,7 +348,10 @@ impl Workspace {
         window.close_dialog(cx);
         match *event {
             CommandPaletteEvent::Open(target) => self.open_palette_target(target, window, cx),
-            CommandPaletteEvent::Run(command) => self.run_command(command, window, cx),
+            CommandPaletteEvent::Run(command) => {
+                self.record_recent(Recent::Command { command }, cx);
+                self.run_command(command, window, cx);
+            }
         }
     }
 
@@ -358,7 +361,7 @@ impl Workspace {
                 collection_id,
                 request_id,
             } => self.open_saved_request(collection_id, request_id, window, cx),
-            Target::Collection(id) => self.navigate(AppRoute::Collection(id), window, cx),
+            Target::Collection(id) => self.open_collection(id, window, cx),
             Target::Folder {
                 collection_id,
                 folder_id,
@@ -376,11 +379,14 @@ impl Workspace {
                 self.navigate(AppRoute::Settings, window, cx);
                 self.settings_page
                     .update(cx, |page, cx| page.show_section(section, window, cx));
+                self.record_recent(Recent::SettingsPage { section }, cx);
             }
             Target::Setting(setting) => {
                 self.navigate(AppRoute::Settings, window, cx);
                 self.settings_page
                     .update(cx, |page, cx| page.reveal(setting, cx));
+                let section = setting.section();
+                self.record_recent(Recent::SettingsPage { section }, cx);
             }
         }
     }

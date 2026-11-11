@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{environment_selection::DraftSource, request::Request};
+use crate::domain::{environment_selection::DraftSource, recents::Recents, request::Request};
 
 /// A back/forward history entry as stored on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +35,9 @@ pub struct SavedNavigation {
     pub active_environments: HashMap<Uuid, Uuid>,
     #[serde(default, skip_serializing_if = "DraftSource::is_none")]
     pub draft_source: DraftSource,
+    /// What the palette lists as recent.
+    #[serde(default, skip_serializing_if = "Recents::is_empty")]
+    pub recents: Recents,
 }
 
 /// [`SavedNavigation`] as read, also accepting the `draft_collection` that
@@ -51,6 +54,8 @@ struct StoredNavigation {
     draft_source: DraftSource,
     #[serde(default)]
     draft_collection: Option<Uuid>,
+    #[serde(default)]
+    recents: Recents,
 }
 
 impl From<StoredNavigation> for SavedNavigation {
@@ -65,6 +70,7 @@ impl From<StoredNavigation> for SavedNavigation {
             draft: stored.draft,
             active_environments: stored.active_environments,
             draft_source,
+            recents: stored.recents,
         }
     }
 }
@@ -78,6 +84,7 @@ impl SavedNavigation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::recents::Recent;
 
     fn load(json: &str) -> SavedNavigation {
         serde_json::from_str(json).unwrap()
@@ -100,6 +107,7 @@ mod tests {
             draft: None,
             active_environments: HashMap::new(),
             draft_source: DraftSource::Shared(Uuid::new_v4()),
+            recents: Recents::default(),
         };
         let value = serde_json::to_value(&saved).unwrap();
         assert!(value.get("draft_collection").is_none());
@@ -117,6 +125,43 @@ mod tests {
         assert_eq!(saved.entries[1], NavEntry::SharedEnvironments);
         let value = serde_json::to_value(&saved).unwrap();
         assert_eq!(value["entries"][1]["kind"], "shared_environments");
+    }
+
+    #[test]
+    fn files_without_recents_load_with_none() {
+        let saved = load(r#"{ "entries": [{ "kind": "draft" }], "index": 0 }"#);
+        assert!(saved.recents.is_empty());
+        let value = serde_json::to_value(&saved).unwrap();
+        assert!(value.get("recents").is_none());
+    }
+
+    #[test]
+    fn malformed_recents_keep_the_rest_of_the_file() {
+        let id = Uuid::new_v4();
+        for recents in ["null", r#""oops""#] {
+            let saved = load(&format!(
+                r#"{{ "entries": [{{ "kind": "draft" }}], "index": 0,
+                     "draft_source": {{ "kind": "collection", "id": "{id}" }},
+                     "recents": {recents} }}"#
+            ));
+            assert!(saved.recents.is_empty());
+            assert_eq!(saved.draft_source, DraftSource::Collection(id));
+        }
+    }
+
+    #[test]
+    fn recents_round_trip() {
+        let id = Uuid::new_v4();
+        let saved = load(&format!(
+            r#"{{ "entries": [{{ "kind": "draft" }}], "index": 0,
+                 "recents": [{{ "kind": "collection", "id": "{id}" }}] }}"#
+        ));
+        assert_eq!(saved.recents.all(), [Recent::Collection { id }]);
+        let value = serde_json::to_value(&saved).unwrap();
+        assert_eq!(
+            serde_json::from_value::<SavedNavigation>(value).unwrap(),
+            saved
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crate::{
     domain::{
         collection,
         environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
+        recents::Recent,
     },
     environment_picker::{EnvironmentPicker, EnvironmentPickerAction},
 };
@@ -69,6 +70,15 @@ impl Workspace {
             self.collection_view.update(cx, |view, cx| {
                 view.open_environments(environment_id, window, cx)
             });
+        }
+        if let Some(environment_id) = environment_id {
+            self.record_recent(
+                Recent::CollectionEnvironment {
+                    collection_id,
+                    environment_id,
+                },
+                cx,
+            );
         }
     }
 
@@ -215,6 +225,7 @@ impl Workspace {
         if let Some(id) = environment_id {
             self.shared_environments_view
                 .update(cx, |view, cx| view.select(id, window, cx));
+            self.record_recent(Recent::SharedEnvironment { id }, cx);
         }
     }
 
@@ -274,6 +285,7 @@ impl Workspace {
         self.refresh_collection_view(window, cx);
         let request = self.request_editor.read(cx).build_request(cx);
         self.sync_unresolved_variables(&request, cx);
+        self.prune_recents(cx);
         self.schedule_navigation_save(cx);
         cx.notify();
     }

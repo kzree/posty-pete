@@ -48,6 +48,7 @@ mod tests {
     use crate::domain::{
         environment_selection::DraftSource,
         navigation::NavEntry,
+        recents::{Recent, Recents},
         request::{HttpMethod, Request},
     };
 
@@ -76,6 +77,7 @@ mod tests {
             }),
             active_environments: HashMap::from([(Uuid::new_v4(), Uuid::new_v4())]),
             draft_source: DraftSource::Collection(Uuid::new_v4()),
+            recents: Recents::new([Recent::Collection { id: Uuid::new_v4() }]),
         }
     }
 
@@ -149,5 +151,6 @@ mod tests {
         assert_eq!(loaded.draft, None);
         assert!(loaded.active_environments.is_empty());
         assert_eq!(loaded.draft_source, DraftSource::None);
+        assert!(loaded.recents.is_empty());
     }
 }

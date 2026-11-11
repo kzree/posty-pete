@@ -10,6 +10,7 @@ use super::{
     command::Command,
     environment::Environment,
     history::{self, HistorySummary},
+    recents::Recent,
     request::HttpMethod,
     settings_index::{Setting, SettingsSection},
 };
@@ -61,18 +62,28 @@ impl<'a> Query<'a> {
         }
     }
 
-    fn includes(self, group: Group, scope: Scope) -> bool {
-        if self.commands_only {
-            group == Group::Commands
-        } else {
-            scope.includes(group)
+    fn includes(self, entry: &Entry, scope: Scope) -> bool {
+        match entry.group {
+            // Recents stand in for suggestions until something is typed.
+            Group::Recent => {
+                !self.commands_only && self.is_empty() && scope.includes(entry.target.group())
+            }
+            Group::RecentCommands => self.is_empty() && scope.includes(Group::Commands),
+            group if self.commands_only => group == Group::Commands,
+            group => scope.includes(group),
         }
+    }
+
+    fn is_empty(self) -> bool {
+        self.text.trim().is_empty()
     }
 }
 
 /// A section of results, in display order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
+    Recent,
+    RecentCommands,
     Requests,
     Collections,
     Folders,
@@ -83,7 +94,9 @@ pub enum Group {
 }
 
 impl Group {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
+        Self::Recent,
+        Self::RecentCommands,
         Self::Requests,
         Self::Collections,
         Self::Folders,
@@ -95,6 +108,8 @@ impl Group {
 
     pub fn title(self) -> &'static str {
         match self {
+            Self::Recent => "Recent",
+            Self::RecentCommands => "Recent commands",
             Self::Requests => "Requests",
             Self::Collections => "Collections",
             Self::Folders => "Folders",
@@ -138,7 +153,40 @@ pub enum Target {
     Setting(Setting),
 }
 
+impl From<Recent> for Target {
+    fn from(recent: Recent) -> Self {
+        match recent {
+            Recent::Request {
+                collection_id,
+                request_id,
+            } => Self::Request {
+                collection_id,
+                request_id,
+            },
+            Recent::Collection { id } => Self::Collection(id),
+            Recent::Folder {
+                collection_id,
+                folder_id,
+            } => Self::Folder {
+                collection_id,
+                folder_id,
+            },
+            Recent::SharedEnvironment { id } => Self::SharedEnvironment(id),
+            Recent::CollectionEnvironment {
+                collection_id,
+                environment_id,
+            } => Self::CollectionEnvironment {
+                collection_id,
+                environment_id,
+            },
+            Recent::SettingsPage { section } => Self::SettingsSection(section),
+            Recent::Command { command } => Self::Command(command),
+        }
+    }
+}
+
 impl Target {
+    /// The group it's listed in, apart from [`Group::Recent`] and [`Group::RecentCommands`].
     pub fn group(self) -> Group {
         match self {
             Self::Request { .. } => Group::Requests,
@@ -157,6 +205,8 @@ pub const SHARED_LOCATION: &str = "Shared";
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub target: Target,
+    /// The target's group, or a recent one.
+    pub group: Group,
     pub name: String,
     /// The collection and folders holding a request or folder, the collection
     /// of a collection environment, [`SHARED_LOCATION`] for a shared one, the
@@ -173,6 +223,7 @@ impl Entry {
     fn new(target: Target, name: String, location: String, method: Option<HttpMethod>) -> Self {
         let mut entry = Self {
             target,
+            group: target.group(),
             name,
             location,
             method,
@@ -280,6 +331,28 @@ pub fn history_entries<Tz: TimeZone>(
         .collect()
 }
 
+/// Copies of the `entries` that `recents` (newest first) open, in that order,
+/// grouped as recent. Recents without an entry, like a command that can't run
+/// now, are left out.
+pub fn recent_entries(entries: &[Entry], recents: &[Recent]) -> Vec<Entry> {
+    recents
+        .iter()
+        .filter_map(|&recent| {
+            let target = Target::from(recent);
+            let entry = entries.iter().find(|entry| entry.target == target)?;
+            let group = if recent.is_command() {
+                Group::RecentCommands
+            } else {
+                Group::Recent
+            };
+            Some(Entry {
+                group,
+                ..entry.clone()
+            })
+        })
+        .collect()
+}
+
 /// The settings pages, then every row on them.
 pub fn settings_entries() -> Vec<Entry> {
     let pages = SettingsSection::ALL.into_iter().map(|section| Entry {
@@ -346,6 +419,8 @@ pub struct Section {
 
 /// Per-group limit while the query is broad.
 pub const BROAD_LIMIT: usize = 5;
+/// Limit of each recent group.
+pub const RECENT_LIMIT: usize = 5;
 /// Per-group limit otherwise, so a long list stays quick to scan.
 pub const NARROW_LIMIT: usize = 50;
 /// Queries shorter than this (ignoring spaces) are broad.
@@ -354,15 +429,16 @@ const NARROW_QUERY_LEN: usize = 3;
 /// The groups with matches for `query`, in [`Group::ALL`] order. Within a
 /// group the best match comes first; ties keep tree order. An empty query
 /// matches everything; one starting with [`COMMAND_PREFIX`] searches only
-/// commands, in either scope.
+/// commands, in either scope. Recent entries are listed first, only while
+/// nothing is typed.
 pub fn search(entries: &[Entry], query: &str, scope: Scope) -> Vec<Section> {
     let query = Query::parse(query);
     let text = query.text.trim().to_lowercase();
     let mut ranked: Vec<(Group, Rank, usize)> = entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| query.includes(entry.target.group(), scope))
-        .filter_map(|(ix, entry)| rank(entry, &text).map(|rank| (entry.target.group(), rank, ix)))
+        .filter(|(_, entry)| query.includes(entry, scope))
+        .filter_map(|(ix, entry)| rank(entry, &text).map(|rank| (entry.group, rank, ix)))
         .collect();
     ranked.sort();
     // A single group has room for all of it.
@@ -374,6 +450,10 @@ pub fn search(entries: &[Entry], query: &str, scope: Scope) -> Vec<Section> {
     Group::ALL
         .into_iter()
         .filter_map(|group| {
+            let limit = match group {
+                Group::Recent | Group::RecentCommands => RECENT_LIMIT,
+                _ => limit,
+            };
             let entries: Vec<usize> = ranked
                 .iter()
                 .filter(|(g, ..)| *g == group)
@@ -1050,6 +1130,181 @@ mod tests {
                 "History",
                 "Shared environments"
             ]
+        );
+    }
+
+    /// `entries` with the recent ones for `recents` added.
+    fn with_recents(mut entries: Vec<Entry>, recents: &[Recent]) -> Vec<Entry> {
+        let recent = recent_entries(&entries, recents);
+        entries.extend(recent);
+        entries
+    }
+
+    /// Every kind of entry, with a few of them recent.
+    fn recent_sample() -> Vec<Entry> {
+        let entries = with_settings();
+        let recents = sample_recents(&entries);
+        with_recents(entries, &recents)
+    }
+
+    fn sample_recents(entries: &[Entry]) -> Vec<Recent> {
+        let find = |name: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.name == name)
+                .map(|entry| entry.target)
+                .unwrap()
+        };
+        let Target::Request {
+            collection_id,
+            request_id,
+        } = find("Get user")
+        else {
+            panic!("expected a request");
+        };
+        let Target::Collection(billing) = find("Billing") else {
+            panic!("expected a collection");
+        };
+        vec![
+            Recent::Command {
+                command: Command::NewCollection,
+            },
+            Recent::SettingsPage {
+                section: SettingsSection::Appearance,
+            },
+            Recent::Request {
+                collection_id,
+                request_id,
+            },
+            Recent::Command {
+                command: Command::Save,
+            },
+            Recent::Collection { id: billing },
+        ]
+    }
+
+    #[test]
+    fn empty_query_lists_recents_first_newest_first() {
+        let entries = recent_sample();
+        let outline = outline(&entries, "", Scope::All);
+        assert_eq!(
+            outline[0],
+            (
+                "Recent",
+                vec![
+                    "Appearance".to_string(),
+                    "Get user".into(),
+                    "Billing".into()
+                ]
+            )
+        );
+        assert_eq!(
+            outline[1],
+            (
+                "Recent commands",
+                vec!["New collection".to_string(), "Save".into()]
+            )
+        );
+        assert_eq!(outline[2].0, "Requests");
+        assert_eq!(outline.last().unwrap().0, "Settings");
+    }
+
+    #[test]
+    fn typing_hides_the_recents() {
+        let entries = recent_sample();
+        for query in ["get", "> save", "billing"] {
+            let groups = groups(&entries, query, Scope::All);
+            assert!(!groups.contains(&"Recent"), "{query:?}");
+            assert!(!groups.contains(&"Recent commands"), "{query:?}");
+        }
+        assert_eq!(
+            outline(&entries, "get user", Scope::All),
+            [("Requests", vec!["Get user".to_string()])]
+        );
+    }
+
+    #[test]
+    fn the_prefix_alone_lists_recent_commands_first() {
+        let entries = recent_sample();
+        assert_eq!(
+            groups(&entries, ">", Scope::All),
+            ["Recent commands", "Commands"]
+        );
+    }
+
+    #[test]
+    fn items_scope_lists_only_recent_items() {
+        let entries = recent_sample();
+        let outline = outline(&entries, "", Scope::Items);
+        assert_eq!(
+            outline[0],
+            ("Recent", vec!["Get user".to_string(), "Billing".into()])
+        );
+        let groups: Vec<&str> = outline.iter().map(|(title, _)| *title).collect();
+        assert_eq!(
+            groups,
+            [
+                "Recent",
+                "Requests",
+                "Collections",
+                "Folders",
+                "Environments"
+            ]
+        );
+    }
+
+    #[test]
+    fn recents_without_an_entry_are_left_out() {
+        let entries = with_commands(&[Command::NewRequest]);
+        let recents = [
+            Recent::Collection { id: Uuid::new_v4() },
+            Recent::Command {
+                command: Command::Revert,
+            },
+            Recent::Command {
+                command: Command::NewRequest,
+            },
+        ];
+        let recent = recent_entries(&entries, &recents);
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].target, Target::Command(Command::NewRequest));
+        assert_eq!(recent[0].group, Group::RecentCommands);
+    }
+
+    #[test]
+    fn recent_groups_are_capped() {
+        let entries = many_requests(RECENT_LIMIT + 3);
+        let recents: Vec<Recent> = entries
+            .iter()
+            .filter_map(|entry| match entry.target {
+                Target::Request {
+                    collection_id,
+                    request_id,
+                } => Some(Recent::Request {
+                    collection_id,
+                    request_id,
+                }),
+                _ => None,
+            })
+            .rev()
+            .collect();
+        let mut all = entries.clone();
+        all.extend(recent_entries(&entries, &recents));
+        let sections = search(&all, "", Scope::All);
+        assert_eq!(sections[0].group, Group::Recent);
+        assert_eq!(sections[0].entries.len(), RECENT_LIMIT);
+        assert_eq!(
+            all[sections[0].entries[0]].name,
+            format!("Request {}", RECENT_LIMIT + 2)
+        );
+    }
+
+    #[test]
+    fn without_recents_the_empty_query_is_unchanged() {
+        let entries = with_settings();
+        assert_eq!(
+            outline(&with_recents(with_settings(), &[]), "", Scope::All),
+            outline(&entries, "", Scope::All)
         );
     }
 }

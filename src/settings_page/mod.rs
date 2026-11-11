@@ -95,6 +95,10 @@ impl SettingsPage {
         }
     }
 
+    pub fn section(&self) -> SettingsSection {
+        self.section
+    }
+
     /// Shows `section` with its menu item focused.
     pub fn show_section(
         &mut self,

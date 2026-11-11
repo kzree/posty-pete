@@ -11,6 +11,7 @@ pub mod http;
 pub mod mcp;
 pub mod navigation;
 pub mod palette;
+pub mod recents;
 pub mod request;
 pub mod resolved;
 pub mod response;

@@ -100,7 +100,7 @@ impl Workspace {
             this.open_sidebar_tab(SidebarTab::Tests, cx);
         }))
         .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
-            this.navigate(AppRoute::Settings, window, cx);
+            this.open_settings(window, cx);
         }))
         .on_action(cx.listener(|this, _: &OpenSharedEnvironments, window, cx| {
             this.open_shared_environments(None, window, cx);
@@ -140,9 +140,9 @@ impl Workspace {
             .on_forward(cx.listener(|this, _, window, cx| this.go(Direction::Forward, window, cx)))
             .on_new_request(cx.listener(|this, _, window, cx| this.new_request(window, cx)))
             .when_some(title_collection, |this, id| {
-                this.on_context_click(cx.listener(move |this, _, window, cx| {
-                    this.navigate(AppRoute::Collection(id), window, cx)
-                }))
+                this.on_context_click(
+                    cx.listener(move |this, _, window, cx| this.open_collection(id, window, cx)),
+                )
             })
             .when_some(self.environment_picker(cx), WindowTitleBar::trailing)
     }

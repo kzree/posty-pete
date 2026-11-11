@@ -1,6 +1,9 @@
 //! Commands the palette can run: their titles, search keywords and when they apply.
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Command {
     NewRequest,
     Save,

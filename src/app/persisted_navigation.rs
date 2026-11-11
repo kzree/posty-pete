@@ -187,9 +187,9 @@ impl Workspace {
         .detach();
     }
 
-    /// Restores the stored navigation and environment selection if both it and
-    /// the collections are loaded. The selection is restored even if the user
-    /// already moved on.
+    /// Restores the stored navigation, environment selection and recents if
+    /// both it and the collections are loaded. The selection and recents are
+    /// restored even if the user already moved on.
     pub(super) fn restore_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let collections = self.collections.read(cx).load_state();
         if collections == LoadState::Loading
@@ -204,6 +204,7 @@ impl Workspace {
             mem::take(&mut saved.active_environments),
             saved.draft_source,
         );
+        self.restore_recents(mem::take(&mut saved.recents), cx);
         if self.navigation_untouched(cx) {
             self.apply_saved_navigation(saved, window, cx);
         } else {
@@ -295,6 +296,7 @@ impl Workspace {
             draft,
             active_environments,
             draft_source,
+            recents: self.recents.clone(),
         };
         self.persisted_navigation.save_job(saved)
     }
@@ -326,6 +328,7 @@ mod tests {
             draft: None,
             active_environments: HashMap::new(),
             draft_source: Default::default(),
+            recents: Default::default(),
         }
     }
 

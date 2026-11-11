@@ -1,7 +1,10 @@
 //! Every page, group and row of Settings, so the palette can find and reveal them.
 
+use serde::{Deserialize, Serialize};
+
 /// A page of the settings, in menu order.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SettingsSection {
     #[default]
     General,

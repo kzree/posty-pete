@@ -7,6 +7,7 @@ mod menu_fallback;
 mod navigation;
 mod persisted_navigation;
 mod quit;
+mod recents;
 mod render;
 mod response_cache;
 mod routes;
@@ -32,7 +33,12 @@ use crate::{
     collection_view::CollectionView,
     collections::Collections,
     command_palette::CommandPalette,
-    domain::{self, environment_selection::EnvironmentSelection, palette::Scope},
+    domain::{
+        self,
+        environment_selection::EnvironmentSelection,
+        palette::Scope,
+        recents::{Recent, Recents},
+    },
     history::History,
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},
@@ -108,6 +114,7 @@ pub struct Workspace {
     dirty_check: PendingCheck,
     responses: ResponseCache<EditorContent>,
     persisted_navigation: PersistedNavigation,
+    recents: Recents,
     /// Set while the save prompt is open.
     discard_prompt: Option<Continuation>,
     /// Set while a continuation runs, after the user saved or discarded.
@@ -171,6 +178,7 @@ impl Workspace {
             dirty_check: PendingCheck::default(),
             responses: ResponseCache::new(),
             persisted_navigation: PersistedNavigation::new(),
+            recents: Recents::default(),
             discard_prompt: None,
             discard_confirmed: false,
             closing: false,
@@ -283,9 +291,14 @@ impl Workspace {
             collection_id,
             request_id,
         };
+        let recent = Recent::Request {
+            collection_id,
+            request_id,
+        };
         // Already in the editor, maybe with unsaved changes: keep them.
         if !self.loads_into_editor(route) {
             self.navigate(route, window, cx);
+            self.record_recent(recent, cx);
             return;
         }
         if self.refuse_while_pending(window, cx) {
@@ -306,10 +319,23 @@ impl Workspace {
                 };
                 this.load_editor(content, &request, window, cx);
                 this.navigate(route, window, cx);
+                this.record_recent(recent, cx);
             },
             window,
             cx,
         );
+    }
+
+    fn open_collection(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(AppRoute::Collection(id), window, cx);
+        self.record_recent(Recent::Collection { id }, cx);
+    }
+
+    /// Opens the settings on the page they last showed.
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate(AppRoute::Settings, window, cx);
+        let section = self.settings_page.read(cx).section();
+        self.record_recent(Recent::SettingsPage { section }, cx);
     }
 
     /// Opens a blank, unlinked request on `/`.
@@ -348,6 +374,8 @@ impl Workspace {
             &chrono::Local::now(),
         ));
         entries.extend(domain::palette::settings_entries());
+        let recent = domain::palette::recent_entries(&entries, self.recents.all());
+        entries.extend(recent);
         let focus = self.command_focus(window, cx);
         let palette = cx.new(|cx| CommandPalette::new(entries, scope, &focus, window, cx));
         self.command_palette_subscription = Some(cx.subscribe_in(
@@ -390,6 +418,13 @@ impl Workspace {
         self.library_panel.update(cx, |panel, cx| {
             panel.select_row(folder_id, expand, window, cx)
         });
+        self.record_recent(
+            Recent::Folder {
+                collection_id,
+                folder_id,
+            },
+            cx,
+        );
     }
 
     fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
