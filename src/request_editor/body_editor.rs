@@ -78,6 +78,8 @@ pub struct BodyEditor {
     form_data: Entity<KeyValueEditor>,
     json_error: Option<SharedString>,
     json_check_pending: bool,
+    /// Why the loaded body is empty; dropped when the body is edited or replaced.
+    note: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -100,18 +102,18 @@ impl BodyEditor {
                     this.raw
                         .update(cx, |raw, cx| raw.set_highlighter(language, cx));
                     this.schedule_json_check(window, cx);
-                    cx.emit(Edited);
+                    this.edited(cx);
                 }
             },
         );
         let raw_sub = cx.subscribe_in(&raw, window, |this, _, event: &InputEvent, window, cx| {
             if let InputEvent::Change = event {
                 this.schedule_json_check(window, cx);
-                cx.emit(Edited);
+                this.edited(cx);
             }
         });
-        let form_sub = cx.subscribe(&form_data, |_, _, _: &KeyValueEditorEvent, cx| {
-            cx.emit(Edited)
+        let form_sub = cx.subscribe(&form_data, |this, _, _: &KeyValueEditorEvent, cx| {
+            this.edited(cx)
         });
 
         Self {
@@ -121,8 +123,21 @@ impl BodyEditor {
             form_data,
             json_error: None,
             json_check_pending: false,
+            note: None,
             _subscriptions: vec![sub, raw_sub, form_sub],
         }
+    }
+
+    pub fn show_note(&mut self, note: SharedString, cx: &mut Context<Self>) {
+        self.note = Some(note);
+        cx.notify();
+    }
+
+    fn edited(&mut self, cx: &mut Context<Self>) {
+        if self.note.take().is_some() {
+            cx.notify();
+        }
+        cx.emit(Edited);
     }
 
     fn is_json(&self, cx: &App) -> bool {
@@ -179,6 +194,7 @@ impl BodyEditor {
         };
 
         self.mode = mode;
+        self.note = None;
         self.form_data
             .update(cx, |form, cx| form.set_values(fields, window, cx));
         self.raw_kind.update(cx, |select, cx| {
@@ -225,7 +241,7 @@ impl Render for BodyEditor {
                         .on_click(cx.listener(|this, ix: &usize, window, cx| {
                             this.mode = BodyMode::ALL[*ix];
                             this.schedule_json_check(window, cx);
-                            cx.emit(Edited);
+                            this.edited(cx);
                             cx.notify();
                         }))
                         .children(BodyMode::ALL.map(BodyMode::label)),
@@ -283,6 +299,9 @@ impl Render for BodyEditor {
                 cx.listener(|this, _: &FormatJsonBody, window, cx| this.format_json(window, cx)),
             )
             .child(toolbar)
+            .when_some(self.note.clone(), |this, note| {
+                this.child(render_note(note, cx))
+            })
             .child(content)
     }
 }
@@ -309,4 +328,14 @@ impl BodyEditor {
         .child(div().min_w_0().truncate().child(error.clone()))
         .tooltip(move |window, cx| Tooltip::new(error.clone()).build(window, cx))
     }
+}
+
+fn render_note(note: SharedString, cx: &App) -> impl IntoElement {
+    h_flex()
+        .flex_none()
+        .gap_1p5()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child(Icon::new(IconName::Info).small().flex_none())
+        .child(note)
 }

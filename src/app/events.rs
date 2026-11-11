@@ -1,5 +1,5 @@
 use gpui::{Context, Window};
-use gpui_component::WindowExt;
+use gpui_component::{WindowExt, notification::Notification};
 
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
@@ -7,7 +7,10 @@ use crate::{
     collections::CollectionsEvent,
     command_palette::CommandPaletteEvent,
     domain::{
-        collection::NEW_COLLECTION_NAME, history::OpenMode, palette::Target, recents::Recent,
+        collection::NEW_COLLECTION_NAME,
+        history::{self, OpenMode},
+        palette::Target,
+        recents::Recent,
         request::KeyValue,
     },
     history::HistoryEvent,
@@ -33,18 +36,33 @@ impl Workspace {
             HistoryEvent::Recorded(summary) => self
                 .history_panel
                 .update(cx, |panel, cx| panel.push(summary.clone(), window, cx)),
-            HistoryEvent::Opened { request, mode } => {
+            HistoryEvent::Opened { entry, mode } => {
                 if self.refuse_while_pending(window, cx) {
                     return;
                 }
-                let (request, mode) = (request.clone(), *mode);
+                let (entry, mode) = (entry.clone(), *mode);
                 self.confirm_discard(
                     move |this, window, cx| {
                         this.responses.remove(EditorContent::Draft);
-                        this.load_editor(EditorContent::Draft, &request, window, cx);
+                        this.load_editor(EditorContent::Draft, &entry.request, window, cx);
                         this.navigate(AppRoute::Request, window, cx);
-                        if mode == OpenMode::Send {
-                            this.request_editor.update(cx, |editor, cx| editor.send(cx));
+                        match (entry.omitted_body_size, mode) {
+                            (Some(size), mode) => {
+                                let note = history::omitted_body_note(size);
+                                this.request_editor.update(cx, |editor, cx| {
+                                    editor.show_body_note(note.clone(), cx)
+                                });
+                                if mode == OpenMode::Send {
+                                    window.push_notification(
+                                        Notification::warning(note).title("Request not sent"),
+                                        cx,
+                                    );
+                                }
+                            }
+                            (None, OpenMode::Send) => {
+                                this.request_editor.update(cx, |editor, cx| editor.send(cx))
+                            }
+                            (None, OpenMode::Load) => {}
                         }
                     },
                     window,

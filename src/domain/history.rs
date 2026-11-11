@@ -1,8 +1,8 @@
-use std::{ops::Range, time::Duration};
+use std::{borrow::Cow, ops::Range, time::Duration};
 
 use chrono::{DateTime, Datelike, Days, NaiveDate, NaiveTime, TimeZone, Utc};
 
-use super::request::{HttpMethod, Request};
+use super::request::{Body, HttpMethod, Request};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outcome {
@@ -28,6 +28,14 @@ pub struct HistorySummary {
     pub outcome: Option<Outcome>,
 }
 
+/// A history entry's full request. `omitted_body_size` is set when the body
+/// was too large to keep, and `request` has an empty body of the same kind.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryRequest {
+    pub request: Request,
+    pub omitted_body_size: Option<u64>,
+}
+
 /// What to do with a history entry once its full request is loaded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenMode {
@@ -40,6 +48,63 @@ pub enum OpenMode {
 pub fn retention_cutoff<Tz: TimeZone>(now: &DateTime<Tz>, retention_days: u32) -> DateTime<Utc> {
     let first_day = now.date_naive() - Days::new(retention_days.max(1) as u64 - 1);
     day_start(first_day, &now.timezone())
+}
+
+/// Bodies larger than this, in bytes, aren't kept in history.
+pub const MAX_STORED_BODY_SIZE: u64 = 1_000_000;
+
+/// Bytes of a raw body's text, or of all form fields' keys and values.
+pub fn body_size(body: &Body) -> u64 {
+    let size = match body {
+        Body::None => 0,
+        Body::FormData(fields) => fields.iter().map(|f| f.key.len() + f.value.len()).sum(),
+        Body::Raw { text, .. } => text.len(),
+    };
+    size as u64
+}
+
+/// `request` as history keeps it, and the size of its body if that's too large to keep.
+pub fn request_to_store(request: &Request) -> (Cow<'_, Request>, Option<u64>) {
+    let size = body_size(&request.body);
+    if size <= MAX_STORED_BODY_SIZE {
+        return (Cow::Borrowed(request), None);
+    }
+    let body = match &request.body {
+        Body::None => Body::None,
+        Body::FormData(_) => Body::FormData(Vec::new()),
+        Body::Raw { kind, .. } => Body::Raw {
+            kind: *kind,
+            text: String::new(),
+        },
+    };
+    let stored = Request {
+        method: request.method,
+        url: request.url.clone(),
+        params: request.params.clone(),
+        headers: request.headers.clone(),
+        body,
+        auth: request.auth.clone(),
+    };
+    (Cow::Owned(stored), Some(size))
+}
+
+pub fn omitted_body_note(size: u64) -> String {
+    format!("The body ({}) wasn't kept in history.", format_size(size))
+}
+
+/// "512 bytes", "3.2 MB": decimal units, one decimal place above bytes.
+pub fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1000 {
+        return format!("{bytes} bytes");
+    }
+    let mut value = bytes as f64 / 1000.0;
+    let mut unit = 0;
+    while value >= 999.95 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    format!("{value:.1} {}", UNITS[unit])
 }
 
 /// Local midnight of `day`. Where a DST change skips midnight, the day starts
@@ -124,7 +189,10 @@ mod tests {
     use chrono::FixedOffset;
 
     use super::*;
-    use crate::domain::settings::HistorySettings;
+    use crate::domain::{
+        request::{KeyValue, RawKind},
+        settings::HistorySettings,
+    };
 
     fn at(rfc3339: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(rfc3339).unwrap().to_utc()
@@ -263,6 +331,86 @@ mod tests {
                 (NaiveDate::from_ymd_opt(2026, 11, 10).unwrap(), 0..2),
                 (NaiveDate::from_ymd_opt(2026, 11, 9).unwrap(), 2..3),
             ]
+        );
+    }
+
+    fn raw(len: usize) -> Request {
+        Request {
+            body: Body::Raw {
+                kind: RawKind::Text,
+                text: "x".repeat(len),
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bodies_up_to_the_cap_are_kept() {
+        let request = raw(MAX_STORED_BODY_SIZE as usize);
+        let (stored, omitted) = request_to_store(&request);
+        assert!(matches!(stored, Cow::Borrowed(_)));
+        assert_eq!(*stored, request);
+        assert_eq!(omitted, None);
+    }
+
+    #[test]
+    fn bodies_over_the_cap_are_left_out() {
+        let mut request = raw(MAX_STORED_BODY_SIZE as usize + 1);
+        request.method = HttpMethod::Post;
+        request.url = "https://a.test".into();
+        request.headers = vec![KeyValue {
+            enabled: true,
+            key: "X-Trace".into(),
+            value: "1".into(),
+        }];
+        let (stored, omitted) = request_to_store(&request);
+        assert_eq!(omitted, Some(MAX_STORED_BODY_SIZE + 1));
+        assert_eq!(
+            *stored,
+            Request {
+                body: Body::Raw {
+                    kind: RawKind::Text,
+                    text: String::new(),
+                },
+                ..request.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn form_data_size_counts_keys_and_values() {
+        let field = |key: &str, value: String| KeyValue {
+            enabled: true,
+            key: key.into(),
+            value,
+        };
+        let half = MAX_STORED_BODY_SIZE as usize / 2;
+        let body = Body::FormData(vec![
+            field("a", "x".repeat(half)),
+            field("b", "y".repeat(half)),
+        ]);
+        assert_eq!(body_size(&body), MAX_STORED_BODY_SIZE + 2);
+        let request = Request {
+            body,
+            ..Default::default()
+        };
+        let (stored, omitted) = request_to_store(&request);
+        assert_eq!(omitted, Some(MAX_STORED_BODY_SIZE + 2));
+        assert_eq!(stored.body, Body::FormData(Vec::new()));
+    }
+
+    #[test]
+    fn sizes_use_decimal_units() {
+        assert_eq!(format_size(0), "0 bytes");
+        assert_eq!(format_size(999), "999 bytes");
+        assert_eq!(format_size(1000), "1.0 KB");
+        assert_eq!(format_size(999_949), "999.9 KB");
+        assert_eq!(format_size(999_999), "1.0 MB");
+        assert_eq!(format_size(3_200_000), "3.2 MB");
+        assert_eq!(format_size(2_500_000_000), "2.5 GB");
+        assert_eq!(
+            omitted_body_note(3_240_000),
+            "The body (3.2 MB) wasn't kept in history."
         );
     }
 }

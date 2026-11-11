@@ -9,8 +9,7 @@ use futures::{
 use gpui::{App, AppContext, Context, EventEmitter, Subscription, Task};
 
 use crate::domain::{
-    history::{self, HistoryRecord, HistorySummary, OpenMode},
-    request::Request,
+    history::{self, HistoryRecord, HistoryRequest, HistorySummary, OpenMode},
     store::{self, history::HistoryStore},
 };
 use crate::settings::AppSettings;
@@ -27,7 +26,7 @@ pub enum HistoryEvent {
     },
     Recorded(HistorySummary),
     Opened {
-        request: Request,
+        entry: HistoryRequest,
         mode: OpenMode,
     },
     Deleted(i64),
@@ -135,7 +134,7 @@ impl History {
             cx,
             move |store| store.get(id),
             move |result| match result {
-                Ok(Some(request)) => HistoryEvent::Opened { request, mode },
+                Ok(Some(entry)) => HistoryEvent::Opened { entry, mode },
                 Ok(None) => HistoryEvent::Deleted(id),
                 Err(error) => HistoryEvent::Failed {
                     title: "Couldn't open request",
@@ -146,7 +145,7 @@ impl History {
     }
 
     /// Loads an entry's full request; `None` if it's no longer in history.
-    pub fn request(&self, id: i64, cx: &App) -> Task<anyhow::Result<Option<Request>>> {
+    pub fn request(&self, id: i64, cx: &App) -> Task<anyhow::Result<Option<HistoryRequest>>> {
         let (sender, receiver) = oneshot::channel();
         let queued = self.enqueue(Box::new(move |store| {
             sender.send(store.get(id)).ok();

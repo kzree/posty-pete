@@ -4,9 +4,12 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Row, params};
 
 use crate::domain::{
-    history::{HistoryRecord, HistorySummary, Outcome},
-    request::{HttpMethod, Request},
+    history::{self, HistoryRecord, HistoryRequest, HistorySummary, Outcome},
+    request::HttpMethod,
 };
+
+/// Run in order on databases whose `user_version` is below their position + 1.
+const MIGRATIONS: &[&str] = &["ALTER TABLE history ADD COLUMN omitted_body_size INTEGER;"];
 
 pub struct HistoryStore {
     conn: Connection,
@@ -41,25 +44,29 @@ impl HistoryStore {
              );
              CREATE INDEX IF NOT EXISTS history_sent_at ON history(sent_at DESC);",
         )?;
+        migrate(&conn)?;
         Ok(Self { conn })
     }
 
-    pub fn get(&self, id: i64) -> anyhow::Result<Option<Request>> {
+    pub fn get(&self, id: i64) -> anyhow::Result<Option<HistoryRequest>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT request FROM history WHERE id = ?1")?;
+            .prepare("SELECT request, omitted_body_size FROM history WHERE id = ?1")?;
         let mut rows = stmt.query([id])?;
-        if let Some(row) = rows.next()? {
-            let request_json: String = row.get(0)?;
-            let request: Request = serde_json::from_str(&request_json)?;
-            Ok(Some(request))
-        } else {
-            Ok(None)
-        }
+        let Some(row) = rows.next()? else {
+            return Ok(None);
+        };
+        let request_json: String = row.get(0)?;
+        let omitted_body_size: Option<i64> = row.get(1)?;
+        Ok(Some(HistoryRequest {
+            request: serde_json::from_str(&request_json)?,
+            omitted_body_size: omitted_body_size.map(|size| size.max(0) as u64),
+        }))
     }
 
     pub fn insert(&self, record: &HistoryRecord) -> anyhow::Result<HistorySummary> {
         let request = &record.request;
+        let (stored, omitted_body_size) = history::request_to_store(request);
         let (status, elapsed_ms) = match record.outcome {
             Some(outcome) => (
                 Some(outcome.status),
@@ -68,15 +75,17 @@ impl HistoryStore {
             None => (None, None),
         };
         self.conn.execute(
-            "INSERT INTO history (sent_at, method, url, status, elapsed_ms, request)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO history
+                 (sent_at, method, url, status, elapsed_ms, request, omitted_body_size)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 record.sent_at.timestamp_millis(),
                 request.method.as_str(),
                 request.url,
                 status,
                 elapsed_ms,
-                serde_json::to_string(request)?,
+                serde_json::to_string(&*stored)?,
+                omitted_body_size.map(|size| i64::try_from(size).unwrap_or(i64::MAX)),
             ],
         )?;
 
@@ -136,6 +145,21 @@ impl HistoryStore {
             [cutoff.timestamp_millis()],
         )?)
     }
+}
+
+fn migrate(conn: &Connection) -> anyhow::Result<()> {
+    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    for (index, sql) in MIGRATIONS.iter().enumerate() {
+        let target = index as i64 + 1;
+        if version >= target {
+            continue;
+        }
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", target)?;
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 struct RawRow {
@@ -203,8 +227,9 @@ mod tests {
 
     use super::*;
     use crate::domain::{
+        history::MAX_STORED_BODY_SIZE,
         history::retention_cutoff,
-        request::{Auth, Body, KeyValue, RawKind},
+        request::{Auth, Body, KeyValue, RawKind, Request},
         store::test_support::TempDir,
     };
 
@@ -289,7 +314,9 @@ mod tests {
         };
         let id = store.insert(&sent).unwrap().id;
 
-        let request = store.get(id).unwrap().unwrap();
+        let entry = store.get(id).unwrap().unwrap();
+        assert_eq!(entry.omitted_body_size, None);
+        let request = entry.request;
         assert_eq!(request.method, HttpMethod::Post);
         assert_eq!(request.url, "https://a.test");
         assert!(matches!(
@@ -438,5 +465,78 @@ mod tests {
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "ok");
+    }
+
+    #[test]
+    fn bodies_over_the_cap_are_not_stored() {
+        let store = HistoryStore::open_in_memory().unwrap();
+        let mut sent = ok(at("2026-11-10T12:00:00Z"), "https://a.test");
+        sent.request.method = HttpMethod::Post;
+        sent.request.auth = Auth::Bearer {
+            token: "secret".into(),
+        };
+        sent.request.body = Body::Raw {
+            kind: RawKind::Json,
+            text: "x".repeat(MAX_STORED_BODY_SIZE as usize + 1),
+        };
+        let id = store.insert(&sent).unwrap().id;
+
+        let entry = store.get(id).unwrap().unwrap();
+        assert_eq!(entry.omitted_body_size, Some(MAX_STORED_BODY_SIZE + 1));
+        assert_eq!(
+            entry.request,
+            Request {
+                body: Body::Raw {
+                    kind: RawKind::Json,
+                    text: String::new(),
+                },
+                ..sent.request
+            }
+        );
+    }
+
+    #[test]
+    fn rows_from_before_the_body_cap_still_load() {
+        let dir = TempDir::new();
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let path = dir.path().join("history.db");
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch(
+            r#"CREATE TABLE history (
+                   id         INTEGER PRIMARY KEY,
+                   sent_at    INTEGER NOT NULL,
+                   method     TEXT NOT NULL,
+                   url        TEXT NOT NULL,
+                   status     INTEGER,
+                   elapsed_ms INTEGER,
+                   request    TEXT NOT NULL
+               );
+               INSERT INTO history (id, sent_at, method, url, status, elapsed_ms, request)
+               VALUES (7, 1762776000000, 'POST', 'https://a.test', 200, 5,
+                   '{"method": "Post", "url": "https://a.test", "params": [], "headers": [],
+                     "body": {"Raw": {"kind": "Text", "text": "hi"}}, "auth": "None"}');"#,
+        )
+        .unwrap();
+        drop(old);
+
+        let store = HistoryStore::open(&path).unwrap();
+        let entry = store.get(7).unwrap().unwrap();
+        assert_eq!(entry.omitted_body_size, None);
+        assert_eq!(
+            entry.request.body,
+            Body::Raw {
+                kind: RawKind::Text,
+                text: "hi".into(),
+            }
+        );
+        assert_eq!(store.since(DateTime::UNIX_EPOCH).unwrap().len(), 1);
+        store
+            .insert(&ok(at("2026-11-10T12:00:00Z"), "new"))
+            .unwrap();
+        drop(store);
+
+        // Reopening doesn't run the migration again.
+        let store = HistoryStore::open(&path).unwrap();
+        assert_eq!(store.since(DateTime::UNIX_EPOCH).unwrap().len(), 2);
     }
 }

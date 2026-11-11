@@ -116,8 +116,12 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let request = request.await;
             this.update_in(cx, |this, window, cx| match request {
-                Ok(Some(request)) => {
-                    copy_with_notification(curl::to_curl(&request), "Copied as cURL", window, cx)
+                Ok(Some(entry)) => {
+                    let message = match entry.omitted_body_size {
+                        Some(_) => "Copied as cURL, without the body",
+                        None => "Copied as cURL",
+                    };
+                    copy_with_notification(curl::to_curl(&entry.request), message, window, cx)
                 }
                 Ok(None) => this
                     .history_panel

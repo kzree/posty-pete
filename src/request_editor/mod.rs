@@ -226,6 +226,12 @@ impl RequestEditor {
         cx.notify();
     }
 
+    /// Shows `note` on the Body tab until the body is edited or another request is loaded.
+    pub fn show_body_note(&mut self, note: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let note = note.into();
+        self.body.update(cx, |body, cx| body.show_note(note, cx));
+    }
+
     pub fn send(&mut self, cx: &mut Context<Self>) {
         if self.input_is_empty(cx) {
             return;
