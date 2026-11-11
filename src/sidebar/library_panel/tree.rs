@@ -5,16 +5,65 @@ use uuid::Uuid;
 
 use crate::domain::{
     collection::{Collection, Item},
+    environment::Environment,
     request::HttpMethod,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Row {
-    /// The collapsible "Collections" header.
+    /// A collapsible section header.
     Section {
+        section: Section,
         expanded: bool,
     },
+    /// Stands in for an expanded section's missing contents.
+    Empty(Section),
     Node(Node),
+    /// A shared environment.
+    Environment {
+        id: Uuid,
+        name: SharedString,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Section {
+    Collections,
+    Environments,
+}
+
+/// Which sections are expanded.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Sections {
+    pub(super) collections: bool,
+    pub(super) environments: bool,
+}
+
+impl Default for Sections {
+    fn default() -> Self {
+        Self {
+            collections: true,
+            environments: true,
+        }
+    }
+}
+
+impl Sections {
+    pub(super) fn toggle(&mut self, section: Section) {
+        let expanded = self.get_mut(section);
+        *expanded = !*expanded;
+    }
+
+    pub(super) fn expand(&mut self, section: Section) {
+        *self.get_mut(section) = true;
+    }
+
+    fn get_mut(&mut self, section: Section) -> &mut bool {
+        match section {
+            Section::Collections => &mut self.collections,
+            Section::Environments => &mut self.environments,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,21 +84,50 @@ pub(super) enum NodeKind {
     Request(HttpMethod),
 }
 
-/// No rows at all when there are no collections, so the empty state shows.
+/// Both section headers always show, so their actions stay reachable.
 pub(super) fn flatten(
     collections: &[Arc<Collection>],
-    section_expanded: bool,
+    environments: &[Arc<Environment>],
+    sections: Sections,
     expanded: &HashSet<Uuid>,
 ) -> Vec<Row> {
-    if collections.is_empty() {
-        return Vec::new();
+    let mut rows = Vec::new();
+    push_section(
+        Section::Collections,
+        sections.collections,
+        collections.is_empty(),
+        &mut rows,
+    );
+    if sections.collections {
+        flatten_collections(collections, expanded, &mut rows);
     }
-    let mut rows = vec![Row::Section {
-        expanded: section_expanded,
-    }];
-    if !section_expanded {
-        return rows;
+    push_section(
+        Section::Environments,
+        sections.environments,
+        environments.is_empty(),
+        &mut rows,
+    );
+    if sections.environments {
+        rows.extend(environments.iter().map(|env| Row::Environment {
+            id: env.id,
+            name: env.name.clone().into(),
+        }));
     }
+    rows
+}
+
+fn push_section(section: Section, expanded: bool, is_empty: bool, rows: &mut Vec<Row>) {
+    rows.push(Row::Section { section, expanded });
+    if expanded && is_empty {
+        rows.push(Row::Empty(section));
+    }
+}
+
+fn flatten_collections(
+    collections: &[Arc<Collection>],
+    expanded: &HashSet<Uuid>,
+    rows: &mut Vec<Row>,
+) {
     for collection in collections {
         let is_expanded = expanded.contains(&collection.id);
         rows.push(Row::Node(Node {
@@ -62,10 +140,9 @@ pub(super) fn flatten(
             },
         }));
         if is_expanded {
-            flatten_items(collection.id, &collection.items, 1, expanded, &mut rows);
+            flatten_items(collection.id, &collection.items, 1, expanded, rows);
         }
     }
-    rows
 }
 
 fn flatten_items(
@@ -123,32 +200,111 @@ pub(super) fn container_ids(collections: &[Arc<Collection>]) -> HashSet<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sidebar::library_panel::test_support::{fixture, outline};
+    use crate::sidebar::library_panel::test_support::{environments, fixture, outline};
+
+    const ALL: Sections = Sections {
+        collections: true,
+        environments: true,
+    };
 
     #[test]
-    fn no_collections_means_no_rows() {
-        assert!(flatten(&[], true, &HashSet::new()).is_empty());
+    fn empty_sections_show_their_headers_and_empty_rows() {
+        assert_eq!(
+            outline(&flatten(&[], &[], ALL, &HashSet::new())),
+            ["Collections", "(none)", "Environments", "(none)"]
+        );
+    }
+
+    #[test]
+    fn collapsed_empty_sections_show_only_their_headers() {
+        let sections = Sections {
+            collections: false,
+            environments: false,
+        };
+        assert_eq!(
+            outline(&flatten(&[], &[], sections, &HashSet::new())),
+            ["Collections", "Environments"]
+        );
     }
 
     #[test]
     fn nothing_expanded_shows_only_collections() {
         let (collections, _) = fixture();
-        let rows = flatten(&collections, true, &HashSet::new());
-        assert_eq!(outline(&rows), ["Collections", "0:API", "0:Empty"]);
+        let rows = flatten(&collections, &[], ALL, &HashSet::new());
+        assert_eq!(
+            outline(&rows),
+            ["Collections", "0:API", "0:Empty", "Environments", "(none)"]
+        );
     }
 
     #[test]
-    fn collapsed_section_shows_only_its_header() {
+    fn collapsed_collections_show_only_their_header() {
         let (collections, ids) = fixture();
-        let rows = flatten(&collections, false, &HashSet::from([ids.collection]));
-        assert_eq!(outline(&rows), ["Collections"]);
+        let sections = Sections {
+            collections: false,
+            ..ALL
+        };
+        let rows = flatten(
+            &collections,
+            &environments(),
+            sections,
+            &HashSet::from([ids.collection]),
+        );
+        assert_eq!(
+            outline(&rows),
+            ["Collections", "Environments", "env:Local", "env:Staging"]
+        );
+    }
+
+    #[test]
+    fn environments_follow_the_collections_in_order() {
+        let (collections, _) = fixture();
+        let rows = flatten(&collections, &environments(), ALL, &HashSet::new());
+        assert_eq!(
+            outline(&rows),
+            [
+                "Collections",
+                "0:API",
+                "0:Empty",
+                "Environments",
+                "env:Local",
+                "env:Staging"
+            ]
+        );
+    }
+
+    #[test]
+    fn collapsed_environments_show_only_their_header() {
+        let (collections, _) = fixture();
+        let sections = Sections {
+            environments: false,
+            ..ALL
+        };
+        let rows = flatten(&collections, &environments(), sections, &HashSet::new());
+        assert_eq!(
+            outline(&rows),
+            ["Collections", "0:API", "0:Empty", "Environments"]
+        );
+    }
+
+    #[test]
+    fn environment_rows_carry_their_ids() {
+        let environments = environments();
+        let rows = flatten(&[], &environments, ALL, &HashSet::new());
+        assert_eq!(
+            rows[3],
+            Row::Environment {
+                id: environments[0].id,
+                name: "Local".into()
+            }
+        );
     }
 
     #[test]
     fn nested_expansion_indents_by_depth() {
         let (collections, ids) = fixture();
         let expanded = HashSet::from([ids.collection, ids.outer, ids.inner]);
-        let rows = flatten(&collections, true, &expanded);
+        let rows = flatten(&collections, &[], ALL, &expanded);
         assert_eq!(
             outline(&rows),
             [
@@ -158,7 +314,9 @@ mod tests {
                 "1:Outer",
                 "2:Inner",
                 "3:Deep",
-                "0:Empty"
+                "0:Empty",
+                "Environments",
+                "(none)"
             ]
         );
         assert!(matches!(
@@ -174,10 +332,32 @@ mod tests {
     fn expanded_folder_inside_collapsed_parent_stays_hidden() {
         let (collections, ids) = fixture();
         let expanded = HashSet::from([ids.collection, ids.inner]);
-        let rows = flatten(&collections, true, &expanded);
+        let rows = flatten(&collections, &[], ALL, &expanded);
         assert_eq!(
-            outline(&rows),
+            outline(&rows)[..5],
             ["Collections", "0:API", "1:Root", "1:Outer", "0:Empty"]
+        );
+    }
+
+    #[test]
+    fn sections_toggle_and_expand_independently() {
+        let mut sections = ALL;
+        sections.toggle(Section::Environments);
+        assert_eq!(
+            sections,
+            Sections {
+                collections: true,
+                environments: false
+            }
+        );
+        sections.toggle(Section::Collections);
+        sections.expand(Section::Environments);
+        assert_eq!(
+            sections,
+            Sections {
+                collections: false,
+                environments: true
+            }
         );
     }
 }

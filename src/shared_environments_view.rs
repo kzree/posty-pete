@@ -58,6 +58,11 @@ impl SharedEnvironmentsView {
             .update(cx, |editor, cx| editor.select(id, window, cx));
     }
 
+    /// The environment shown.
+    pub fn selected(&self, cx: &App) -> Option<Uuid> {
+        self.environments.read(cx).selected()
+    }
+
     /// Focuses the first variable of the environment shown.
     pub fn focus_variables(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.environments

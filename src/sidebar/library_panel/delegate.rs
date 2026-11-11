@@ -1,42 +1,50 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, rc::Rc, sync::Arc};
 
 use gpui::{
-    App, Context, IntoElement, ParentElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    App, Context, ElementId, ParentElement, Pixels, SharedString, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme, Icon, IconName, IndexPath, Sizable, StyledExt, h_flex,
+    ActiveTheme, Icon, IconName, IndexPath, Sizable, Size, StyledExt,
+    button::{Button, ButtonVariants},
+    h_flex,
     list::{ListDelegate, ListItem, ListState},
 };
 use uuid::Uuid;
 
 use super::{
     menu::MenuTarget,
-    tree::{Node, NodeKind, Row, container_ids, flatten},
+    tree::{Node, NodeKind, Row, Section, Sections, container_ids, flatten},
 };
-use crate::{domain::collection::Collection, sidebar::placeholder, ui::method_label::method_label};
+use crate::{
+    domain::{collection::Collection, environment::Environment},
+    ui::method_label::method_label,
+};
 
+type AddEnvironment = Rc<dyn Fn(&mut Window, &mut App)>;
+
+#[derive(Default)]
 pub(super) struct LibraryDelegate {
     collections: Vec<Arc<Collection>>,
-    pub(super) section_expanded: bool,
+    /// Shared environments.
+    environments: Vec<Arc<Environment>>,
+    pub(super) sections: Sections,
     /// Expanded collections and folders.
     expanded: HashSet<Uuid>,
     pub(super) selected: Option<Uuid>,
     rows: Vec<Row>,
-}
-
-impl Default for LibraryDelegate {
-    fn default() -> Self {
-        Self {
-            collections: Vec::new(),
-            section_expanded: true,
-            expanded: HashSet::new(),
-            selected: None,
-            rows: Vec::new(),
-        }
-    }
+    /// Run by the Environments header's + button.
+    on_add_environment: Option<AddEnvironment>,
 }
 
 impl LibraryDelegate {
+    pub(super) fn new(on_add_environment: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        Self {
+            on_add_environment: Some(Rc::new(on_add_environment)),
+            ..Default::default()
+        }
+    }
+
     pub(super) fn set_collections(&mut self, collections: Vec<Arc<Collection>>) {
         let existing = container_ids(&collections);
         self.expanded.retain(|id| existing.contains(id));
@@ -44,9 +52,14 @@ impl LibraryDelegate {
         self.rebuild_rows();
     }
 
+    pub(super) fn set_environments(&mut self, environments: Vec<Arc<Environment>>) {
+        self.environments = environments;
+        self.rebuild_rows();
+    }
+
     pub(super) fn toggle_at(&mut self, row: usize) {
         match self.rows.get(row) {
-            Some(Row::Section { .. }) => self.section_expanded = !self.section_expanded,
+            Some(Row::Section { section, .. }) => self.sections.toggle(*section),
             Some(Row::Node(Node {
                 id,
                 kind: NodeKind::Collection { .. } | NodeKind::Folder { .. },
@@ -56,14 +69,19 @@ impl LibraryDelegate {
                     self.expanded.insert(*id);
                 }
             }
-            Some(Row::Node(_)) | None => return,
+            Some(Row::Node(_) | Row::Empty(_) | Row::Environment { .. }) | None => return,
         }
         self.rebuild_rows();
     }
 
     pub(super) fn expand(&mut self, id: Uuid) {
-        self.section_expanded = true;
+        self.sections.expand(Section::Collections);
         self.expanded.insert(id);
+        self.rebuild_rows();
+    }
+
+    pub(super) fn expand_section(&mut self, section: Section) {
+        self.sections.expand(section);
         self.rebuild_rows();
     }
 
@@ -92,8 +110,23 @@ impl LibraryDelegate {
                 collection_id: *collection_id,
                 request_id: *id,
             }),
-            Row::Section { .. } => None,
+            Row::Section { .. } | Row::Empty(_) | Row::Environment { .. } => None,
         }
+    }
+
+    /// The id of a shared environment row.
+    pub(super) fn environment_at(&self, row: usize) -> Option<Uuid> {
+        match self.rows.get(row)? {
+            Row::Environment { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+
+    pub(super) fn environment_name(&self, id: Uuid) -> Option<String> {
+        self.environments
+            .iter()
+            .find(|env| env.id == id)
+            .map(|env| env.name.clone())
     }
 
     pub(super) fn collection_at(&self, row: usize) -> Option<Uuid> {
@@ -120,11 +153,14 @@ impl LibraryDelegate {
         }
     }
 
-    /// The visible row showing the collection, folder or request `id`.
+    /// The visible row showing the collection, folder, request or shared
+    /// environment `id`.
     pub(super) fn row_of(&self, id: Uuid) -> Option<usize> {
-        self.rows
-            .iter()
-            .position(|row| matches!(row, Row::Node(node) if node.id == id))
+        self.rows.iter().position(|row| match row {
+            Row::Node(node) => node.id == id,
+            Row::Environment { id: env_id, .. } => *env_id == id,
+            Row::Section { .. } | Row::Empty(_) => false,
+        })
     }
 
     pub(super) fn target_name(&self, target: MenuTarget) -> Option<String> {
@@ -144,7 +180,12 @@ impl LibraryDelegate {
     }
 
     fn rebuild_rows(&mut self) {
-        self.rows = flatten(&self.collections, self.section_expanded, &self.expanded);
+        self.rows = flatten(
+            &self.collections,
+            &self.environments,
+            self.sections,
+            &self.expanded,
+        );
     }
 }
 
@@ -162,17 +203,13 @@ impl ListDelegate for LibraryDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         Some(match self.rows.get(ix.row)? {
-            Row::Section { expanded } => render_section(*expanded, cx),
+            Row::Section { section, expanded } => {
+                render_section(*section, *expanded, self.on_add_environment.clone(), cx)
+            }
+            Row::Empty(section) => render_empty_section(*section, cx),
             Row::Node(node) => render_node(node, cx),
+            Row::Environment { id, name } => render_environment(*id, name.clone(), cx),
         })
-    }
-
-    fn render_empty(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<ListState<Self>>,
-    ) -> impl IntoElement {
-        placeholder("Your library is empty.", cx)
     }
 
     fn set_selected_index(
@@ -182,6 +219,13 @@ impl ListDelegate for LibraryDelegate {
         _cx: &mut Context<ListState<Self>>,
     ) {
     }
+}
+
+/// Every row's height, so the list's single measured height fits any row.
+const ROW_HEIGHT: f32 = 24.;
+
+fn row_item(id: impl Into<ElementId>) -> ListItem {
+    ListItem::new(id).h(px(ROW_HEIGHT)).text_xs()
 }
 
 /// Chevron slot width plus the gap after it, so a child's chevron sits under
@@ -201,18 +245,84 @@ fn expansion_state(expanded: bool) -> &'static str {
     if expanded { "expanded" } else { "collapsed" }
 }
 
-fn render_section(expanded: bool, cx: &App) -> ListItem {
-    ListItem::new("library-collections")
-        .accessibility_label(format!("Collections, {}", expansion_state(expanded)))
+fn section_label(section: Section) -> &'static str {
+    match section {
+        Section::Collections => "Collections",
+        Section::Environments => "Environments",
+    }
+}
+
+fn render_section(
+    section: Section,
+    expanded: bool,
+    on_add_environment: Option<AddEnvironment>,
+    cx: &App,
+) -> ListItem {
+    let label = section_label(section);
+    let (id, add) = match section {
+        Section::Collections => ("library-collections", None),
+        Section::Environments => ("library-environments", on_add_environment),
+    };
+    row_item(id)
+        .accessibility_label(format!("{label}, {}", expansion_state(expanded)))
         .child(
             h_flex()
                 .w_full()
                 .gap_1()
-                .text_xs()
                 .font_medium()
                 .text_color(cx.theme().muted_foreground)
                 .child(chevron(expanded))
-                .child("Collections"),
+                .child(label),
+        )
+        .when_some(add, |item, add| {
+            item.suffix(move |_, _| add_environment_button(add.clone()))
+        })
+}
+
+/// Sized to fit the row height every row shares.
+fn add_environment_button(add: AddEnvironment) -> Button {
+    Button::new("library-new-environment")
+        .ghost()
+        .with_size(Size::Size(px(16.)))
+        .icon(IconName::Plus)
+        .tooltip("New environment")
+        .accessibility_label("New environment")
+        .on_click(move |_, window, cx| {
+            // Keep the click from toggling the section.
+            cx.stop_propagation();
+            add(window, cx);
+        })
+}
+
+/// Indent of a top-level row's name: the row inset plus the chevron slot.
+fn name_inset() -> Pixels {
+    px(INDENT * 2.)
+}
+
+fn render_empty_section(section: Section, cx: &App) -> ListItem {
+    let (id, text) = match section {
+        Section::Collections => ("library-no-collections", "No collections yet"),
+        Section::Environments => ("library-no-environments", "No environments yet"),
+    };
+    row_item(id).disabled(true).accessibility_label(text).child(
+        div()
+            .pl(name_inset())
+            .truncate()
+            .text_color(cx.theme().muted_foreground)
+            .child(text),
+    )
+}
+
+fn render_environment(id: Uuid, name: SharedString, cx: &App) -> ListItem {
+    row_item(id)
+        .accessibility_label(format!("{name}, environment"))
+        .child(
+            div()
+                .pl(name_inset())
+                .min_w_0()
+                .truncate()
+                .text_color(cx.theme().foreground)
+                .child(name),
         )
 }
 
@@ -232,9 +342,8 @@ fn render_node(node: &Node, cx: &App) -> ListItem {
         NodeKind::Request(method) => (format!("{} {name}", method.as_str()), None, Some(method)),
     };
 
-    ListItem::new(node.id)
+    row_item(node.id)
         .accessibility_label(label)
-        .text_xs()
         .text_color(cx.theme().muted_foreground)
         .child(
             h_flex()
@@ -260,7 +369,7 @@ fn render_node(node: &Node, cx: &App) -> ListItem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sidebar::library_panel::test_support::{fixture, outline};
+    use crate::sidebar::library_panel::test_support::{environments, fixture, outline};
 
     #[test]
     fn toggling_keeps_nested_state_and_survives_refresh() {
@@ -276,13 +385,16 @@ mod tests {
         );
 
         delegate.toggle_at(0);
-        assert_eq!(outline(&delegate.rows), ["Collections"]);
+        assert_eq!(
+            outline(&delegate.rows),
+            ["Collections", "Environments", "(none)"]
+        );
         delegate.toggle_at(0);
-        assert_eq!(outline(&delegate.rows).len(), 6);
+        assert_eq!(outline(&delegate.rows).len(), 8);
 
         delegate.set_collections(collections);
         assert_eq!(
-            outline(&delegate.rows),
+            outline(&delegate.rows)[..6],
             [
                 "Collections",
                 "0:API",
@@ -389,7 +501,7 @@ mod tests {
         delegate.toggle_at(0);
         delegate.expand(ids.collection);
         assert_eq!(
-            outline(&delegate.rows),
+            outline(&delegate.rows)[..5],
             ["Collections", "0:API", "1:Root", "1:Outer", "0:Empty"]
         );
 
@@ -408,5 +520,44 @@ mod tests {
         Arc::make_mut(&mut collections[0]).remove(ids.outer);
         delegate.set_collections(collections);
         assert_eq!(delegate.expanded, HashSet::from([ids.collection]));
+    }
+
+    #[test]
+    fn environment_rows_open_select_and_toggle_their_section() {
+        let (collections, _) = fixture();
+        let environments = environments();
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(collections);
+        delegate.set_environments(environments.clone());
+        let staging = environments[1].id;
+
+        assert_eq!(delegate.environment_at(5), Some(staging));
+        assert_eq!(delegate.environment_at(3), None);
+        assert_eq!(delegate.row_of(staging), Some(5));
+        assert_eq!(delegate.menu_target_at(5), None);
+        assert_eq!(delegate.environment_name(staging), Some("Staging".into()));
+
+        delegate.toggle_at(5);
+        assert_eq!(delegate.rows.len(), 6);
+        delegate.toggle_at(3);
+        assert_eq!(delegate.row_of(staging), None);
+        assert_eq!(delegate.environment_at(5), None);
+
+        delegate.expand_section(Section::Environments);
+        assert_eq!(delegate.row_of(staging), Some(5));
+    }
+
+    #[test]
+    fn empty_rows_do_nothing() {
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(Vec::new());
+        assert_eq!(
+            outline(&delegate.rows),
+            ["Collections", "(none)", "Environments", "(none)"]
+        );
+        delegate.toggle_at(1);
+        assert_eq!(delegate.menu_target_at(1), None);
+        assert_eq!(delegate.environment_at(1), None);
+        assert_eq!(delegate.rows.len(), 4);
     }
 }

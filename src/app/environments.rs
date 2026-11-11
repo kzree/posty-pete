@@ -248,6 +248,19 @@ impl Workspace {
             .update(cx, |view, cx| view.show(&environments, linked, window, cx));
     }
 
+    /// Brings the library's shared environments in line with the stored ones.
+    pub(super) fn refresh_library_environments(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let environments = self.shared_environments.read(cx).all().to_vec();
+        let links = collection::base_counts(self.collections.read(cx).all());
+        self.library_panel.update(cx, |panel, cx| {
+            panel.set_shared_environments(environments, links, window, cx)
+        });
+    }
+
     /// Shared environments loaded or changed: the pages, the hint and the
     /// picker may read differently, and a deleted draft source is dropped on
     /// save.
@@ -257,6 +270,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.refresh_shared_environments_view(window, cx);
+        self.refresh_library_environments(window, cx);
         self.refresh_collection_view(window, cx);
         let request = self.request_editor.read(cx).build_request(cx);
         self.sync_unresolved_variables(&request, cx);

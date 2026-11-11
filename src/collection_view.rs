@@ -268,7 +268,7 @@ impl CollectionView {
         let Some(collection_id) = self.id else {
             return;
         };
-        cx.emit(match event.clone() {
+        let event = match event.clone() {
             EnvironmentsEditorEvent::Add => CollectionViewEvent::AddEnvironment { collection_id },
             EnvironmentsEditorEvent::Rename { id, name } => {
                 CollectionViewEvent::RenameEnvironment {
@@ -304,7 +304,9 @@ impl CollectionView {
             EnvironmentsEditorEvent::ManageBases(id) => {
                 CollectionViewEvent::ManageSharedEnvironments(id)
             }
-        });
+            EnvironmentsEditorEvent::SelectionChanged => return,
+        };
+        cx.emit(event);
     }
 
     /// The timer of a collection variables edit.

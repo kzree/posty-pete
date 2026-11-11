@@ -2,7 +2,7 @@ mod delegate;
 mod menu;
 mod tree;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
     Anchor, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
@@ -19,9 +19,10 @@ use gpui_kit_assets::IconName as LucideIcon;
 use uuid::Uuid;
 
 use super::panel_header;
-use crate::domain::collection::Collection;
+use crate::domain::{collection::Collection, environment::Environment};
 use delegate::LibraryDelegate;
 use menu::context_menu;
+use tree::Section;
 
 pub enum LibraryPanelEvent {
     CreateCollection,
@@ -56,12 +57,21 @@ pub enum LibraryPanelEvent {
         collection_id: Uuid,
         request_id: Uuid,
     },
+    CreateSharedEnvironment,
+    OpenSharedEnvironment(Uuid),
+    RenameSharedEnvironment {
+        id: Uuid,
+        name: String,
+    },
+    DeleteSharedEnvironment(Uuid),
 }
 
 pub struct LibraryPanel {
     list: Entity<ListState<LibraryDelegate>>,
     /// The open request, while it has unsaved changes.
     dirty_request: Option<Uuid>,
+    /// How many environments are based on each shared environment.
+    environment_links: HashMap<Uuid, usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -69,21 +79,24 @@ impl EventEmitter<LibraryPanelEvent> for LibraryPanel {}
 
 impl LibraryPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let list = cx.new(|cx| {
-            let mut list = ListState::new(LibraryDelegate::default(), window, cx);
-            // Every row gets the measured row's height, so measure a tree row
-            // rather than the shorter section header. Falls back to row 0.
-            list.set_item_to_measure_index(IndexPath::new(1), window, cx);
-            list
+        let panel = cx.weak_entity();
+        let delegate = LibraryDelegate::new(move |_, cx| {
+            panel
+                .update(cx, |panel, cx| panel.create_shared_environment(cx))
+                .ok();
         });
+        let list = cx.new(|cx| ListState::new(delegate, window, cx));
         let list_sub = cx.subscribe_in(&list, window, |this, _, event, window, cx| {
             if let ListEvent::Confirm(ix) = event {
                 let delegate = this.list.read(cx).delegate();
-                let (collection, request) =
-                    (delegate.collection_at(ix.row), delegate.request_at(ix.row));
+                let (collection, request, environment) = (
+                    delegate.collection_at(ix.row),
+                    delegate.request_at(ix.row),
+                    delegate.environment_at(ix.row),
+                );
                 this.update_rows(cx, |delegate| delegate.toggle_at(ix.row));
                 // The selection marks what the main pane shows, not the clicked row.
-                if request.is_none() {
+                if request.is_none() && environment.is_none() {
                     this.sync_selection(window, cx);
                 }
                 if let Some(id) = collection {
@@ -95,11 +108,15 @@ impl LibraryPanel {
                         request_id,
                     });
                 }
+                if let Some(id) = environment {
+                    cx.emit(LibraryPanelEvent::OpenSharedEnvironment(id));
+                }
             }
         });
         Self {
             list,
             dirty_request: None,
+            environment_links: HashMap::new(),
             _subscriptions: vec![list_sub],
         }
     }
@@ -117,7 +134,24 @@ impl LibraryPanel {
         self.sync_selection(window, cx);
     }
 
-    /// The collection or request shown in the main pane; its row stays selected across refreshes.
+    /// Shared environments in page order; `links` counts the environments
+    /// based on each.
+    pub fn set_shared_environments(
+        &mut self,
+        environments: Vec<Arc<Environment>>,
+        links: HashMap<Uuid, usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.environment_links = links;
+        self.update_rows(cx, |delegate| delegate.set_environments(environments));
+        self.list.update(cx, |list, cx| {
+            list.set_right_clicked_index(None, window, cx)
+        });
+        self.sync_selection(window, cx);
+    }
+
+    /// The collection, request or shared environment shown in the main pane; its row stays selected across refreshes.
     pub fn set_selected(&mut self, id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) {
         self.list
             .update(cx, |list, _| list.delegate_mut().selected = id);
@@ -139,6 +173,13 @@ impl LibraryPanel {
         self.dirty_request = id;
     }
 
+    fn create_shared_environment(&mut self, cx: &mut Context<Self>) {
+        self.update_rows(cx, |delegate| {
+            delegate.expand_section(Section::Environments)
+        });
+        cx.emit(LibraryPanelEvent::CreateSharedEnvironment);
+    }
+
     fn sync_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| {
             let delegate = list.delegate();
@@ -157,7 +198,7 @@ impl LibraryPanel {
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let panel = cx.weak_entity();
+        let (panel, environment_panel) = (cx.weak_entity(), cx.weak_entity());
         let new_button = Button::new("library-new")
             .ghost()
             .xsmall()
@@ -173,11 +214,23 @@ impl LibraryPanel {
                             panel
                                 .update(cx, |panel, cx| {
                                     panel.update_rows(cx, |delegate| {
-                                        delegate.section_expanded = true
+                                        delegate.expand_section(Section::Collections)
                                     });
                                     cx.emit(LibraryPanelEvent::CreateCollection)
                                 })
                                 .ok();
+                        }),
+                )
+                .item(
+                    PopupMenuItem::new("Environment")
+                        .icon(Icon::new(LucideIcon::LayersPlus))
+                        .on_click({
+                            let panel = environment_panel.clone();
+                            move |_, _, cx| {
+                                panel
+                                    .update(cx, |panel, cx| panel.create_shared_environment(cx))
+                                    .ok();
+                            }
                         }),
                 )
             });
@@ -209,9 +262,10 @@ mod test_support {
 
     use uuid::Uuid;
 
-    use super::tree::Row;
+    use super::tree::{Row, Section};
     use crate::domain::{
         collection::{Collection, Folder, Item, SavedRequest},
+        environment::Environment,
         request::{Auth, Body, HttpMethod, Request},
     };
 
@@ -258,12 +312,30 @@ mod test_support {
         )
     }
 
-    /// Each row as "<depth>:<name>", with "Collections" for the section header.
+    /// Shared environments in the order the page lists them.
+    pub(super) fn environments() -> Vec<Arc<Environment>> {
+        ["Local", "Staging"]
+            .into_iter()
+            .map(|name| Arc::new(Environment::new(name)))
+            .collect()
+    }
+
+    /// Each row as "<depth>:<name>" or "env:<name>", sections by their
+    /// label and empty rows as "(none)".
     pub(super) fn outline(rows: &[Row]) -> Vec<String> {
         rows.iter()
             .map(|row| match row {
-                Row::Section { .. } => "Collections".to_string(),
+                Row::Section {
+                    section: Section::Collections,
+                    ..
+                } => "Collections".to_string(),
+                Row::Section {
+                    section: Section::Environments,
+                    ..
+                } => "Environments".to_string(),
+                Row::Empty(_) => "(none)".to_string(),
                 Row::Node(node) => format!("{}:{}", node.depth, node.name),
+                Row::Environment { name, .. } => format!("env:{name}"),
             })
             .collect()
     }

@@ -307,7 +307,8 @@ impl Workspace {
         let selected = match self.current_route() {
             AppRoute::SavedRequest { request_id, .. } => Some(request_id),
             AppRoute::Collection(id) => Some(id),
-            AppRoute::Request | AppRoute::Settings | AppRoute::SharedEnvironments => None,
+            AppRoute::SharedEnvironments => self.shared_environments_view.read(cx).selected(cx),
+            AppRoute::Request | AppRoute::Settings => None,
         };
         self.library_panel
             .update(cx, |panel, cx| panel.set_selected(selected, window, cx));

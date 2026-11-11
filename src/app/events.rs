@@ -84,6 +84,7 @@ impl Workspace {
         }
         self.refresh_collection_view(window, cx);
         self.refresh_shared_environments_view(window, cx);
+        self.refresh_library_environments(window, cx);
         self.refresh_dirty(window, cx);
         self.sync_window_title(window, cx);
         self.schedule_navigation_save(cx);
@@ -143,6 +144,18 @@ impl Workspace {
                 collection_id,
                 parent,
             } => self.add_saved_request(*collection_id, *parent, window, cx),
+            LibraryPanelEvent::CreateSharedEnvironment => self.add_shared_environment(window, cx),
+            LibraryPanelEvent::OpenSharedEnvironment(id) => {
+                self.open_shared_environments(Some(*id), window, cx)
+            }
+            LibraryPanelEvent::RenameSharedEnvironment { id, name } => {
+                let (id, name) = (*id, name.clone());
+                self.shared_environments
+                    .update(cx, |environments, cx| environments.rename(id, name, cx));
+            }
+            LibraryPanelEvent::DeleteSharedEnvironment(id) => {
+                self.delete_shared_environment(*id, cx)
+            }
             LibraryPanelEvent::RevertRequest {
                 collection_id,
                 request_id,
@@ -272,6 +285,7 @@ impl Workspace {
                 .shared_environments
                 .update(cx, |environments, cx| environments.rename(id, name, cx)),
             EnvironmentsEditorEvent::Delete(id) => self.delete_shared_environment(id, cx),
+            EnvironmentsEditorEvent::SelectionChanged => self.sync_library_selection(window, cx),
             // The page has no "Use environment" and no bases.
             EnvironmentsEditorEvent::Use(_)
             | EnvironmentsEditorEvent::BaseChanged { .. }

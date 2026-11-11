@@ -6,7 +6,10 @@ use gpui_component::{
 use uuid::Uuid;
 
 use super::{LibraryPanel, LibraryPanelEvent, delegate::LibraryDelegate};
-use crate::ui::{confirm_dialog::open_confirm_dialog, rename_dialog::open_rename_dialog};
+use crate::ui::{
+    confirm_dialog::open_confirm_dialog, environments_editor::delete_message,
+    rename_dialog::open_rename_dialog,
+};
 
 impl LibraryPanel {
     fn rename(&mut self, target: MenuTarget, window: &mut Window, cx: &mut Context<Self>) {
@@ -81,6 +84,49 @@ impl LibraryPanel {
         );
     }
 
+    fn rename_environment(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.list.read(cx).delegate().environment_name(id) else {
+            return;
+        };
+        let panel = cx.weak_entity();
+        open_rename_dialog(
+            "Rename environment",
+            name,
+            "Save",
+            move |name, _, cx| {
+                panel
+                    .update(cx, |_, cx| {
+                        cx.emit(LibraryPanelEvent::RenameSharedEnvironment { id, name })
+                    })
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn delete_environment(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.list.read(cx).delegate().environment_name(id) else {
+            return;
+        };
+        let links = self.environment_links.get(&id).copied().unwrap_or(0);
+        let panel = cx.weak_entity();
+        open_confirm_dialog(
+            "Delete environment?",
+            delete_message(&name, links),
+            "Delete",
+            move |_, cx| {
+                panel
+                    .update(cx, |_, cx| {
+                        cx.emit(LibraryPanelEvent::DeleteSharedEnvironment(id))
+                    })
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
     fn add_folder(&mut self, parent: Container, window: &mut Window, cx: &mut Context<Self>) {
         let panel = cx.weak_entity();
         open_rename_dialog(
@@ -124,14 +170,30 @@ pub(super) fn context_menu(
         return menu;
     };
     let state = list_state.read(cx);
-    let Some(target) = state
-        .right_clicked_index()
-        .and_then(|ix| state.delegate().menu_target_at(ix.row))
-    else {
+    let Some(row) = state.right_clicked_index().map(|ix| ix.row) else {
         return menu;
     };
+    let (target, environment) = (
+        state.delegate().menu_target_at(row),
+        state.delegate().environment_at(row),
+    );
+    if target.is_none() && environment.is_none() {
+        return menu;
+    }
+    clear_right_click_on_dismiss(list, window, cx);
+    match (target, environment) {
+        (Some(target), _) => library_menu(panel, target, menu, cx),
+        (None, Some(id)) => environment_menu(panel, id, menu),
+        (None, None) => menu,
+    }
+}
 
-    // The list outlines the right-clicked row until this is reset.
+/// The list outlines the right-clicked row until this is reset.
+fn clear_right_click_on_dismiss(
+    list: &WeakEntity<ListState<LibraryDelegate>>,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) {
     let menu_entity = cx.entity();
     window
         .subscribe(&menu_entity, cx, {
@@ -144,7 +206,32 @@ pub(super) fn context_menu(
             }
         })
         .detach();
+}
 
+fn environment_menu(panel: &WeakEntity<LibraryPanel>, id: Uuid, menu: PopupMenu) -> PopupMenu {
+    let (rename_panel, delete_panel) = (panel.clone(), panel.clone());
+    menu.item(
+        PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
+            rename_panel
+                .update(cx, |panel, cx| panel.rename_environment(id, window, cx))
+                .ok();
+        }),
+    )
+    .item(
+        PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
+            delete_panel
+                .update(cx, |panel, cx| panel.delete_environment(id, window, cx))
+                .ok();
+        }),
+    )
+}
+
+fn library_menu(
+    panel: &WeakEntity<LibraryPanel>,
+    target: MenuTarget,
+    menu: PopupMenu,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
     let mut menu = menu;
     if let MenuTarget::Request {
         collection_id,

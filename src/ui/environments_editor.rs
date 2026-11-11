@@ -50,6 +50,8 @@ pub enum EnvironmentsEditorEvent {
     },
     /// Open the bases' editor, with `Uuid` selected if given.
     ManageBases(Option<Uuid>),
+    /// The environment shown changed; see [`EnvironmentsEditor::selected`].
+    SelectionChanged,
 }
 
 /// What differs between the places environments are edited.
@@ -136,11 +138,13 @@ impl EnvironmentsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let previous = self.selected;
         self.environments = environments;
         self.active = active;
         self.linked = linked;
         self.bases = bases;
         self.sync_selection(window, cx);
+        self.emit_selected_if_changed(previous, cx);
         cx.notify();
     }
 
@@ -151,11 +155,18 @@ impl EnvironmentsEditor {
     }
 
     pub fn select(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if self.selected != Some(id) {
+        let previous = self.selected;
+        if previous != Some(id) {
             self.selected = Some(id);
             self.sync_selection(window, cx);
+            self.emit_selected_if_changed(previous, cx);
             cx.notify();
         }
+    }
+
+    /// The environment shown.
+    pub fn selected(&self) -> Option<Uuid> {
+        self.selected
     }
 
     /// Focuses the first variable of the environment shown.
@@ -169,6 +180,12 @@ impl EnvironmentsEditor {
     /// environment id and its variables.
     pub fn take_pending(&mut self, cx: &gpui::App) -> Option<(Uuid, Vec<KeyValue>)> {
         self.variables.take_pending(cx)
+    }
+
+    fn emit_selected_if_changed(&self, previous: Option<Uuid>, cx: &mut Context<Self>) {
+        if self.selected != previous {
+            cx.emit(EnvironmentsEditorEvent::SelectionChanged);
+        }
     }
 
     fn emit_pending(&mut self, cx: &mut Context<Self>) {
@@ -585,7 +602,7 @@ fn environment_to_select(
 }
 
 /// The delete confirmation's message. `linked` environments are based on it.
-fn delete_message(name: &str, linked: usize) -> String {
+pub fn delete_message(name: &str, linked: usize) -> String {
     let linked = match linked {
         0 => String::new(),
         1 => " It's used by 1 environment, which keeps its own values.".to_string(),
