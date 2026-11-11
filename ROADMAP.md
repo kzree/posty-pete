@@ -25,6 +25,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## Collections
 
 - [ ] **Environments in quick open.** List shared and collection environments in quick open to jump to their editor.
+- [ ] **Library keyboard navigation skips empty rows.** Up/Down stops on the "No collections yet" / "No environments yet" rows; gpui-component 0.9's List has no disabled-row skipping, so it needs our own SelectUp/SelectDown handling.
 - [ ] **One save queue for stores.** `SharedEnvironments` copies the ordered save queue from `Collections`; extract a shared helper if a third store appears.
 - [ ] **Environment colours.** Mark an environment (e.g. red for Prod) in the picker and title bar so sending to production is hard to miss.
 - [ ] **Duplicate environments.** Copy an environment with its variables, e.g. Staging → Prod.
