@@ -43,7 +43,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Palette recents: back/forward and in-editor opens.** Items reached with back/forward, and requests opened while the editor is already showing, aren't recorded as recents. Decide whether they should be.
 - [ ] **macOS system proxy.** Proxy "System" on Settings › Requests only reads the HTTP_PROXY/HTTPS_PROXY/NO_PROXY environment variables, which apps opened from Finder usually don't have. Reading the macOS network proxy settings needs reqwest's `system-proxy` feature.
 - [ ] **Clamp settings numbers on blur.** The Settings number inputs have no number mask, so an out-of-range value stays visible in the field while the clamped value is saved (e.g. the field shows 0, 1 is saved). Clamp or reformat the field when it loses focus.
-- [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
 ## Look and feel
 
