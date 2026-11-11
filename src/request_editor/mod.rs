@@ -283,8 +283,12 @@ impl Render for RequestEditor {
                         .aria_label("Request name"),
                 )
             })
-            .child(self.render_url_bar(cx))
-            .children(self.render_unresolved_hint(cx))
+            .child(
+                v_flex()
+                    .gap_1()
+                    .child(self.render_url_bar(cx))
+                    .child(self.render_unresolved_hint(cx)),
+            )
             .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().child(content))
     }

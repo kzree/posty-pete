@@ -67,22 +67,24 @@ impl RequestEditor {
             )
     }
 
-    pub(super) fn render_unresolved_hint(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        let hint = self.unresolved_hint.clone()?;
-        Some(
-            h_flex()
-                .id("unresolved-variables")
-                .gap_1p5()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(
-                    Icon::new(IconName::TriangleAlert)
-                        .xsmall()
-                        .flex_none()
-                        .text_color(cx.theme().warning),
-                )
-                .child(div().min_w_0().truncate().child(hint.clone()))
-                .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx)),
+    /// Always takes its line, so the tabs don't move when the hint comes and goes.
+    pub(super) fn render_unresolved_hint(&self, cx: &Context<Self>) -> impl IntoElement {
+        let row = h_flex()
+            .id("unresolved-variables")
+            .h_4()
+            .gap_1p5()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground);
+        let Some(hint) = self.unresolved_hint.clone() else {
+            return row;
+        };
+        row.child(
+            Icon::new(IconName::TriangleAlert)
+                .xsmall()
+                .flex_none()
+                .text_color(cx.theme().warning),
         )
+        .child(div().min_w_0().truncate().child(hint.clone()))
+        .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
     }
 }
