@@ -9,6 +9,7 @@ use super::{
     command::Command,
     environment::Environment,
     request::HttpMethod,
+    settings_index::{Setting, SettingsSection},
 };
 
 /// What the palette was opened to search.
@@ -75,15 +76,17 @@ pub enum Group {
     Folders,
     Environments,
     Commands,
+    Settings,
 }
 
 impl Group {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Requests,
         Self::Collections,
         Self::Folders,
         Self::Environments,
         Self::Commands,
+        Self::Settings,
     ];
 
     pub fn title(self) -> &'static str {
@@ -93,10 +96,12 @@ impl Group {
             Self::Folders => "Folders",
             Self::Environments => "Environments",
             Self::Commands => "Commands",
+            Self::Settings => "Settings",
         }
     }
 
-    fn is_item(self) -> bool {
+    /// Whether it's one of your saved items, searched in [`Scope::Items`].
+    pub fn is_item(self) -> bool {
         matches!(
             self,
             Self::Requests | Self::Collections | Self::Folders | Self::Environments
@@ -122,6 +127,8 @@ pub enum Target {
         environment_id: Uuid,
     },
     Command(Command),
+    SettingsSection(SettingsSection),
+    Setting(Setting),
 }
 
 impl Target {
@@ -132,6 +139,7 @@ impl Target {
             Self::Folder { .. } => Group::Folders,
             Self::SharedEnvironment(_) | Self::CollectionEnvironment { .. } => Group::Environments,
             Self::Command(_) => Group::Commands,
+            Self::SettingsSection(_) | Self::Setting(_) => Group::Settings,
         }
     }
 }
@@ -143,8 +151,8 @@ pub struct Entry {
     pub target: Target,
     pub name: String,
     /// The collection and folders holding a request or folder, the collection
-    /// of a collection environment, [`SHARED_LOCATION`] for a shared one, and
-    /// empty for a collection or command.
+    /// of a collection environment, [`SHARED_LOCATION`] for a shared one, the
+    /// page and group of a setting, and empty otherwise.
     pub location: String,
     pub method: Option<HttpMethod>,
     name_lower: String,
@@ -168,13 +176,13 @@ impl Entry {
         entry
     }
 
-    /// "API / Users / Get user" or, for environments, "API › Staging".
+    /// "API / Users / Get user" or, for environments and settings, "API › Staging".
     pub fn path(&self) -> String {
         if self.location.is_empty() {
             return self.name.clone();
         }
         let separator = match self.target.group() {
-            Group::Environments => "›",
+            Group::Environments | Group::Settings => "›",
             _ => "/",
         };
         format!("{} {separator} {}", self.location, self.name)
@@ -235,6 +243,29 @@ pub fn command_entries(commands: impl IntoIterator<Item = Command>) -> Vec<Entry
             )
         })
         .collect()
+}
+
+/// The settings pages, then every row on them.
+pub fn settings_entries() -> Vec<Entry> {
+    let pages = SettingsSection::ALL.into_iter().map(|section| Entry {
+        keywords: section.keywords(),
+        ..Entry::new(
+            Target::SettingsSection(section),
+            section.title().to_string(),
+            String::new(),
+            None,
+        )
+    });
+    let rows = Setting::all().map(|setting| Entry {
+        keywords: setting.keywords(),
+        ..Entry::new(
+            Target::Setting(setting),
+            setting.label().to_string(),
+            setting.location(),
+            None,
+        )
+    });
+    pages.chain(rows).collect()
 }
 
 fn push_items(collection_id: Uuid, items: &[Item], location: &str, entries: &mut Vec<Entry>) {
@@ -737,6 +768,94 @@ mod tests {
         let entries = with_commands(&Command::ALL);
         assert_eq!(names(&entries, "panel"), ["Toggle sidebar"]);
         assert_eq!(names(&entries, "> exit"), ["Quit"]);
+    }
+
+    fn with_settings() -> Vec<Entry> {
+        let mut entries = with_commands(&Command::ALL);
+        entries.extend(settings_entries());
+        entries
+    }
+
+    #[test]
+    fn settings_come_after_commands_in_the_full_scope_only() {
+        let entries = with_settings();
+        assert_eq!(groups(&entries, "", Scope::All).last(), Some(&"Settings"));
+        assert!(!groups(&entries, "", Scope::Items).contains(&"Settings"));
+        assert_eq!(
+            groups(&entries, "> timeout", Scope::All),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn pages_come_first_among_settings() {
+        let entries = settings_entries();
+        assert_eq!(
+            outline(&entries, "", Scope::All),
+            [(
+                "Settings",
+                vec![
+                    "General".to_string(),
+                    "Appearance".into(),
+                    "Requests".into(),
+                    "History & data".into(),
+                    "AI".into(),
+                ]
+            )]
+        );
+    }
+
+    #[test]
+    fn settings_show_their_page_and_group() {
+        let entries = settings_entries();
+        let timeout = entries
+            .iter()
+            .find(|e| e.target == Target::Setting(Setting::Timeout))
+            .map(Entry::path);
+        assert_eq!(timeout.as_deref(), Some("Requests › Connection › Timeout"));
+    }
+
+    fn setting_names(query: &str) -> Vec<String> {
+        let entries = settings_entries();
+        names(&entries, query)
+    }
+
+    #[test]
+    fn settings_match_their_keywords() {
+        assert_eq!(setting_names("seconds")[0], "Timeout");
+        assert!(setting_names("color").contains(&"Accent colour".to_string()));
+        assert!(setting_names("color").contains(&"Appearance".to_string()));
+        assert_eq!(setting_names("ssl")[0], "Verify TLS certificates");
+    }
+
+    #[test]
+    fn shortcuts_are_found_by_action_name() {
+        let entries = with_settings();
+        assert_eq!(
+            outline(&entries, "toggle sidebar", Scope::All),
+            [
+                ("Commands", vec!["Toggle sidebar".to_string()]),
+                ("Settings", vec!["Toggle sidebar".to_string()]),
+            ]
+        );
+        assert!(setting_names("command palette").contains(&"Command palette".to_string()));
+    }
+
+    #[test]
+    fn same_labels_are_told_apart_by_their_group() {
+        let entries = settings_entries();
+        let paths: Vec<String> = search(&entries, "font size", Scope::All)
+            .into_iter()
+            .flat_map(|section| section.entries)
+            .map(|ix| entries[ix].path())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "Appearance › Interface › Font size",
+                "Appearance › Editors › Font size"
+            ]
+        );
     }
 
     #[test]

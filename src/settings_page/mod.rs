@@ -5,11 +5,13 @@ mod general;
 mod history_and_data;
 mod mcp;
 mod requests;
+mod reveal;
 mod shortcuts;
 
 use gpui::{
     AnyElement, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, Role, StatefulInteractiveElement, Styled, Window, div, px,
+    KeyDownEvent, ParentElement, Point, Render, Role, ScrollHandle, StatefulInteractiveElement,
+    Styled, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, Selectable, StyledExt,
@@ -17,95 +19,32 @@ use gpui_component::{
     group_box::{GroupBox, GroupBoxVariants},
     h_flex,
     input::InputState,
-    scroll::ScrollableElement,
+    scroll::ScrollableElement as _,
     switch::Switch,
     v_flex,
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
+pub use crate::domain::settings_index::SettingsSection;
+use crate::domain::settings_index::{Setting, SettingsGroup};
 use about::AboutPage;
 use ai::AiPage;
 use appearance::AppearancePage;
 use general::GeneralPage;
 use history_and_data::HistoryAndDataPage;
 use requests::RequestsPage;
+use reveal::{Reveal, row, row_standing_in};
 use shortcuts::ShortcutsPage;
 
-/// A page of the settings, in menu order.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SettingsSection {
-    #[default]
-    General,
-    Appearance,
-    Requests,
-    HistoryAndData,
-    Ai,
-    Shortcuts,
-    About,
-}
-
-impl SettingsSection {
-    pub const ALL: [Self; 7] = [
-        Self::General,
-        Self::Appearance,
-        Self::Requests,
-        Self::HistoryAndData,
-        Self::Ai,
-        Self::Shortcuts,
-        Self::About,
-    ];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::General => "General",
-            Self::Appearance => "Appearance",
-            Self::Requests => "Requests",
-            Self::HistoryAndData => "History & data",
-            Self::Ai => "AI",
-            Self::Shortcuts => "Shortcuts",
-            Self::About => "About",
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            Self::General => "How the app starts and when it asks before discarding changes.",
-            Self::Appearance => "Theme, fonts and how responses are displayed.",
-            Self::Requests => "Defaults for sending requests: timeout, redirects, TLS and proxy.",
-            Self::HistoryAndData => "How long history is kept and where your data is stored.",
-            Self::Ai => {
-                "Optional AI features, their provider, and the MCP server for AI assistants."
-            }
-            Self::Shortcuts => "Keyboard shortcuts for common actions.",
-            Self::About => "Version, licences and links.",
-        }
-    }
-
-    fn icon(self) -> Icon {
-        match self {
-            Self::General => Icon::new(IconName::Settings),
-            Self::Appearance => Icon::new(IconName::Palette),
-            Self::Requests => Icon::new(LucideIcon::Send),
-            Self::HistoryAndData => Icon::new(LucideIcon::RotateCcwClock),
-            Self::Ai => Icon::new(LucideIcon::Sparkles),
-            Self::Shortcuts => Icon::new(LucideIcon::Keyboard),
-            Self::About => Icon::new(IconName::Info),
-        }
-    }
-
-    fn index(self) -> usize {
-        Self::ALL.iter().position(|s| *s == self).unwrap_or(0)
-    }
-
-    /// The section before (`forward == false`) or after this one, stopping at the ends.
-    fn neighbor(self, forward: bool) -> Self {
-        let index = self.index();
-        let index = if forward {
-            (index + 1).min(Self::ALL.len() - 1)
-        } else {
-            index.saturating_sub(1)
-        };
-        Self::ALL[index]
+fn section_icon(section: SettingsSection) -> Icon {
+    match section {
+        SettingsSection::General => Icon::new(IconName::Settings),
+        SettingsSection::Appearance => Icon::new(IconName::Palette),
+        SettingsSection::Requests => Icon::new(LucideIcon::Send),
+        SettingsSection::HistoryAndData => Icon::new(LucideIcon::RotateCcwClock),
+        SettingsSection::Ai => Icon::new(LucideIcon::Sparkles),
+        SettingsSection::Shortcuts => Icon::new(LucideIcon::Keyboard),
+        SettingsSection::About => Icon::new(IconName::Info),
     }
 }
 
@@ -114,6 +53,8 @@ pub struct SettingsPage {
     section: SettingsSection,
     /// One per section, in [`SettingsSection::ALL`] order.
     menu_focus: Vec<FocusHandle>,
+    scroll: ScrollHandle,
+    reveal: Entity<Reveal>,
     general: Entity<GeneralPage>,
     appearance: Entity<AppearancePage>,
     requests: Entity<RequestsPage>,
@@ -125,28 +66,52 @@ pub struct SettingsPage {
 
 impl SettingsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let scroll = ScrollHandle::new();
+        let reveal = cx.new(|_| Reveal::new(scroll.clone()));
         Self {
             section: SettingsSection::default(),
             menu_focus: SettingsSection::ALL
                 .iter()
                 .map(|_| cx.focus_handle())
                 .collect(),
-            general: cx.new(|_| GeneralPage::new()),
-            appearance: cx.new(|cx| AppearancePage::new(window, cx)),
-            requests: cx.new(|cx| RequestsPage::new(window, cx)),
-            history_and_data: cx.new(|cx| HistoryAndDataPage::new(window, cx)),
-            ai: cx.new(|cx| AiPage::new(window, cx)),
-            shortcuts: cx.new(|_| ShortcutsPage::new()),
+            scroll,
+            general: cx.new(|_| GeneralPage::new(reveal.clone())),
+            appearance: cx.new(|cx| AppearancePage::new(reveal.clone(), window, cx)),
+            requests: cx.new(|cx| RequestsPage::new(reveal.clone(), window, cx)),
+            history_and_data: cx.new(|cx| HistoryAndDataPage::new(reveal.clone(), window, cx)),
+            ai: cx.new(|cx| AiPage::new(reveal.clone(), window, cx)),
+            shortcuts: cx.new(|_| ShortcutsPage::new(reveal.clone())),
             about: cx.new(|_| AboutPage),
+            reveal,
         }
     }
 
-    /// Shows `section`.
+    /// Shows `section`, from the top.
     pub fn open(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         if self.section != section {
             self.section = section;
+            self.scroll.set_offset(Point::default());
             cx.notify();
         }
+    }
+
+    /// Shows `section` with its menu item focused.
+    pub fn show_section(
+        &mut self,
+        section: SettingsSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open(section, cx);
+        window.focus(&self.menu_focus[section.index()], cx);
+    }
+
+    /// Shows `setting`'s page, scrolls its row into view, focuses its
+    /// control and highlights the row briefly.
+    pub fn reveal(&mut self, setting: Setting, cx: &mut Context<Self>) {
+        self.open(setting.section(), cx);
+        self.reveal
+            .update(cx, |reveal, cx| reveal.start(setting, cx));
     }
 
     fn open_neighbor(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -202,7 +167,7 @@ impl SettingsPage {
             .w_full()
             .selected(self.section == section)
             .track_focus(&self.menu_focus[index])
-            .icon(section.icon())
+            .icon(section_icon(section))
             .label(section.title())
             // Pushes the icon and label to the start.
             .child(div().flex_1())
@@ -211,16 +176,16 @@ impl SettingsPage {
 
     fn render_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let section = self.section;
-        v_flex()
+        let panel = v_flex()
             .id("settings-section")
             .role(Role::TabPanel)
             .aria_label(section.title())
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .overflow_y_scrollbar()
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .child(
                 v_flex()
+                    .flex_none()
                     .max_w(px(640.))
                     .gap_1()
                     .child(
@@ -239,7 +204,14 @@ impl SettingsPage {
                             .child(section.description()),
                     )
                     .child(div().pt_6().child(self.render_settings())),
-            )
+            );
+        div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(panel)
+            .vertical_scrollbar(&self.scroll)
     }
 
     fn render_settings(&self) -> AnyElement {
@@ -261,24 +233,23 @@ fn page() -> gpui::Div {
 }
 
 /// A titled group of setting rows.
-fn group(id: &'static str, title: &'static str) -> GroupBox {
+fn group(group: SettingsGroup) -> GroupBox {
     GroupBox::new()
-        .id(id)
+        .id(group.id())
         .fill()
-        .title(div().text_sm().font_medium().child(title))
+        .title(div().text_sm().font_medium().child(group.title()))
 }
 
-/// A switch for a boolean field of the page `T`, named after its row's `label`.
+/// A switch for a boolean field of the page `T`, named after `setting`.
 fn switch<T: 'static>(
-    id: &'static str,
-    label: &'static str,
+    setting: Setting,
     checked: bool,
     set: fn(&mut T, bool),
     cx: &mut Context<T>,
 ) -> Switch {
-    Switch::new(id)
+    Switch::new(setting.id())
         .checked(checked)
-        .accessibility_label(label)
+        .accessibility_label(setting.label())
         .on_change(cx.listener(move |this, checked: &bool, _, cx| {
             set(this, *checked);
             cx.notify();
@@ -342,36 +313,61 @@ impl Render for SettingsPage {
 mod tests {
     use super::*;
 
+    /// The sources of a page's rows.
+    fn sources(section: SettingsSection) -> &'static [&'static str] {
+        match section {
+            SettingsSection::General => &[include_str!("general.rs")],
+            SettingsSection::Appearance => &[include_str!("appearance.rs")],
+            SettingsSection::Requests => &[include_str!("requests.rs")],
+            SettingsSection::HistoryAndData => &[include_str!("history_and_data.rs")],
+            SettingsSection::Ai => &[include_str!("ai.rs"), include_str!("mcp.rs")],
+            SettingsSection::Shortcuts => &[include_str!("shortcuts.rs")],
+            SettingsSection::About => &[include_str!("about.rs")],
+        }
+    }
+
+    /// Whether the page's sources use the path `name`, not just one it starts.
+    fn mentions(section: SettingsSection, name: String) -> bool {
+        sources(section).iter().any(|source| {
+            source.match_indices(&name).any(|(ix, _)| {
+                source[ix + name.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+            })
+        })
+    }
+
+    // Shortcut rows are built from the index, so only the others are checked.
     #[test]
-    fn opens_on_general() {
-        assert_eq!(SettingsSection::default(), SettingsSection::General);
-        assert_eq!(SettingsSection::ALL[0], SettingsSection::General);
+    fn every_indexed_setting_is_on_its_page() {
+        for setting in Setting::ROWS {
+            let name = format!("Setting::{setting:?}");
+            assert!(mentions(setting.section(), name), "{setting:?}");
+        }
     }
 
     #[test]
-    fn menu_order_matches_the_titles() {
-        let titles: Vec<_> = SettingsSection::ALL.iter().map(|s| s.title()).collect();
-        assert_eq!(
-            titles,
-            [
-                "General",
-                "Appearance",
-                "Requests",
-                "History & data",
-                "AI",
-                "Shortcuts",
-                "About"
-            ]
-        );
+    fn every_group_is_on_its_page() {
+        for group in SettingsGroup::ALL {
+            if group.section() == SettingsSection::Shortcuts {
+                continue;
+            }
+            let name = format!("SettingsGroup::{group:?}");
+            assert!(mentions(group.section(), name), "{group:?}");
+        }
     }
 
     #[test]
-    fn neighbor_stops_at_the_ends() {
-        use SettingsSection::*;
-        assert_eq!(General.neighbor(false), General);
-        assert_eq!(General.neighbor(true), Appearance);
-        assert_eq!(About.neighbor(true), About);
-        assert_eq!(About.neighbor(false), Shortcuts);
+    fn setting_rows_come_from_the_index() {
+        for section in SettingsSection::ALL {
+            if section == SettingsSection::About {
+                continue;
+            }
+            for source in sources(section) {
+                assert!(!source.contains("SettingRow::new"), "{section:?}");
+            }
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use gpui::{
-    AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window,
     prelude::FluentBuilder, px,
 };
 use gpui_component::{
@@ -8,8 +8,8 @@ use gpui_component::{
     radio::RadioGroup,
 };
 
-use super::{group, number_state, page, switch};
-use crate::ui::setting_row::SettingRow;
+use super::{Reveal, group, number_state, page, row, row_standing_in, switch};
+use crate::domain::settings_index::{Setting, SettingsGroup};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProxyMode {
@@ -31,6 +31,7 @@ impl ProxyMode {
 }
 
 pub struct RequestsPage {
+    reveal: Entity<Reveal>,
     timeout: Entity<InputState>,
     follow_redirects: bool,
     max_redirects: Entity<InputState>,
@@ -41,8 +42,9 @@ pub struct RequestsPage {
 }
 
 impl RequestsPage {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(reveal: Entity<Reveal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
+            reveal,
             timeout: cx.new(|cx| number_state(30, 0, 3600, window, cx)),
             follow_redirects: true,
             max_redirects: cx.new(|cx| number_state(10, 1, 50, window, cx)),
@@ -67,9 +69,11 @@ impl RequestsPage {
     }
 
     fn render_connection(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        group("requests-connection", "Connection")
+        let reveal = &self.reveal;
+        let custom_proxy = self.proxy == ProxyMode::Custom;
+        group(SettingsGroup::Connection)
             .child(
-                SettingRow::new("Timeout")
+                row(reveal, Setting::Timeout, cx)
                     .description("In seconds. 0 means no timeout.")
                     .control(
                         NumberInput::new(&self.timeout)
@@ -78,24 +82,32 @@ impl RequestsPage {
                     ),
             )
             .child(
-                SettingRow::new("Verify TLS certificates")
+                row(reveal, Setting::VerifyTls, cx)
                     .when(!self.verify_tls, |row| {
                         row.warning(
                             "Anyone on the network could read or change requests to HTTPS servers.",
                         )
                     })
                     .control(switch(
-                        "verify-tls",
-                        "Verify TLS certificates",
+                        Setting::VerifyTls,
                         self.verify_tls,
                         |this, on| this.verify_tls = on,
                         cx,
                     )),
             )
-            .child(SettingRow::new("Proxy").control(self.render_proxy(cx)))
-            .when(self.proxy == ProxyMode::Custom, |group| {
+            .child(
+                // Proxy URL shows only for a custom proxy.
+                row_standing_in(
+                    reveal,
+                    Setting::Proxy,
+                    (!custom_proxy).then_some(Setting::ProxyUrl),
+                    cx,
+                )
+                .control(self.render_proxy(cx)),
+            )
+            .when(custom_proxy, |group| {
                 group.child(
-                    SettingRow::new("Proxy URL").control(
+                    row(reveal, Setting::ProxyUrl, cx).control(
                         Input::new(&self.proxy_url)
                             .aria_label("Proxy URL")
                             .w(px(240.)),
@@ -105,22 +117,22 @@ impl RequestsPage {
     }
 
     fn render_redirects(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        group("requests-redirects", "Redirects")
+        let reveal = &self.reveal;
+        group(SettingsGroup::Redirects)
             .child(
-                SettingRow::new("Follow redirects")
+                row(reveal, Setting::FollowRedirects, cx)
                     .description(
                         "Only to the same origin; other redirects are shown as the response.",
                     )
                     .control(switch(
-                        "follow-redirects",
-                        "Follow redirects",
+                        Setting::FollowRedirects,
                         self.follow_redirects,
                         |this, on| this.follow_redirects = on,
                         cx,
                     )),
             )
             .child(
-                SettingRow::new("Maximum redirects").control(
+                row(reveal, Setting::MaxRedirects, cx).control(
                     NumberInput::new(&self.max_redirects)
                         .accessibility_label("Maximum redirects")
                         .disabled(!self.follow_redirects)
@@ -129,9 +141,9 @@ impl RequestsPage {
             )
     }
 
-    fn render_headers(&self) -> impl IntoElement {
-        group("requests-headers", "Headers").child(
-            SettingRow::new("User-Agent")
+    fn render_headers(&self, cx: &App) -> impl IntoElement {
+        group(SettingsGroup::Headers).child(
+            row(&self.reveal, Setting::UserAgent, cx)
                 .description("Sent when a request doesn't set its own.")
                 .control(
                     Input::new(&self.user_agent)
@@ -147,6 +159,6 @@ impl Render for RequestsPage {
         page()
             .child(self.render_connection(cx))
             .child(self.render_redirects(cx))
-            .child(self.render_headers())
+            .child(self.render_headers(cx))
     }
 }

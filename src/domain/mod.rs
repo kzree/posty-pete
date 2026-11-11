@@ -15,6 +15,7 @@ pub mod request;
 pub mod resolved;
 pub mod response;
 pub mod settings;
+pub mod settings_index;
 pub mod store;
 pub mod url_scheme;
 pub mod variables;

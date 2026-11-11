@@ -8,9 +8,13 @@ use gpui_component::{
     radio::RadioGroup,
 };
 
-use super::{group, number_state, page, switch};
-use crate::domain::{accent::Accent, settings::ThemePreference};
-use crate::ui::{color_swatches::ColorSwatches, setting_row::SettingRow};
+use super::{Reveal, group, number_state, page, row, switch};
+use crate::domain::{
+    accent::Accent,
+    settings::ThemePreference,
+    settings_index::{Setting, SettingsGroup},
+};
+use crate::ui::color_swatches::ColorSwatches;
 use crate::{settings::AppSettings, theme};
 
 const THEMES: [ThemePreference; 3] = [
@@ -28,6 +32,7 @@ fn theme_label(theme: ThemePreference) -> &'static str {
 }
 
 pub struct AppearancePage {
+    reveal: Entity<Reveal>,
     ui_font_size: Entity<InputState>,
     editor_font_family: Entity<InputState>,
     editor_font_size: Entity<InputState>,
@@ -36,12 +41,13 @@ pub struct AppearancePage {
 }
 
 impl AppearancePage {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(reveal: Entity<Reveal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let theme = cx.theme();
         let ui_font_size = theme.font_size.as_f32() as u32;
         let editor_font_size = theme.mono_font_size.as_f32() as u32;
         let editor_font_family = theme.mono_font_family.clone();
         Self {
+            reveal,
             ui_font_size: cx.new(|cx| number_state(ui_font_size, 10, 24, window, cx)),
             editor_font_family: cx
                 .new(|cx| InputState::new(window, cx).default_value(editor_font_family)),
@@ -68,7 +74,7 @@ impl AppearancePage {
         Accent::ALL
             .into_iter()
             .fold(
-                ColorSwatches::new("accent", "Accent colour"),
+                ColorSwatches::new("accent", Setting::Accent.label()),
                 |swatches, accent| swatches.swatch(accent.name(), accent_color(accent, cx)),
             )
             .selected_index(selected)
@@ -88,13 +94,14 @@ fn accent_color(accent: Accent, cx: &App) -> Hsla {
 
 impl Render for AppearancePage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let reveal = &self.reveal;
         page()
             .child(
-                group("appearance-interface", "Interface")
-                    .child(SettingRow::new("Theme").control(self.render_theme(cx)))
-                    .child(SettingRow::new("Accent colour").control(self.render_accent(cx)))
+                group(SettingsGroup::Interface)
+                    .child(row(reveal, Setting::Theme, cx).control(self.render_theme(cx)))
+                    .child(row(reveal, Setting::Accent, cx).control(self.render_accent(cx)))
                     .child(
-                        SettingRow::new("Font size").control(
+                        row(reveal, Setting::UiFontSize, cx).control(
                             NumberInput::new(&self.ui_font_size)
                                 .accessibility_label("Font size")
                                 .w(px(120.)),
@@ -102,9 +109,9 @@ impl Render for AppearancePage {
                     ),
             )
             .child(
-                group("appearance-editors", "Editors")
+                group(SettingsGroup::Editors)
                     .child(
-                        SettingRow::new("Font")
+                        row(reveal, Setting::EditorFont, cx)
                             .description("Used by the URL, body and response editors.")
                             .control(
                                 Input::new(&self.editor_font_family)
@@ -113,21 +120,18 @@ impl Render for AppearancePage {
                             ),
                     )
                     .child(
-                        SettingRow::new("Font size").control(
+                        row(reveal, Setting::EditorFontSize, cx).control(
                             NumberInput::new(&self.editor_font_size)
                                 .accessibility_label("Editor font size")
                                 .w(px(120.)),
                         ),
                     )
-                    .child(
-                        SettingRow::new("Wrap long lines in responses").control(switch(
-                            "wrap-responses",
-                            "Wrap long lines in responses",
-                            self.wrap_responses,
-                            |this, on| this.wrap_responses = on,
-                            cx,
-                        )),
-                    ),
+                    .child(row(reveal, Setting::WrapResponses, cx).control(switch(
+                        Setting::WrapResponses,
+                        self.wrap_responses,
+                        |this, on| this.wrap_responses = on,
+                        cx,
+                    ))),
             )
     }
 }

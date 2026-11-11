@@ -1,18 +1,20 @@
-use gpui::{Context, IntoElement, ParentElement, Render, Window};
+use gpui::{Context, Entity, IntoElement, ParentElement, Render, Window};
 use gpui_component::Disableable;
 
-use super::{group, page, switch};
-use crate::ui::setting_row::SettingRow;
+use super::{Reveal, group, page, row, switch};
+use crate::domain::settings_index::{Setting, SettingsGroup};
 
 pub struct GeneralPage {
+    reveal: Entity<Reveal>,
     restore_session: bool,
     confirm_discard: bool,
     check_for_updates: bool,
 }
 
 impl GeneralPage {
-    pub fn new() -> Self {
+    pub fn new(reveal: Entity<Reveal>) -> Self {
         Self {
+            reveal,
             restore_session: true,
             confirm_discard: true,
             check_for_updates: false,
@@ -22,27 +24,26 @@ impl GeneralPage {
 
 impl Render for GeneralPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let reveal = &self.reveal;
         page()
             .child(
-                group("general-startup", "Startup")
+                group(SettingsGroup::Startup)
                     .child(
-                        SettingRow::new("Restore last session")
+                        row(reveal, Setting::RestoreSession, cx)
                             .description("Reopen the page and request you had open.")
                             .control(switch(
-                                "restore-session",
-                                "Restore last session",
+                                Setting::RestoreSession,
                                 self.restore_session,
                                 |this, on| this.restore_session = on,
                                 cx,
                             )),
                     )
                     .child(
-                        SettingRow::new("Check for updates")
+                        row(reveal, Setting::CheckForUpdates, cx)
                             .description("Not available yet.")
                             .control(
                                 switch(
-                                    "check-for-updates",
-                                    "Check for updates",
+                                    Setting::CheckForUpdates,
                                     self.check_for_updates,
                                     |this, on| this.check_for_updates = on,
                                     cx,
@@ -52,12 +53,11 @@ impl Render for GeneralPage {
                     ),
             )
             .child(
-                group("general-editing", "Editing").child(
-                    SettingRow::new("Ask before discarding changes")
+                group(SettingsGroup::Editing).child(
+                    row(reveal, Setting::ConfirmDiscard, cx)
                         .description("Confirm before closing a request with unsaved edits.")
                         .control(switch(
-                            "confirm-discard",
-                            "Ask before discarding changes",
+                            Setting::ConfirmDiscard,
                             self.confirm_discard,
                             |this, on| this.confirm_discard = on,
                             cx,

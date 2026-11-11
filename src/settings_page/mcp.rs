@@ -1,6 +1,6 @@
 use gpui::{
-    AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window,
-    prelude::FluentBuilder, px,
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
+    Window, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     Disableable,
@@ -10,9 +10,12 @@ use gpui_component::{
     v_flex,
 };
 
-use super::{group, number_state, page, switch};
+use super::{Reveal, group, number_state, page, row, switch};
 use crate::{
-    domain::mcp::{self, DEFAULT_PORT, PLACEHOLDER_TOKEN, PORT_RANGE},
+    domain::{
+        mcp::{self, DEFAULT_PORT, PLACEHOLDER_TOKEN, PORT_RANGE},
+        settings_index::{Setting, SettingsGroup},
+    },
     ui::setting_row::SettingRow,
 };
 
@@ -20,6 +23,7 @@ const NOT_AVAILABLE: &str = "Not available yet";
 
 /// The MCP server's settings, shown on the AI page.
 pub struct McpSettings {
+    reveal: Entity<Reveal>,
     enabled: bool,
     port: Entity<InputState>,
     /// `None` while the port input doesn't hold a valid port.
@@ -36,7 +40,7 @@ pub struct McpSettings {
 }
 
 impl McpSettings {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(reveal: Entity<Reveal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (min, max) = (*PORT_RANGE.start(), *PORT_RANGE.end());
         let port =
             cx.new(|cx| number_state(DEFAULT_PORT.into(), min.into(), max.into(), window, cx));
@@ -47,6 +51,7 @@ impl McpSettings {
             }
         });
         Self {
+            reveal,
             enabled: false,
             port,
             valid_port: Some(DEFAULT_PORT),
@@ -83,24 +88,23 @@ impl McpSettings {
 
     fn render_server(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let disabled = !self.enabled;
-        group("mcp-server", "MCP server")
+        group(SettingsGroup::McpServer)
             .child(
-                SettingRow::new("Enable MCP server")
+                row(&self.reveal, Setting::McpEnabled, cx)
                     .description(
                         "Let AI assistants such as Claude Code use your collections, \
                          environments and history. Works without the AI features above.",
                     )
                     .control(switch(
-                        "mcp-enabled",
-                        "Enable MCP server",
+                        Setting::McpEnabled,
                         self.enabled,
                         |this, on| this.enabled = on,
                         cx,
                     )),
             )
-            .child(self.render_port(disabled))
+            .child(self.render_port(disabled, cx))
             .child(
-                SettingRow::new("URL").control(
+                row(&self.reveal, Setting::McpUrl, cx).control(
                     Input::new(&self.url)
                         .aria_label("MCP server URL")
                         .readonly(true)
@@ -108,11 +112,11 @@ impl McpSettings {
                         .w(px(240.)),
                 ),
             )
-            .child(self.render_token(disabled))
+            .child(self.render_token(disabled, cx))
     }
 
-    fn render_port(&self, disabled: bool) -> SettingRow {
-        let row = SettingRow::new("Port").control(
+    fn render_port(&self, disabled: bool, cx: &App) -> SettingRow {
+        let row = row(&self.reveal, Setting::McpPort, cx).control(
             NumberInput::new(&self.port)
                 .accessibility_label("MCP server port")
                 .disabled(disabled)
@@ -126,8 +130,8 @@ impl McpSettings {
         }
     }
 
-    fn render_token(&self, disabled: bool) -> SettingRow {
-        SettingRow::new("Access token")
+    fn render_token(&self, disabled: bool, cx: &App) -> SettingRow {
+        row(&self.reveal, Setting::McpToken, cx)
             .description("Assistants send it with every request.")
             .control(
                 h_flex()
@@ -146,12 +150,12 @@ impl McpSettings {
 
     fn render_permissions(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let disabled = !self.enabled;
-        group("mcp-permissions", "MCP permissions")
+        let reveal = &self.reveal;
+        group(SettingsGroup::McpPermissions)
             .child(
-                SettingRow::new("Read collections and environments").control(
+                row(reveal, Setting::McpReadCollections, cx).control(
                     switch(
-                        "mcp-read-collections",
-                        "Read collections and environments",
+                        Setting::McpReadCollections,
                         self.read_collections,
                         |this, on| this.read_collections = on,
                         cx,
@@ -160,10 +164,9 @@ impl McpSettings {
                 ),
             )
             .child(
-                SettingRow::new("Send requests").control(
+                row(reveal, Setting::McpSendRequests, cx).control(
                     switch(
-                        "mcp-send-requests",
-                        "Send requests",
+                        Setting::McpSendRequests,
                         self.send_requests,
                         |this, on| this.send_requests = on,
                         cx,
@@ -172,12 +175,11 @@ impl McpSettings {
                 ),
             )
             .child(
-                SettingRow::new("Ask before sending")
+                row(reveal, Setting::McpAskBeforeSending, cx)
                     .description("Confirm each request an assistant wants to send.")
                     .control(
                         switch(
-                            "mcp-ask-before-sending",
-                            "Ask before sending",
+                            Setting::McpAskBeforeSending,
                             self.ask_before_sending,
                             |this, on| this.ask_before_sending = on,
                             cx,
@@ -186,12 +188,11 @@ impl McpSettings {
                     ),
             )
             .child(
-                SettingRow::new("Edit collections")
+                row(reveal, Setting::McpEditCollections, cx)
                     .description("Create, change and delete saved requests.")
                     .control(
                         switch(
-                            "mcp-edit-collections",
-                            "Edit collections",
+                            Setting::McpEditCollections,
                             self.edit_collections,
                             |this, on| this.edit_collections = on,
                             cx,
@@ -203,15 +204,14 @@ impl McpSettings {
     }
 
     fn render_read_history(&self, disabled: bool, cx: &mut Context<Self>) -> SettingRow {
-        SettingRow::new("Read history")
+        row(&self.reveal, Setting::McpReadHistory, cx)
             .description("History stores sent requests with their variables filled in.")
             .when(self.read_history, |row| {
                 row.warning("Assistants can see tokens and passwords from sent requests.")
             })
             .control(
                 switch(
-                    "mcp-read-history",
-                    "Read history",
+                    Setting::McpReadHistory,
                     self.read_history,
                     |this, on| this.read_history = on,
                     cx,
@@ -220,15 +220,15 @@ impl McpSettings {
             )
     }
 
-    fn render_client_setup(&self) -> impl IntoElement {
+    fn render_client_setup(&self, cx: &App) -> impl IntoElement {
         let disabled = !self.enabled;
-        group("mcp-client-setup", "Client setup")
+        group(SettingsGroup::McpClientSetup)
             .footer("The MCP server isn't available yet.")
             .child(
                 v_flex()
                     .gap_2()
                     .child(
-                        SettingRow::new("Client configuration")
+                        row(&self.reveal, Setting::McpClientConfig, cx)
                             .description(
                                 "Add this to your assistant's MCP settings, \
                                  such as .mcp.json for Claude Code.",
@@ -268,6 +268,6 @@ impl Render for McpSettings {
         page()
             .child(self.render_server(cx))
             .child(self.render_permissions(cx))
-            .child(self.render_client_setup())
+            .child(self.render_client_setup(cx))
     }
 }

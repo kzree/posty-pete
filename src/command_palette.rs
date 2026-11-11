@@ -69,7 +69,8 @@ fn shortcuts(entries: &[Entry], focus: &FocusHandle, window: &Window) -> HashMap
         .collect()
 }
 
-/// Searches saved requests, collections, folders, environments and commands; shown in a dialog.
+/// Searches saved requests, collections, folders, environments, commands and
+/// settings; shown in a dialog.
 pub struct CommandPalette {
     list: Entity<ListState<PaletteDelegate>>,
     scope: Scope,
@@ -180,10 +181,10 @@ impl PaletteDelegate {
     fn nothing_to_search(&self) -> bool {
         self.scope == Scope::Items
             && !palette::searches_commands_only(&self.query)
-            && self
+            && !self
                 .entries
                 .iter()
-                .all(|entry| entry.target.group() == Group::Commands)
+                .any(|entry| entry.target.group().is_item())
     }
 }
 
@@ -313,6 +314,7 @@ fn leading(entry: &Entry, cx: &App) -> gpui::Div {
     let icon = match entry.target.group() {
         Group::Environments => Icon::new(LucideIcon::Layers),
         Group::Commands => Icon::new(IconName::ChevronRight),
+        Group::Settings => Icon::new(IconName::Settings),
         _ => Icon::new(IconName::Folder),
     };
     div()
@@ -334,6 +336,8 @@ fn accessibility_label(entry: &Entry) -> String {
             format!("{path}, environment")
         }
         Target::Command(_) => format!("{path}, command"),
+        Target::SettingsSection(_) => format!("{path}, settings page"),
+        Target::Setting(_) => format!("{path}, setting"),
     }
 }
 

@@ -2,7 +2,7 @@ use gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div};
 use gpui_component::{ActiveTheme, StyledExt, v_flex};
 
 use super::{group, page};
-use crate::{WINDOW_TITLE, ui::setting_row::SettingRow};
+use crate::{WINDOW_TITLE, domain::settings_index::SettingsGroup, ui::setting_row::SettingRow};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DESCRIPTION: &str = "A desktop client for composing, sending and saving HTTP requests.";
@@ -50,7 +50,7 @@ impl AboutPage {
 
     fn render_credits(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
-        group("about-credits", "Open source").children(CREDITS.iter().map(|credit| {
+        group(SettingsGroup::Credits).children(CREDITS.iter().map(|credit| {
             SettingRow::new(credit.name)
                 .description(credit.licence)
                 .control(div().text_sm().text_color(muted).child(credit.url))

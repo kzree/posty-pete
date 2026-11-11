@@ -369,6 +369,16 @@ impl Workspace {
                 environment_id,
             } => self.open_environments(collection_id, Some(environment_id), window, cx),
             Target::Command(command) => self.run_command(command, window, cx),
+            Target::SettingsSection(section) => {
+                self.navigate(AppRoute::Settings, window, cx);
+                self.settings_page
+                    .update(cx, |page, cx| page.show_section(section, window, cx));
+            }
+            Target::Setting(setting) => {
+                self.navigate(AppRoute::Settings, window, cx);
+                self.settings_page
+                    .update(cx, |page, cx| page.reveal(setting, cx));
+            }
         }
     }
 }

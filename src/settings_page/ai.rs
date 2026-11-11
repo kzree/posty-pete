@@ -1,12 +1,14 @@
-use gpui::{AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, px};
+use gpui::{
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, px,
+};
 use gpui_component::{
     Disableable, IndexPath,
     input::{Input, InputState},
     select::{Select, SelectState},
 };
 
-use super::{group, mcp::McpSettings, page, switch};
-use crate::ui::setting_row::SettingRow;
+use super::{Reveal, group, mcp::McpSettings, page, row, switch};
+use crate::domain::settings_index::{Setting, SettingsGroup};
 
 const PROVIDERS: [&str; 1] = ["Anthropic"];
 const MODELS: [&str; 3] = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
@@ -15,6 +17,7 @@ const DEFAULT_MODEL: usize = 1;
 type TextSelect = SelectState<Vec<&'static str>>;
 
 pub struct AiPage {
+    reveal: Entity<Reveal>,
     enabled: bool,
     provider: Entity<TextSelect>,
     api_key: Entity<InputState>,
@@ -25,8 +28,10 @@ pub struct AiPage {
 }
 
 impl AiPage {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(reveal: Entity<Reveal>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
+            mcp: cx.new(|cx| McpSettings::new(reveal.clone(), window, cx)),
+            reveal,
             enabled: false,
             provider: cx.new(|cx| select_state(&PROVIDERS, 0, window, cx)),
             api_key: cx.new(|cx| {
@@ -37,19 +42,17 @@ impl AiPage {
             model: cx.new(|cx| select_state(&MODELS, DEFAULT_MODEL, window, cx)),
             explain_responses: true,
             generate_requests: true,
-            mcp: cx.new(|cx| McpSettings::new(window, cx)),
         }
     }
 
     fn render_master(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        group("ai-general", "AI").child(
-            SettingRow::new("Enable AI features")
+        group(SettingsGroup::Ai).child(
+            row(&self.reveal, Setting::AiEnabled, cx)
                 .description(
                     "Requests and responses you use them with are sent to the provider below.",
                 )
                 .control(switch(
-                    "ai-enabled",
-                    "Enable AI features",
+                    Setting::AiEnabled,
                     self.enabled,
                     |this, on| this.enabled = on,
                     cx,
@@ -57,17 +60,18 @@ impl AiPage {
         )
     }
 
-    fn render_provider(&self) -> impl IntoElement {
-        group("ai-provider", "Provider")
+    fn render_provider(&self, cx: &App) -> impl IntoElement {
+        let reveal = &self.reveal;
+        group(SettingsGroup::Provider)
             .child(
-                SettingRow::new("Provider").control(
+                row(reveal, Setting::AiProvider, cx).control(
                     Select::new(&self.provider)
                         .accessibility_label("Provider")
                         .w(px(240.)),
                 ),
             )
             .child(
-                SettingRow::new("API key")
+                row(reveal, Setting::AiApiKey, cx)
                     .description("Not saved yet. It will be kept in the system keychain.")
                     .control(
                         Input::new(&self.api_key)
@@ -77,7 +81,7 @@ impl AiPage {
                     ),
             )
             .child(
-                SettingRow::new("Model").control(
+                row(reveal, Setting::AiModel, cx).control(
                     Select::new(&self.model)
                         .accessibility_label("Model")
                         .w(px(240.)),
@@ -87,15 +91,15 @@ impl AiPage {
 
     fn render_features(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let disabled = !self.enabled;
-        group("ai-features", "Features")
+        let reveal = &self.reveal;
+        group(SettingsGroup::Features)
             .footer("These features aren't available yet.")
             .child(
-                SettingRow::new("Explain responses")
+                row(reveal, Setting::ExplainResponses, cx)
                     .description("Summarize a response and point out errors.")
                     .control(
                         switch(
-                            "ai-explain-responses",
-                            "Explain responses",
+                            Setting::ExplainResponses,
                             self.explain_responses,
                             |this, on| this.explain_responses = on,
                             cx,
@@ -104,12 +108,11 @@ impl AiPage {
                     ),
             )
             .child(
-                SettingRow::new("Generate requests")
+                row(reveal, Setting::GenerateRequests, cx)
                     .description("Create a request from a description of what it should do.")
                     .control(
                         switch(
-                            "ai-generate-requests",
-                            "Generate requests",
+                            Setting::GenerateRequests,
                             self.generate_requests,
                             |this, on| this.generate_requests = on,
                             cx,
@@ -133,7 +136,7 @@ impl Render for AiPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         page()
             .child(self.render_master(cx))
-            .child(self.render_provider())
+            .child(self.render_provider(cx))
             .child(self.render_features(cx))
             .child(self.mcp.clone())
     }
