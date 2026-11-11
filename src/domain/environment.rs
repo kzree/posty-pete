@@ -89,6 +89,30 @@ pub fn rename(shared: &mut [Arc<Environment>], id: Uuid, name: impl Into<String>
         && modify(shared, id, |env| env.name = name)
 }
 
+/// Inserts a copy of the environment after it (see [`copy_of`]) and returns
+/// the copy's id, or `None` if there's no such environment.
+pub fn duplicate(shared: &mut Vec<Arc<Environment>>, id: Uuid) -> Option<Uuid> {
+    let index = shared.iter().position(|env| env.id == id)?;
+    let names = shared.iter().map(|env| env.name.as_str());
+    let copy = copy_of(&shared[index], names);
+    let copy_id = copy.id;
+    shared.insert(index + 1, Arc::new(copy));
+    Some(copy_id)
+}
+
+/// Everything of `environment` under a new id, named "<name> copy", numbered
+/// if that's in `taken`.
+pub(super) fn copy_of<'a>(
+    environment: &Environment,
+    taken: impl Iterator<Item = &'a str> + Clone,
+) -> Environment {
+    Environment {
+        id: Uuid::new_v4(),
+        name: unique_name(&format!("{} copy", environment.name), taken),
+        ..environment.clone()
+    }
+}
+
 /// Returns `false` if there's no such environment.
 pub fn delete(shared: &mut Vec<Arc<Environment>>, id: Uuid) -> bool {
     let before = shared.len();
@@ -184,6 +208,58 @@ mod tests {
         assert!(rename(&mut shared, id, "Prod"));
         assert_eq!(names(&shared), ["Prod"]);
         assert_eq!(names(&held), [NEW_ENVIRONMENT_NAME]);
+    }
+
+    #[test]
+    fn duplicate_inserts_a_numbered_copy_after_it() {
+        let mut shared = Vec::new();
+        let id = add(&mut shared);
+        rename(&mut shared, id, "Staging");
+        let mut disabled = variable("token", "t");
+        disabled.enabled = false;
+        let rows = vec![variable("host", "staging"), disabled];
+        set_variables(&mut shared, id, rows.clone());
+        let last = add(&mut shared);
+
+        let first_copy = duplicate(&mut shared, id).unwrap();
+        let second_copy = duplicate(&mut shared, id).unwrap();
+        assert_eq!(
+            names(&shared),
+            [
+                "Staging",
+                "Staging copy 2",
+                "Staging copy",
+                NEW_ENVIRONMENT_NAME
+            ]
+        );
+        assert_eq!(shared[3].id, last);
+        assert_eq!(shared[2].id, first_copy);
+        assert_eq!(shared[1].id, second_copy);
+        assert_ne!(first_copy, id);
+        assert_eq!(shared[2].variables, rows);
+        assert_eq!(shared[0].variables, rows);
+
+        assert!(set_variables(&mut shared, first_copy, Vec::new()));
+        assert_eq!(shared[0].variables, rows);
+        assert_eq!(duplicate(&mut shared, Uuid::new_v4()), None);
+        assert_eq!(shared.len(), 4);
+    }
+
+    #[test]
+    fn copy_of_keeps_the_base() {
+        let mut original = Environment::new("Local");
+        original.base = Some(Uuid::new_v4());
+        original.variables = vec![variable("host", "localhost")];
+        let copy = copy_of(&original, ["Local"].into_iter());
+        assert_eq!(
+            copy,
+            Environment {
+                id: copy.id,
+                name: "Local copy".into(),
+                ..original.clone()
+            }
+        );
+        assert_ne!(copy.id, original.id);
     }
 
     #[test]

@@ -124,6 +124,13 @@ impl SharedEnvironments {
         }
     }
 
+    pub fn duplicate(&mut self, id: Uuid, cx: &mut Context<Self>) -> Option<Uuid> {
+        let copy = environment::duplicate(&mut self.environments, id)?;
+        self.sort();
+        self.changed(copy, cx);
+        Some(copy)
+    }
+
     /// Collections with environments based on it are left to the caller.
     pub fn delete(&mut self, id: Uuid, cx: &mut Context<Self>) {
         if !environment::delete(&mut self.environments, id) {

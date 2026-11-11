@@ -65,6 +65,10 @@ pub enum CollectionViewEvent {
         environment_id: Uuid,
         name: String,
     },
+    DuplicateEnvironment {
+        collection_id: Uuid,
+        environment_id: Uuid,
+    },
     DeleteEnvironment {
         collection_id: Uuid,
         environment_id: Uuid,
@@ -277,6 +281,10 @@ impl CollectionView {
                     name,
                 }
             }
+            EnvironmentsEditorEvent::Duplicate(id) => CollectionViewEvent::DuplicateEnvironment {
+                collection_id,
+                environment_id: id,
+            },
             EnvironmentsEditorEvent::Delete(id) => CollectionViewEvent::DeleteEnvironment {
                 collection_id,
                 environment_id: id,

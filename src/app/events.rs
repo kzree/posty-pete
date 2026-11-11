@@ -179,6 +179,9 @@ impl Workspace {
                 self.shared_environments
                     .update(cx, |environments, cx| environments.rename(id, name, cx));
             }
+            LibraryPanelEvent::DuplicateSharedEnvironment(id) => {
+                self.duplicate_shared_environment(*id, window, cx)
+            }
             LibraryPanelEvent::DeleteSharedEnvironment(id) => {
                 self.delete_shared_environment(*id, cx)
             }
@@ -235,6 +238,10 @@ impl Workspace {
                     collections.rename_environment(collection_id, environment_id, name, cx)
                 });
             }
+            CollectionViewEvent::DuplicateEnvironment {
+                collection_id,
+                environment_id,
+            } => self.duplicate_environment(*collection_id, *environment_id, window, cx),
             CollectionViewEvent::DeleteEnvironment {
                 collection_id,
                 environment_id,
@@ -310,6 +317,9 @@ impl Workspace {
             EnvironmentsEditorEvent::Rename { id, name } => self
                 .shared_environments
                 .update(cx, |environments, cx| environments.rename(id, name, cx)),
+            EnvironmentsEditorEvent::Duplicate(id) => {
+                self.duplicate_shared_environment(id, window, cx)
+            }
             EnvironmentsEditorEvent::Delete(id) => self.delete_shared_environment(id, cx),
             EnvironmentsEditorEvent::SelectionChanged => self.sync_library_selection(window, cx),
             // The page has no "Use environment" and no bases.

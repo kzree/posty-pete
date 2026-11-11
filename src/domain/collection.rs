@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    environment::{self, Environment, NEW_ENVIRONMENT_NAME, unique_name},
+    environment::{self, Environment, NEW_ENVIRONMENT_NAME, copy_of, unique_name},
     request::{KeyValue, Request},
     variables::Variables,
 };
@@ -146,6 +146,30 @@ pub fn rename_environment(
         && modify_environment(collections, collection_id, environment_id, |environment| {
             environment.name = name;
         })
+}
+
+/// Inserts a copy of the environment after it, in the same collection (see
+/// [`environment::copy_of`]). Returns the copy's id, or `None`, changing (and
+/// copying) nothing, if there's no such environment.
+pub fn duplicate_environment(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+) -> Option<Uuid> {
+    find_environment(collections, collection_id, environment_id)?;
+    let mut id = None;
+    modify(collections, collection_id, |collection| {
+        let environments = &mut collection.environments;
+        let Some(index) = environments.iter().position(|env| env.id == environment_id) else {
+            return false;
+        };
+        let names = environments.iter().map(|env| env.name.as_str());
+        let copy = copy_of(&environments[index], names);
+        id = Some(copy.id);
+        environments.insert(index + 1, copy);
+        true
+    });
+    id
 }
 
 /// Returns `false` if there's no such environment.
@@ -1265,6 +1289,40 @@ mod tests {
             "Prod"
         );
         assert_eq!(held[0].environments[0].name, NEW_ENVIRONMENT_NAME);
+    }
+
+    #[test]
+    fn duplicate_environment_inserts_a_copy_after_it_with_the_same_base() {
+        let mut disabled = variable("token", "t");
+        disabled.enabled = false;
+        let rows = vec![variable("host", "staging"), disabled];
+        let (mut collections, collection_id, original) = with_environment(rows.clone());
+        let base = Uuid::new_v4();
+        set_environment_base(&mut collections, collection_id, original, Some(base));
+        let last = add_environment(&mut collections, collection_id).unwrap();
+        let held = collections.clone();
+
+        let copy = duplicate_environment(&mut collections, collection_id, original).unwrap();
+        let environments = &collections[0].environments;
+        let ids: Vec<_> = environments.iter().map(|env| env.id).collect();
+        assert_eq!(ids, [original, copy, last]);
+        let copied = &environments[1];
+        assert_eq!(copied.name, "New environment copy");
+        assert_eq!(copied.variables, rows);
+        assert_eq!(copied.base, Some(base));
+        assert_eq!(base_counts(&collections)[&base], 2);
+        assert_eq!(held[0].environments.len(), 2);
+
+        let again = duplicate_environment(&mut collections, collection_id, original).unwrap();
+        assert_eq!(
+            collections[0].environment(again).unwrap().name,
+            "New environment copy 2"
+        );
+
+        let held = collections.clone();
+        assert!(duplicate_environment(&mut collections, collection_id, Uuid::new_v4()).is_none());
+        assert!(duplicate_environment(&mut collections, Uuid::new_v4(), original).is_none());
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
     }
 
     #[test]

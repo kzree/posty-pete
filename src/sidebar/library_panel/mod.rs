@@ -63,6 +63,7 @@ pub enum LibraryPanelEvent {
         id: Uuid,
         name: String,
     },
+    DuplicateSharedEnvironment(Uuid),
     DeleteSharedEnvironment(Uuid),
 }
 

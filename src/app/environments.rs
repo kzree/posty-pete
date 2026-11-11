@@ -98,6 +98,24 @@ impl Workspace {
         }
     }
 
+    /// Selects the copy. A variables edit waiting for its save delay is saved
+    /// first, so the copy has it.
+    pub(super) fn duplicate_environment(
+        &mut self,
+        collection_id: Uuid,
+        environment_id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.flush_pending_variables(cx);
+        let id = self.collections.update(cx, |collections, cx| {
+            collections.duplicate_environment(collection_id, environment_id, cx)
+        });
+        if let Some(id) = id {
+            self.open_environments(collection_id, Some(id), window, cx);
+        }
+    }
+
     pub(super) fn delete_environment(
         &mut self,
         collection_id: Uuid,
@@ -236,6 +254,23 @@ impl Workspace {
         self.open_shared_environments(Some(id), window, cx);
         self.shared_environments_view
             .update(cx, |view, cx| view.focus_variables(window, cx));
+    }
+
+    /// Selects the copy, which nothing is based on. A variables edit waiting
+    /// for its save delay is saved first, so the copy has it.
+    pub(super) fn duplicate_shared_environment(
+        &mut self,
+        id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.flush_pending_variables(cx);
+        let copy = self
+            .shared_environments
+            .update(cx, |environments, cx| environments.duplicate(id, cx));
+        if let Some(copy) = copy {
+            self.open_shared_environments(Some(copy), window, cx);
+        }
     }
 
     /// Environments based on it keep their own values.

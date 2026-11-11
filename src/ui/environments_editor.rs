@@ -36,6 +36,7 @@ pub enum EnvironmentsEditorEvent {
         id: Uuid,
         name: String,
     },
+    Duplicate(Uuid),
     Delete(Uuid),
     /// `None` = no environment.
     Use(Option<Uuid>),
@@ -483,7 +484,7 @@ fn use_items(
 }
 
 fn edit_items(view: &WeakEntity<EnvironmentsEditor>, id: Uuid, menu: PopupMenu) -> PopupMenu {
-    let (rename_view, delete_view) = (view.clone(), view.clone());
+    let (rename_view, duplicate_view, delete_view) = (view.clone(), view.clone(), view.clone());
     menu.item(
         PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
             rename_view
@@ -491,6 +492,11 @@ fn edit_items(view: &WeakEntity<EnvironmentsEditor>, id: Uuid, menu: PopupMenu) 
                 .ok();
         }),
     )
+    .item(PopupMenuItem::new("Duplicate").on_click(move |_, _, cx| {
+        duplicate_view
+            .update(cx, |_, cx| cx.emit(EnvironmentsEditorEvent::Duplicate(id)))
+            .ok();
+    }))
     .item(
         PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
             delete_view

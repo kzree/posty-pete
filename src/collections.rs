@@ -234,6 +234,18 @@ impl Collections {
         }
     }
 
+    pub fn duplicate_environment(
+        &mut self,
+        collection_id: Uuid,
+        environment_id: Uuid,
+        cx: &mut Context<Self>,
+    ) -> Option<Uuid> {
+        let collections = &mut self.collections;
+        let id = collection::duplicate_environment(collections, collection_id, environment_id)?;
+        self.changed(collection_id, cx);
+        Some(id)
+    }
+
     pub fn delete_environment(
         &mut self,
         collection_id: Uuid,

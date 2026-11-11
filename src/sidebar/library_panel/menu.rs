@@ -209,7 +209,8 @@ fn clear_right_click_on_dismiss(
 }
 
 fn environment_menu(panel: &WeakEntity<LibraryPanel>, id: Uuid, menu: PopupMenu) -> PopupMenu {
-    let (rename_panel, delete_panel) = (panel.clone(), panel.clone());
+    let (rename_panel, duplicate_panel, delete_panel) =
+        (panel.clone(), panel.clone(), panel.clone());
     menu.item(
         PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
             rename_panel
@@ -217,6 +218,13 @@ fn environment_menu(panel: &WeakEntity<LibraryPanel>, id: Uuid, menu: PopupMenu)
                 .ok();
         }),
     )
+    .item(PopupMenuItem::new("Duplicate").on_click(move |_, _, cx| {
+        duplicate_panel
+            .update(cx, |_, cx| {
+                cx.emit(LibraryPanelEvent::DuplicateSharedEnvironment(id))
+            })
+            .ok();
+    }))
     .item(
         PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
             delete_panel
