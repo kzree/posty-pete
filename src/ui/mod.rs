@@ -1,5 +1,6 @@
 pub mod auto_saved_variables;
 pub mod clipboard;
+pub mod color_swatches;
 pub mod confirm_dialog;
 pub mod environments_editor;
 pub mod key_value_editor;

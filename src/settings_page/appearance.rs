@@ -1,4 +1,6 @@
-use gpui::{AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, px};
+use gpui::{
+    AppContext, Context, Entity, Hsla, IntoElement, ParentElement, Render, Styled, Window, px, rgb,
+};
 use gpui_component::{
     ActiveTheme,
     input::{Input, InputState, NumberInput},
@@ -6,7 +8,8 @@ use gpui_component::{
 };
 
 use super::{group, number_state, page, switch};
-use crate::ui::setting_row::SettingRow;
+use crate::domain::accent::Accent;
+use crate::ui::{color_swatches::ColorSwatches, setting_row::SettingRow};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ThemeChoice {
@@ -29,6 +32,7 @@ impl ThemeChoice {
 
 pub struct AppearancePage {
     theme: ThemeChoice,
+    accent: Accent,
     ui_font_size: Entity<InputState>,
     editor_font_family: Entity<InputState>,
     editor_font_size: Entity<InputState>,
@@ -44,6 +48,7 @@ impl AppearancePage {
         Self {
             // The app always starts in dark mode for now.
             theme: ThemeChoice::Dark,
+            accent: Accent::default(),
             ui_font_size: cx.new(|cx| number_state(ui_font_size, 10, 24, window, cx)),
             editor_font_family: cx
                 .new(|cx| InputState::new(window, cx).default_value(editor_font_family)),
@@ -62,6 +67,28 @@ impl AppearancePage {
                 cx.notify();
             }))
     }
+
+    fn render_accent(&self, cx: &mut Context<Self>) -> ColorSwatches {
+        let selected = Accent::ALL.iter().position(|a| *a == self.accent);
+        Accent::ALL
+            .into_iter()
+            .fold(
+                ColorSwatches::new("accent", "Accent colour"),
+                |swatches, accent| swatches.swatch(accent.name(), accent_color(accent, cx)),
+            )
+            .selected_index(selected)
+            .on_change(cx.listener(|this, index: &usize, _, cx| {
+                this.accent = Accent::ALL[*index];
+                cx.notify();
+            }))
+    }
+}
+
+/// Monochrome follows the theme's primary, which is near-black in light mode and near-white in dark.
+fn accent_color(accent: Accent, cx: &Context<AppearancePage>) -> Hsla {
+    accent
+        .hex()
+        .map_or(cx.theme().primary, |hex| rgb(hex).into())
 }
 
 impl Render for AppearancePage {
@@ -70,6 +97,7 @@ impl Render for AppearancePage {
             .child(
                 group("appearance-interface", "Interface")
                     .child(SettingRow::new("Theme").control(self.render_theme(cx)))
+                    .child(SettingRow::new("Accent colour").control(self.render_accent(cx)))
                     .child(
                         SettingRow::new("Font size").control(
                             NumberInput::new(&self.ui_font_size)
