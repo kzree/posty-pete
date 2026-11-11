@@ -26,6 +26,13 @@ pub(super) enum Row {
     },
 }
 
+impl Row {
+    /// Placeholder rows are skipped by the arrow keys.
+    pub(super) fn is_selectable(&self) -> bool {
+        !matches!(self, Row::Empty(_))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Section {
     Collections,

@@ -1,5 +1,6 @@
 mod delegate;
 mod menu;
+mod navigation;
 mod tree;
 
 use std::{collections::HashMap, sync::Arc};
@@ -19,9 +20,13 @@ use gpui_kit_assets::IconName as LucideIcon;
 use uuid::Uuid;
 
 use super::panel_header;
-use crate::domain::{collection::Collection, environment::Environment};
+use crate::{
+    actions::{LIBRARY_PANEL_CONTEXT, SelectNextLibraryRow, SelectPreviousLibraryRow},
+    domain::{collection::Collection, environment::Environment},
+};
 use delegate::LibraryDelegate;
 use menu::context_menu;
+use navigation::Direction;
 use tree::Section;
 
 pub enum LibraryPanelEvent {
@@ -211,6 +216,19 @@ impl LibraryPanel {
         cx.emit(LibraryPanelEvent::CreateSharedEnvironment);
     }
 
+    fn select_step(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
+        self.list.update(cx, |list, cx| {
+            let current = list.selected_index().map(|ix| ix.row);
+            let Some(row) = list.delegate().step(current, direction) else {
+                return;
+            };
+            let ix = IndexPath::new(row);
+            list.set_selected_index(Some(ix), window, cx);
+            list.scroll_to_selected_item(window, cx);
+            cx.emit(ListEvent::Select(ix));
+        });
+    }
+
     fn sync_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.list.update(cx, |list, cx| {
             let delegate = list.delegate();
@@ -279,16 +297,28 @@ impl Render for LibraryPanel {
         }
         let panel = cx.weak_entity();
         let list = self.list.downgrade();
-        v_flex().size_full().child(self.render_header(cx)).child(
-            div()
-                .id("library-list")
-                .flex_1()
-                .min_h_0()
-                .child(List::new(&self.list).size_full())
-                .context_menu(move |menu, window, cx| {
-                    context_menu(&panel, &list, menu, window, cx)
+        v_flex()
+            .key_context(LIBRARY_PANEL_CONTEXT)
+            .on_action(
+                cx.listener(|this, _: &SelectPreviousLibraryRow, window, cx| {
+                    this.select_step(Direction::Up, window, cx)
                 }),
-        )
+            )
+            .on_action(cx.listener(|this, _: &SelectNextLibraryRow, window, cx| {
+                this.select_step(Direction::Down, window, cx)
+            }))
+            .size_full()
+            .child(self.render_header(cx))
+            .child(
+                div()
+                    .id("library-list")
+                    .flex_1()
+                    .min_h_0()
+                    .child(List::new(&self.list).size_full())
+                    .context_menu(move |menu, window, cx| {
+                        context_menu(&panel, &list, menu, window, cx)
+                    }),
+            )
     }
 }
 

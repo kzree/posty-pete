@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use super::{
     menu::MenuTarget,
+    navigation::{Direction, step},
     tree::{Node, NodeKind, Row, Section, Sections, container_ids, flatten},
 };
 use crate::{
@@ -147,6 +148,13 @@ impl LibraryDelegate {
             Row::Node(node) => node.id == id,
             Row::Environment { id: env_id, .. } => *env_id == id,
             Row::Section { .. } | Row::Empty(_) => false,
+        })
+    }
+
+    /// The row the arrow keys move to from `current`.
+    pub(super) fn step(&self, current: Option<usize>, direction: Direction) -> Option<usize> {
+        step(self.rows.len(), current, direction, |row| {
+            self.rows[row].is_selectable()
         })
     }
 
@@ -507,6 +515,20 @@ mod tests {
 
         delegate.expand_section(Section::Environments);
         assert_eq!(delegate.row_of(staging), Some(5));
+    }
+
+    #[test]
+    fn arrow_keys_skip_empty_rows() {
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(Vec::new());
+        assert_eq!(delegate.step(Some(0), Direction::Down), Some(2));
+        assert_eq!(delegate.step(Some(2), Direction::Down), Some(0));
+        assert_eq!(delegate.step(Some(0), Direction::Up), Some(2));
+        assert_eq!(delegate.step(None, Direction::Up), Some(2));
+
+        delegate.set_environments(environments());
+        assert_eq!(delegate.step(Some(2), Direction::Down), Some(3));
+        assert_eq!(delegate.step(Some(4), Direction::Down), Some(0));
     }
 
     #[test]

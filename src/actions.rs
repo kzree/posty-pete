@@ -24,6 +24,8 @@ actions!(
         OpenCommandPalette,
         DeleteHistoryEntry,
         SendHistoryEntryAgain,
+        SelectPreviousLibraryRow,
+        SelectNextLibraryRow,
         FormatJsonBody,
         Quit,
         Hide,
@@ -63,6 +65,9 @@ pub const HISTORY_PANEL_CONTEXT: &str = "HistoryPanel";
 pub const BODY_EDITOR_CONTEXT: &str = "BodyEditor";
 /// Outranks the list's own cmd-enter (`Confirm { secondary: true }`).
 const HISTORY_LIST_CONTEXT: &str = "HistoryPanel > List";
+pub const LIBRARY_PANEL_CONTEXT: &str = "LibraryPanel";
+/// Outranks the list's own up/down, which stop on placeholder rows.
+const LIBRARY_LIST_CONTEXT: &str = "LibraryPanel > List";
 const INPUT_CONTEXT: &str = "Input";
 
 // gpui-pre 0.3.11's `KeyBinding::new` can't parse "secondary-".
@@ -176,6 +181,10 @@ pub fn bind_keys(cx: &mut App) {
         [HISTORY_PANEL_CONTEXT, HISTORY_LIST_CONTEXT]
             .map(|context| KeyBinding::new(keys::SEND, SendHistoryEntryAgain, Some(context))),
     );
+    cx.bind_keys([
+        KeyBinding::new("up", SelectPreviousLibraryRow, Some(LIBRARY_LIST_CONTEXT)),
+        KeyBinding::new("down", SelectNextLibraryRow, Some(LIBRARY_LIST_CONTEXT)),
+    ]);
 }
 
 #[cfg(test)]
