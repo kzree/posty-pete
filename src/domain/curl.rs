@@ -76,7 +76,7 @@ fn quote(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::{Auth, Body, KeyValue, RawKind};
+    use crate::domain::request::{ApiKeyLocation, Auth, Body, KeyValue, RawKind};
 
     fn kv(key: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -172,6 +172,31 @@ mod tests {
             password: "p'q".into(),
         };
         assert!(to_curl(&request).contains("-u 'u:p'\\''q'"));
+    }
+
+    #[test]
+    fn api_key_goes_where_its_location_says() {
+        let mut request = get("https://example.com/a?lang=en");
+        request.params = vec![kv("q", "1")];
+        request.auth = Auth::ApiKey {
+            key: "api_key".into(),
+            value: "a b".into(),
+            location: ApiKeyLocation::Query,
+        };
+        assert_eq!(
+            to_curl(&request),
+            "curl \\\n  'https://example.com/a?lang=en&q=1&api_key=a+b'"
+        );
+
+        request.auth = Auth::ApiKey {
+            key: "X-Key".into(),
+            value: "v".into(),
+            location: ApiKeyLocation::Header,
+        };
+        assert_eq!(
+            to_curl(&request),
+            "curl \\\n  'https://example.com/a?lang=en&q=1' \\\n  -H 'X-Key: v'"
+        );
     }
 
     #[test]

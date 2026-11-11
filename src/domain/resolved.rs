@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use super::{
-    request::{Auth, Body, HttpMethod, KeyValue, Request},
+    request::{ApiKeyLocation, Auth, Body, HttpMethod, KeyValue, Request},
     url_scheme::with_default_scheme,
 };
 
@@ -37,10 +37,18 @@ impl Request {
             .collect();
         let sends_auth = self.sends_auth();
 
-        if let Auth::ApiKey { key, value } = &self.auth
+        let mut query: Vec<(&str, &str)> = active(&self.params).collect();
+        if let Auth::ApiKey {
+            key,
+            value,
+            location,
+        } = &self.auth
             && sends_auth
         {
-            headers.push((key, Cow::Borrowed(value)));
+            match location {
+                ApiKeyLocation::Header => headers.push((key, Cow::Borrowed(value))),
+                ApiKeyLocation::Query => query.push((key, value)),
+            }
         }
         if let Body::Raw { kind, .. } = &self.body
             && !headers
@@ -64,7 +72,7 @@ impl Request {
         ResolvedRequest {
             method: self.method,
             url: with_default_scheme(&self.url),
-            query: active(&self.params).collect(),
+            query,
             headers,
             basic_auth,
             body: match &self.body {
@@ -83,8 +91,8 @@ impl Request {
                 && header.key.eq_ignore_ascii_case("content-type"))
     }
 
-    /// Whether `resolve` sends anything from the auth tab. A header the user
-    /// set takes precedence over it.
+    /// Whether `resolve` sends anything from the auth tab. A header (or, for
+    /// an API key in the query, a param) the user set takes precedence over it.
     pub(super) fn sends_auth(&self) -> bool {
         let has_header = |name: &str| {
             self.headers
@@ -93,7 +101,16 @@ impl Request {
         };
         match &self.auth {
             Auth::None => false,
-            Auth::ApiKey { key, .. } => !key.is_empty() && !has_header(key),
+            Auth::ApiKey { key, location, .. } => {
+                !key.is_empty()
+                    && match location {
+                        ApiKeyLocation::Header => !has_header(key),
+                        ApiKeyLocation::Query => !self
+                            .params
+                            .iter()
+                            .any(|param| is_active(param) && param.key == *key),
+                    }
+            }
             Auth::Basic { username, password } => {
                 !has_header("authorization") && !(username.is_empty() && password.is_empty())
             }
@@ -223,8 +240,10 @@ mod tests {
         request.auth = Auth::ApiKey {
             key: "X-Key".into(),
             value: "secret".into(),
+            location: ApiKeyLocation::Header,
         };
         assert_eq!(headers(&request), pairs(&[("X-Key", "secret")]));
+        assert!(request.resolve().query.is_empty());
 
         request.headers = vec![kv("x-key", "mine")];
         assert_eq!(headers(&request), pairs(&[("x-key", "mine")]));
@@ -233,8 +252,51 @@ mod tests {
         request.auth = Auth::ApiKey {
             key: String::new(),
             value: "secret".into(),
+            location: ApiKeyLocation::Header,
         };
         assert!(headers(&request).is_empty());
+    }
+
+    #[test]
+    fn api_key_in_query_is_appended_unless_param_exists() {
+        let mut request = get("example.com/a");
+        request.params = vec![kv("q", "1")];
+        request.headers = vec![kv("api_key", "header")];
+        request.auth = Auth::ApiKey {
+            key: "api_key".into(),
+            value: "secret".into(),
+            location: ApiKeyLocation::Query,
+        };
+        let resolved = request.resolve();
+        assert_eq!(resolved.url, "https://example.com/a");
+        assert_eq!(resolved.query, vec![("q", "1"), ("api_key", "secret")]);
+        assert_eq!(headers(&request), pairs(&[("api_key", "header")]));
+
+        request.params.push(kv("api_key", "mine"));
+        assert_eq!(
+            request.resolve().query,
+            vec![("q", "1"), ("api_key", "mine")]
+        );
+
+        request.params[1] = disabled("api_key", "mine");
+        assert_eq!(
+            request.resolve().query,
+            vec![("q", "1"), ("api_key", "secret")]
+        );
+
+        request.params[1] = kv("API_KEY", "other");
+        assert_eq!(
+            request.resolve().query,
+            vec![("q", "1"), ("API_KEY", "other"), ("api_key", "secret")]
+        );
+
+        request.params.truncate(1);
+        request.auth = Auth::ApiKey {
+            key: String::new(),
+            value: "secret".into(),
+            location: ApiKeyLocation::Query,
+        };
+        assert_eq!(request.resolve().query, vec![("q", "1")]);
     }
 
     #[test]

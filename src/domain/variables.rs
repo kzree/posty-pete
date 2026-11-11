@@ -136,9 +136,14 @@ impl Substitution<'_> {
     fn auth(&self, auth: &Auth) -> Auth {
         match auth {
             Auth::None => Auth::None,
-            Auth::ApiKey { key, value } => Auth::ApiKey {
+            Auth::ApiKey {
+                key,
+                value,
+                location,
+            } => Auth::ApiKey {
                 key: self.text(key),
                 value: self.text(value),
+                location: *location,
             },
             Auth::Basic { username, password } => Auth::Basic {
                 username: self.text(username),
@@ -217,7 +222,7 @@ impl Request {
         if substituted.sends_auth() {
             match &self.auth {
                 Auth::None => {}
-                Auth::ApiKey { key, value } => texts.extend([key.as_str(), value]),
+                Auth::ApiKey { key, value, .. } => texts.extend([key.as_str(), value]),
                 Auth::Basic { username, password } => texts.extend([username.as_str(), password]),
                 Auth::Bearer { token } => texts.push(token),
             }
@@ -234,7 +239,7 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::{HttpMethod, RawKind};
+    use crate::domain::request::{ApiKeyLocation, HttpMethod, RawKind};
 
     fn row(enabled: bool, key: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -466,6 +471,7 @@ mod tests {
             auth: Auth::ApiKey {
                 key: "{{ak}}".into(),
                 value: "{{av}}".into(),
+                location: ApiKeyLocation::Query,
             },
         }
     }
@@ -493,6 +499,7 @@ mod tests {
                 auth: Auth::ApiKey {
                     key: "AK".into(),
                     value: "AV".into(),
+                    location: ApiKeyLocation::Query,
                 },
             }
         );
@@ -629,6 +636,7 @@ mod tests {
             auth: Auth::ApiKey {
                 key: "{{key}}".into(),
                 value: "{{value}}".into(),
+                location: ApiKeyLocation::Header,
             },
             ..Request::default()
         };
@@ -644,6 +652,26 @@ mod tests {
         assert!(
             api_key
                 .unresolved_variables(&vars(&[("key", "")]))
+                .is_empty()
+        );
+
+        let query_key = Request {
+            params: vec![row(true, "api_key", "mine")],
+            headers: vec![row(true, "X-Key", "mine")],
+            auth: Auth::ApiKey {
+                key: "{{key}}".into(),
+                value: "{{value}}".into(),
+                location: ApiKeyLocation::Query,
+            },
+            ..Request::default()
+        };
+        assert_eq!(
+            query_key.unresolved_variables(&vars(&[("key", "X-Key")])),
+            ["value"]
+        );
+        assert!(
+            query_key
+                .unresolved_variables(&vars(&[("key", "api_key")]))
                 .is_empty()
         );
     }

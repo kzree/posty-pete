@@ -14,10 +14,11 @@ pub struct Request {
 pub enum Auth {
     #[default]
     None,
-    /// Sent as a header (`key: value`).
     ApiKey {
         key: String,
         value: String,
+        #[serde(default, skip_serializing_if = "ApiKeyLocation::is_header")]
+        location: ApiKeyLocation,
     },
     Basic {
         username: String,
@@ -26,6 +27,29 @@ pub enum Auth {
     Bearer {
         token: String,
     },
+}
+
+/// Where an API key is sent: as a `key: value` header or a `key=value` query param.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApiKeyLocation {
+    #[default]
+    Header,
+    Query,
+}
+
+impl ApiKeyLocation {
+    pub const ALL: [ApiKeyLocation; 2] = [Self::Header, Self::Query];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Header => "Header",
+            Self::Query => "Query params",
+        }
+    }
+
+    fn is_header(&self) -> bool {
+        *self == Self::Header
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,6 +162,8 @@ mod tests {
          "headers": [], "body": "None", "auth": "None"},
         {"method": "Post", "url": "", "params": [], "headers": [{"enabled": false, "key": "A", "value": "b"}],
          "body": {"Raw": {"kind": "Json", "text": "{}"}}, "auth": {"ApiKey": {"key": "X-Key", "value": "v"}}},
+        {"method": "Post", "url": "", "params": [], "headers": [],
+         "body": "None", "auth": {"ApiKey": {"key": "api_key", "value": "v", "location": "Query"}}},
         {"method": "Put", "url": "", "params": [], "headers": [],
          "body": {"Raw": {"kind": "Text", "text": "hi"}}, "auth": {"Basic": {"username": "u", "password": "p"}}},
         {"method": "Patch", "url": "", "params": [], "headers": [],
@@ -168,8 +194,23 @@ mod tests {
     #[test]
     fn stored_format_is_stable() {
         let requests: Vec<Request> = serde_json::from_str(STORED_FORMAT).unwrap();
-        let methods: Vec<_> = requests.iter().map(|r| r.method).collect();
+        let mut methods: Vec<_> = requests.iter().map(|r| r.method).collect();
+        methods.dedup();
         assert_eq!(methods, HttpMethod::ALL);
+        assert!(matches!(
+            requests[1].auth,
+            Auth::ApiKey {
+                location: ApiKeyLocation::Header,
+                ..
+            }
+        ));
+        assert!(matches!(
+            requests[2].auth,
+            Auth::ApiKey {
+                location: ApiKeyLocation::Query,
+                ..
+            }
+        ));
 
         let expected: serde_json::Value = serde_json::from_str(STORED_FORMAT).unwrap();
         assert_eq!(serde_json::to_value(&requests).unwrap(), expected);

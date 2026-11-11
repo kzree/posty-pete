@@ -9,11 +9,12 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     searchable_list::SearchableListItem,
     select::{Select, SelectEvent, SelectState},
+    tab::TabBar,
     v_flex,
 };
 
 use super::Edited;
-use crate::domain::request::Auth;
+use crate::domain::request::{ApiKeyLocation, Auth};
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum AuthKind {
@@ -57,6 +58,7 @@ pub struct AuthEditor {
     kind_select: Entity<SelectState<Vec<AuthKindItem>>>,
     api_key_name: Entity<InputState>,
     api_key_value: Entity<InputState>,
+    api_key_location: ApiKeyLocation,
     username: Entity<InputState>,
     password: Entity<InputState>,
     token: Entity<InputState>,
@@ -70,7 +72,7 @@ impl AuthEditor {
         let items = AuthKind::ALL.into_iter().map(AuthKindItem).collect();
         let kind_select = cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
 
-        let api_key_name = cx.new(|cx| InputState::new(window, cx).placeholder("X-API-Key"));
+        let api_key_name = cx.new(|cx| InputState::new(window, cx).placeholder("Key"));
         let api_key_value = cx.new(|cx| InputState::new(window, cx).placeholder("Value"));
         let username = cx.new(|cx| InputState::new(window, cx).placeholder("Username"));
         let password = cx.new(|cx| {
@@ -108,6 +110,7 @@ impl AuthEditor {
             kind_select,
             api_key_name,
             api_key_value,
+            api_key_location: ApiKeyLocation::default(),
             username,
             password,
             token,
@@ -120,7 +123,9 @@ impl AuthEditor {
         let empty = String::new();
         let (kind, api_key_name, api_key_value, username, password, token) = match auth {
             Auth::None => (AuthKind::None, &empty, &empty, &empty, &empty, &empty),
-            Auth::ApiKey { key, value } => (AuthKind::ApiKey, key, value, &empty, &empty, &empty),
+            Auth::ApiKey { key, value, .. } => {
+                (AuthKind::ApiKey, key, value, &empty, &empty, &empty)
+            }
             Auth::Basic { username, password } => {
                 (AuthKind::Basic, &empty, &empty, username, password, &empty)
             }
@@ -137,6 +142,10 @@ impl AuthEditor {
             input.update(cx, |input, cx| input.set_value(text.clone(), window, cx));
         }
 
+        self.api_key_location = match auth {
+            Auth::ApiKey { location, .. } => *location,
+            _ => ApiKeyLocation::default(),
+        };
         self.kind = kind;
         self.kind_select.update(cx, |select, cx| {
             select.set_selected_value(&kind, window, cx)
@@ -151,6 +160,7 @@ impl AuthEditor {
             AuthKind::ApiKey => Auth::ApiKey {
                 key: text(&self.api_key_name),
                 value: text(&self.api_key_value),
+                location: self.api_key_location,
             },
             AuthKind::Basic => Auth::Basic {
                 username: text(&self.username),
@@ -193,6 +203,30 @@ impl Render for AuthEditor {
                     field()
                         .label("Value")
                         .child(Input::new(&self.api_key_value).small()),
+                )
+                .child(
+                    field().label("Add to").child(
+                        h_flex().child(
+                            TabBar::new("api-key-location")
+                                .segmented()
+                                .small()
+                                .selected_index(
+                                    ApiKeyLocation::ALL
+                                        .iter()
+                                        .position(|l| *l == self.api_key_location)
+                                        .unwrap_or_default(),
+                                )
+                                .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                                    let location = ApiKeyLocation::ALL[*ix];
+                                    if location != this.api_key_location {
+                                        this.api_key_location = location;
+                                        cx.emit(Edited);
+                                        cx.notify();
+                                    }
+                                }))
+                                .children(ApiKeyLocation::ALL.map(ApiKeyLocation::label)),
+                        ),
+                    ),
                 )
                 .into_any_element(),
             AuthKind::Basic => v_form()
