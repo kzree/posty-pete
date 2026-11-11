@@ -1,32 +1,27 @@
+use std::time::Duration;
+
 use gpui::{App, Entity, Task, Window};
-use uuid::Uuid;
 
 use crate::{domain::request::KeyValue, ui::key_value_editor::KeyValueEditor};
 
-/// The stored variables an editor edits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VariableSet {
-    Collection(Uuid),
-    Environment {
-        collection_id: Uuid,
-        environment_id: Uuid,
-    },
-}
+/// How long after the last edit variables are saved.
+pub const SAVE_DELAY: Duration = Duration::from_millis(500);
 
 /// A variables editor that saves after a delay. Edits are emitted by the
 /// view; this tracks what's pending and keeps reloads from clobbering typing.
-pub(super) struct AutoSavedVariables {
+/// `K` identifies the stored variables the editor holds.
+pub struct AutoSavedVariables<K> {
     editor: Entity<KeyValueEditor>,
     /// The set the editor holds; `None` while it isn't shown.
-    set: Option<VariableSet>,
+    set: Option<K>,
     /// The stored variables the editor was loaded with or last emitted.
     synced: Vec<KeyValue>,
     /// Set from an edit until it's emitted.
     save: Option<Task<()>>,
 }
 
-impl AutoSavedVariables {
-    pub(super) fn new(editor: Entity<KeyValueEditor>) -> Self {
+impl<K: Copy + PartialEq> AutoSavedVariables<K> {
+    pub fn new(editor: Entity<KeyValueEditor>) -> Self {
         Self {
             editor,
             set: None,
@@ -35,24 +30,18 @@ impl AutoSavedVariables {
         }
     }
 
-    pub(super) fn editor(&self) -> &Entity<KeyValueEditor> {
+    pub fn editor(&self) -> &Entity<KeyValueEditor> {
         &self.editor
     }
 
-    pub(super) fn set(&self) -> Option<VariableSet> {
+    pub fn set(&self) -> Option<K> {
         self.set
     }
 
     /// Loads `stored` for `set`. While the same set is being edited, the
     /// editor wins; its next save catches up. Take the pending edit before
     /// switching sets, or it's lost.
-    pub(super) fn load(
-        &mut self,
-        set: Option<VariableSet>,
-        stored: &[KeyValue],
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    pub fn load(&mut self, set: Option<K>, stored: &[KeyValue], window: &mut Window, cx: &mut App) {
         let same_set = self.set == set;
         if !same_set {
             self.save = None;
@@ -66,12 +55,12 @@ impl AutoSavedVariables {
     }
 
     /// Replaces the timer of an earlier edit.
-    pub(super) fn schedule(&mut self, save: Task<()>) {
+    pub fn schedule(&mut self, save: Task<()>) {
         self.save = Some(save);
     }
 
     /// Takes the edit waiting for its save delay. `None` if nothing changed.
-    pub(super) fn take_pending(&mut self, cx: &App) -> Option<(VariableSet, Vec<KeyValue>)> {
+    pub fn take_pending(&mut self, cx: &App) -> Option<(K, Vec<KeyValue>)> {
         drop(self.save.take()?);
         let set = self.set?;
         let variables = self.editor.read(cx).values(cx);

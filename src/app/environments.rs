@@ -3,7 +3,10 @@ use uuid::Uuid;
 
 use super::{Workspace, routes::AppRoute};
 use crate::{
-    domain::environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
+    domain::{
+        collection,
+        environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
+    },
     environment_picker::{EnvironmentPicker, EnvironmentPickerAction},
 };
 
@@ -129,7 +132,7 @@ impl Workspace {
             AppRoute::Request => MenuScope::Draft,
             AppRoute::SavedRequest { collection_id, .. } => MenuScope::Collection(collection_id),
             AppRoute::Collection(id) => MenuScope::Collection(id),
-            AppRoute::Settings => return None,
+            AppRoute::Settings | AppRoute::SharedEnvironments => return None,
         };
         let menu = self.environment_menu(scope, cx)?;
         Some(EnvironmentPicker::new(
@@ -189,9 +192,63 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Shared environments loaded or changed: the hint and the picker may
-    /// read differently, and a deleted draft source is dropped on save.
-    pub(super) fn shared_environments_changed(&mut self, cx: &mut Context<Self>) {
+    /// Opens the shared environments page, with `environment_id` selected if given.
+    pub(super) fn open_shared_environments(
+        &mut self,
+        environment_id: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current_route() == AppRoute::SharedEnvironments {
+            self.refresh_shared_environments_view(window, cx);
+        } else {
+            self.navigate(AppRoute::SharedEnvironments, window, cx);
+        }
+        if let Some(id) = environment_id {
+            self.shared_environments_view
+                .update(cx, |view, cx| view.select(id, window, cx));
+        }
+    }
+
+    pub(super) fn add_shared_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self
+            .shared_environments
+            .update(cx, |environments, cx| environments.add(cx));
+        self.open_shared_environments(Some(id), window, cx);
+        self.shared_environments_view
+            .update(cx, |view, cx| view.focus_variables(window, cx));
+    }
+
+    /// Environments based on it keep their own values.
+    pub(super) fn delete_shared_environment(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.shared_environments
+            .update(cx, |environments, cx| environments.delete(id, cx));
+        self.collections
+            .update(cx, |collections, cx| collections.unlink_base(id, cx));
+    }
+
+    /// Brings the shared environments page in line with the stored
+    /// environments and the collections based on them.
+    pub(super) fn refresh_shared_environments_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let environments = self.shared_environments.read(cx).all().to_vec();
+        let linked = collection::base_counts(self.collections.read(cx).all());
+        self.shared_environments_view
+            .update(cx, |view, cx| view.show(&environments, linked, window, cx));
+    }
+
+    /// Shared environments loaded or changed: the page, the hint and the
+    /// picker may read differently, and a deleted draft source is dropped on
+    /// save.
+    pub(super) fn shared_environments_changed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_shared_environments_view(window, cx);
         let request = self.request_editor.read(cx).build_request(cx);
         self.sync_unresolved_variables(&request, cx);
         self.schedule_navigation_save(cx);

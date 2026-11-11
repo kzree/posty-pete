@@ -10,6 +10,7 @@ use crate::{
     quick_open::QuickOpenEvent,
     request_editor::RequestEditorEvent,
     sidebar::{history_panel::HistoryPanelEvent, library_panel::LibraryPanelEvent},
+    ui::environments_editor::EnvironmentsEditorEvent,
 };
 
 impl Workspace {
@@ -82,6 +83,7 @@ impl Workspace {
             self.sync_editor_name(window, cx);
         }
         self.refresh_collection_view(window, cx);
+        self.refresh_shared_environments_view(window, cx);
         self.refresh_dirty(window, cx);
         self.sync_window_title(window, cx);
         self.schedule_navigation_save(cx);
@@ -223,17 +225,47 @@ impl Workspace {
         });
     }
 
-    /// Saves the variables edits still waiting for their save delay. Returns
-    /// whether there were any.
-    pub(super) fn flush_collection_variables(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Saves the collection and shared environment variables edits still
+    /// waiting for their save delay. Returns whether there were any.
+    pub(super) fn flush_pending_variables(&mut self, cx: &mut Context<Self>) -> bool {
         let pending = self
             .collection_view
             .update(cx, |view, cx| view.take_pending_variables(cx));
-        let flushed = !pending.is_empty();
+        let shared = self
+            .shared_environments_view
+            .update(cx, |view, cx| view.take_pending_variables(cx));
+        let flushed = !pending.is_empty() || shared.is_some();
         for (set, variables) in pending {
             self.save_variables(set, variables, cx);
         }
+        if let Some((id, variables)) = shared {
+            self.shared_environments.update(cx, |environments, cx| {
+                environments.set_variables(id, variables, cx)
+            });
+        }
         flushed
+    }
+
+    pub(super) fn on_shared_environments_view_event(
+        &mut self,
+        event: &EnvironmentsEditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.clone() {
+            EnvironmentsEditorEvent::Add => self.add_shared_environment(window, cx),
+            EnvironmentsEditorEvent::Rename { id, name } => self
+                .shared_environments
+                .update(cx, |environments, cx| environments.rename(id, name, cx)),
+            EnvironmentsEditorEvent::Delete(id) => self.delete_shared_environment(id, cx),
+            // The page has no "Use environment".
+            EnvironmentsEditorEvent::Use(_) => {}
+            EnvironmentsEditorEvent::VariablesChanged { id, variables } => {
+                self.shared_environments.update(cx, |environments, cx| {
+                    environments.set_variables(id, variables, cx)
+                })
+            }
+        }
     }
 
     pub(super) fn on_history_panel_event(

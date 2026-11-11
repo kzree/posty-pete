@@ -36,6 +36,7 @@ use crate::{
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},
     shared_environments::{SharedEnvironments, SharedEnvironmentsEvent},
+    shared_environments_view::SharedEnvironmentsView,
     sidebar::{Sidebar, SidebarTab, history_panel::HistoryPanel, library_panel::LibraryPanel},
     status_bar::StatusBar,
     ui::loading_bar::LoadingBar,
@@ -85,6 +86,7 @@ pub struct Workspace {
     history_panel: Entity<HistoryPanel>,
     library_panel: Entity<LibraryPanel>,
     collection_view: Entity<CollectionView>,
+    shared_environments_view: Entity<SharedEnvironmentsView>,
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
     history: Entity<History>,
@@ -130,6 +132,7 @@ impl Workspace {
         let library_panel = cx.new(|cx| LibraryPanel::new(window, cx));
         let sidebar = cx.new(|_| Sidebar::new(library_panel.clone(), history_panel.clone()));
         let collection_view = cx.new(|cx| CollectionView::new(window, cx));
+        let shared_environments_view = cx.new(|cx| SharedEnvironmentsView::new(window, cx));
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
         let collections = cx.new(Collections::new);
@@ -143,6 +146,7 @@ impl Workspace {
             history_panel,
             library_panel,
             collection_view,
+            shared_environments_view,
             loading_bar,
             client: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)
@@ -198,7 +202,9 @@ impl Workspace {
                 &self.shared_environments,
                 window,
                 |this, _, event, window, cx| match event {
-                    SharedEnvironmentsEvent::Changed => this.shared_environments_changed(cx),
+                    SharedEnvironmentsEvent::Changed => {
+                        this.shared_environments_changed(window, cx)
+                    }
                     SharedEnvironmentsEvent::Failed { title, error } => {
                         show_error(title, error, window, cx)
                     }
@@ -211,6 +217,13 @@ impl Workspace {
                 &self.collection_view,
                 window,
                 |this, _, event, window, cx| this.on_collection_view_event(event, window, cx),
+            ),
+            cx.subscribe_in(
+                &self.shared_environments_view,
+                window,
+                |this, _, event, window, cx| {
+                    this.on_shared_environments_view_event(event, window, cx)
+                },
             ),
             cx.subscribe_in(&self.history_panel, window, |this, _, event, window, cx| {
                 this.on_history_panel_event(event, window, cx)
@@ -227,7 +240,7 @@ impl Workspace {
                 this.save_navigation_now(cx);
                 // Best effort: gpui waits only briefly for quit handlers.
                 let collections = this
-                    .flush_collection_variables(cx)
+                    .flush_pending_variables(cx)
                     .then(|| this.collections.read(cx).flushed());
                 let shared = this.shared_environments.read(cx).flushed();
                 async move {

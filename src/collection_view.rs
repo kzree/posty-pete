@@ -1,7 +1,4 @@
-mod auto_save;
-mod environments;
-
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
@@ -20,14 +17,32 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
-use self::auto_save::AutoSavedVariables;
-pub use self::auto_save::VariableSet;
 use crate::{
     domain::{collection::Collection, request::KeyValue},
-    ui::key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+    ui::{
+        auto_saved_variables::{AutoSavedVariables, SAVE_DELAY},
+        environments_editor::{
+            EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
+        },
+        key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+    },
 };
 
-const VARIABLES_SAVE_DELAY: Duration = Duration::from_millis(500);
+const ENVIRONMENTS_OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOptions {
+    usable: true,
+    empty_text: "Environments hold different values for the same variables, such as a host for staging and production.",
+    hint: "While this environment is active, its values override the collection's variables. Changes save automatically.",
+};
+
+/// The stored variables an editor edits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VariableSet {
+    Collection(Uuid),
+    Environment {
+        collection_id: Uuid,
+        environment_id: Uuid,
+    },
+}
 
 pub enum CollectionViewEvent {
     Rename {
@@ -87,12 +102,8 @@ pub struct CollectionView {
     collection: Option<Arc<Collection>>,
     active_tab: CollectionTab,
     name: Entity<InputState>,
-    variables: AutoSavedVariables,
-    /// The collection's active environment, as last passed to `show`.
-    active_environment: Option<Uuid>,
-    /// The environment shown in the Environments tab.
-    selected_environment: Option<Uuid>,
-    environment_variables: AutoSavedVariables,
+    variables: AutoSavedVariables<VariableSet>,
+    environments: Entity<EnvironmentsEditor>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -106,31 +117,27 @@ impl CollectionView {
             InputEvent::Change => cx.notify(),
             _ => {}
         });
-        let variables = variables_editor(window, cx);
+        let variables = cx.new(|cx| {
+            KeyValueEditor::with_column_labels("variable", "Variable", "Value", window, cx)
+        });
         let variables_sub = cx.subscribe(&variables, |this, _, event, cx| match event {
             KeyValueEditorEvent::Changed => {
                 let save = this.save_after_delay(cx);
                 this.variables.schedule(save);
             }
         });
-        let environment_variables = variables_editor(window, cx);
-        let environment_sub =
-            cx.subscribe(&environment_variables, |this, _, event, cx| match event {
-                KeyValueEditorEvent::Changed => {
-                    let save = this.save_after_delay(cx);
-                    this.environment_variables.schedule(save);
-                }
-            });
+        let environments = cx.new(|cx| EnvironmentsEditor::new(ENVIRONMENTS_OPTIONS, window, cx));
+        let environments_sub = cx.subscribe(&environments, |this, _, event, cx| {
+            this.on_environments_event(event, cx)
+        });
         Self {
             id: None,
             collection: None,
             active_tab: CollectionTab::Settings,
             name,
             variables: AutoSavedVariables::new(variables),
-            active_environment: None,
-            selected_environment: None,
-            environment_variables: AutoSavedVariables::new(environment_variables),
-            _subscriptions: vec![name_sub, variables_sub, environment_sub],
+            environments,
+            _subscriptions: vec![name_sub, variables_sub, environments_sub],
         }
     }
 
@@ -163,8 +170,9 @@ impl CollectionView {
         };
         if self.id != Some(id) {
             self.active_tab = CollectionTab::Settings;
-            self.selected_environment = None;
             self.emit_pending_variables(cx);
+            self.environments
+                .update(cx, |environments, _| environments.clear_selection());
         }
         if replace_input {
             let value = new_name.unwrap_or_default();
@@ -177,10 +185,15 @@ impl CollectionView {
         self.variables
             .load(Some(VariableSet::Collection(id)), stored, window, cx);
 
+        let environments = collection
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.environments.clone());
+        self.environments.update(cx, |editor, cx| {
+            editor.show(environments, active_environment, HashMap::new(), window, cx)
+        });
+
         self.id = Some(id);
         self.collection = collection;
-        self.active_environment = active_environment;
-        self.sync_environment_selection(window, cx);
         cx.notify();
     }
 
@@ -193,18 +206,80 @@ impl CollectionView {
         cx.notify();
     }
 
-    /// Takes the variables edits waiting for their save delay.
-    pub fn take_pending_variables(&mut self, cx: &App) -> Vec<(VariableSet, Vec<KeyValue>)> {
-        [&mut self.variables, &mut self.environment_variables]
-            .into_iter()
-            .filter_map(|variables| variables.take_pending(cx))
-            .collect()
+    /// Shows the Environments tab, with `environment_id` selected if given.
+    pub fn open_environments(
+        &mut self,
+        environment_id: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_tab(CollectionTab::Environments, cx);
+        if let Some(id) = environment_id {
+            self.environments
+                .update(cx, |environments, cx| environments.select(id, window, cx));
+        }
     }
 
-    /// The timer of a variables edit. Saves every pending edit when it fires.
+    /// Focuses the first variable of the environment shown.
+    pub fn focus_environment_variables(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.environments.update(cx, |environments, cx| {
+            environments.focus_variables(window, cx)
+        });
+    }
+
+    /// Takes the variables edits waiting for their save delay.
+    pub fn take_pending_variables(&mut self, cx: &mut App) -> Vec<(VariableSet, Vec<KeyValue>)> {
+        let mut pending: Vec<_> = self.variables.take_pending(cx).into_iter().collect();
+        let environment = self
+            .environments
+            .update(cx, |environments, cx| environments.take_pending(cx));
+        if let (Some(collection_id), Some((environment_id, variables))) = (self.id, environment) {
+            let set = VariableSet::Environment {
+                collection_id,
+                environment_id,
+            };
+            pending.push((set, variables));
+        }
+        pending
+    }
+
+    fn on_environments_event(&mut self, event: &EnvironmentsEditorEvent, cx: &mut Context<Self>) {
+        let Some(collection_id) = self.id else {
+            return;
+        };
+        cx.emit(match event.clone() {
+            EnvironmentsEditorEvent::Add => CollectionViewEvent::AddEnvironment { collection_id },
+            EnvironmentsEditorEvent::Rename { id, name } => {
+                CollectionViewEvent::RenameEnvironment {
+                    collection_id,
+                    environment_id: id,
+                    name,
+                }
+            }
+            EnvironmentsEditorEvent::Delete(id) => CollectionViewEvent::DeleteEnvironment {
+                collection_id,
+                environment_id: id,
+            },
+            EnvironmentsEditorEvent::Use(environment_id) => CollectionViewEvent::UseEnvironment {
+                collection_id,
+                environment_id,
+            },
+            EnvironmentsEditorEvent::VariablesChanged { id, variables } => {
+                CollectionViewEvent::VariablesChanged {
+                    set: VariableSet::Environment {
+                        collection_id,
+                        environment_id: id,
+                    },
+                    variables,
+                }
+            }
+        });
+    }
+
+    /// The timer of a collection variables edit.
     fn save_after_delay(&mut self, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(VARIABLES_SAVE_DELAY).await;
+            cx.background_executor().timer(SAVE_DELAY).await;
             this.update(cx, |this, cx| this.emit_pending_variables(cx))
                 .ok();
         })
@@ -333,7 +408,7 @@ impl Render for CollectionView {
         let content = match self.active_tab {
             CollectionTab::Settings => content.child(self.render_settings(cx)),
             CollectionTab::Variables => content.child(self.render_variables(cx)),
-            CollectionTab::Environments => content.child(self.render_environments(cx)),
+            CollectionTab::Environments => content.child(self.environments.clone()),
         };
 
         v_flex()
@@ -358,11 +433,4 @@ impl Render for CollectionView {
             .child(content)
             .into_any_element()
     }
-}
-
-fn variables_editor(
-    window: &mut Window,
-    cx: &mut Context<CollectionView>,
-) -> Entity<KeyValueEditor> {
-    cx.new(|cx| KeyValueEditor::with_column_labels("variable", "Variable", "Value", window, cx))
 }

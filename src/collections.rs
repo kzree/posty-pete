@@ -259,6 +259,19 @@ impl Collections {
         }
     }
 
+    /// Unlinks every environment based on shared environment `base`.
+    pub fn unlink_base(&mut self, base: Uuid, cx: &mut Context<Self>) {
+        let changed = collection::unlink_base(&mut self.collections, base);
+        if changed.is_empty() {
+            return;
+        }
+        cx.emit(CollectionsEvent::Changed);
+        cx.notify();
+        for id in changed {
+            self.enqueue_save(id, cx);
+        }
+    }
+
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {
         let removed = self.modify(collection_id, |collection| {
             collection.remove(item_id).is_some()
@@ -317,6 +330,10 @@ impl Collections {
     fn changed(&mut self, collection_id: Uuid, cx: &mut Context<Self>) {
         cx.emit(CollectionsEvent::Changed);
         cx.notify();
+        self.enqueue_save(collection_id, cx);
+    }
+
+    fn enqueue_save(&self, collection_id: Uuid, cx: &mut Context<Self>) {
         let Some(collection) = self.shared(collection_id) else {
             return;
         };

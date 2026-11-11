@@ -58,7 +58,7 @@ fn resolve(request: Request, variables: Option<&Variables>) -> Request {
 impl Workspace {
     /// The request the editor's `request` sends, with the variables as they are now.
     fn resolve_editor_request(&mut self, request: Request, cx: &mut Context<Self>) -> Request {
-        self.flush_collection_variables(cx);
+        self.flush_pending_variables(cx);
         let variables = self.editor_variables(cx);
         resolve(request, variables.as_ref())
     }

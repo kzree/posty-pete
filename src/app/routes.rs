@@ -23,6 +23,7 @@ pub(super) enum AppRoute {
     },
     Settings,
     Collection(Uuid),
+    SharedEnvironments,
 }
 
 impl AppRoute {
@@ -35,6 +36,7 @@ impl AppRoute {
             } => format!("/collections/{collection_id}/requests/{request_id}").into(),
             AppRoute::Settings => "/settings".into(),
             AppRoute::Collection(id) => format!("/collections/{id}").into(),
+            AppRoute::SharedEnvironments => "/environments".into(),
         }
     }
 
@@ -64,6 +66,7 @@ pub(super) fn route_title(route: AppRoute, collections: &[Arc<Collection>]) -> W
             .map(|collection| WindowTitle::new(collection.name.clone()))
             .unwrap_or_else(|| WindowTitle::new(crate::WINDOW_TITLE)),
         AppRoute::Settings => WindowTitle::new("Settings"),
+        AppRoute::SharedEnvironments => WindowTitle::new("Shared environments"),
     }
 }
 
@@ -206,7 +209,7 @@ impl Workspace {
 
     pub(super) fn route_exists(&self, route: AppRoute, cx: &App) -> bool {
         match route {
-            AppRoute::Request | AppRoute::Settings => true,
+            AppRoute::Request | AppRoute::Settings | AppRoute::SharedEnvironments => true,
             AppRoute::SavedRequest {
                 collection_id,
                 request_id,
@@ -230,7 +233,7 @@ impl Workspace {
                         request_id,
                     }
             }
-            AppRoute::Settings | AppRoute::Collection(_) => false,
+            AppRoute::Settings | AppRoute::Collection(_) | AppRoute::SharedEnvironments => false,
         }
     }
 
@@ -242,7 +245,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.flush_collection_variables(cx);
+        self.flush_pending_variables(cx);
         let route = self.current_route();
         // The focused element may not exist on the new route, which would drop workspace keybindings.
         // Request routes share their element, so focus (e.g. in the library tree) stays put.
@@ -254,6 +257,7 @@ impl Workspace {
                 self.load_route_into_editor(route, window, cx)
             }
             AppRoute::Collection(id) => self.show_collection(id, window, cx),
+            AppRoute::SharedEnvironments => self.refresh_shared_environments_view(window, cx),
             AppRoute::Settings => {}
         }
         self.sync_library_selection(window, cx);
@@ -294,7 +298,7 @@ impl Workspace {
                 };
                 self.load_editor(content, &request, window, cx);
             }
-            AppRoute::Settings | AppRoute::Collection(_) => {}
+            AppRoute::Settings | AppRoute::Collection(_) | AppRoute::SharedEnvironments => {}
         }
     }
 
@@ -304,6 +308,7 @@ impl Workspace {
             .child(self.saved_request_route())
             .child(self.settings_route(cx))
             .child(self.collection_route())
+            .child(self.shared_environments_route())
     }
 
     fn request_response_route(&self) -> Route {
@@ -353,6 +358,13 @@ impl Workspace {
             .path("collections/:id")
             .element(move |_, _| collection_view.clone())
     }
+
+    fn shared_environments_route(&self) -> Route {
+        let view = self.shared_environments_view.clone();
+        Route::new()
+            .path("environments")
+            .element(move |_, _| view.clone())
+    }
 }
 
 #[cfg(test)]
@@ -373,8 +385,12 @@ mod tests {
     }
 
     #[test]
-    fn draft_and_settings_have_fixed_titles() {
+    fn draft_settings_and_shared_environments_have_fixed_titles() {
         let (collections, _, _) = library();
+        assert_eq!(
+            route_title(AppRoute::SharedEnvironments, &collections),
+            WindowTitle::new("Shared environments")
+        );
         assert_eq!(
             route_title(AppRoute::Request, &collections),
             WindowTitle::new("Untitled request")

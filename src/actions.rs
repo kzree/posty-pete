@@ -15,6 +15,7 @@ actions!(
         OpenHistory,
         OpenTests,
         OpenSettings,
+        OpenSharedEnvironments,
         FocusUrl,
         QuickOpen,
         DeleteHistoryEntry,

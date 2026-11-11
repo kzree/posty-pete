@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -224,7 +224,6 @@ pub fn set_environment_base(
 
 /// Unlinks every environment based on shared environment `base`, copying only
 /// the collections that have one. Returns their ids.
-#[cfg_attr(not(test), expect(dead_code, reason = "used from task 56"))]
 pub fn unlink_base(collections: &mut [Arc<Collection>], base: Uuid) -> Vec<Uuid> {
     let is_based = |environment: &Environment| environment.base == Some(base);
     collections
@@ -240,6 +239,20 @@ pub fn unlink_base(collections: &mut [Arc<Collection>], base: Uuid) -> Vec<Uuid>
             collection.id
         })
         .collect()
+}
+
+/// How many collection environments are based on each shared environment,
+/// by its id.
+pub fn base_counts(collections: &[Arc<Collection>]) -> HashMap<Uuid, usize> {
+    let mut counts = HashMap::new();
+    let bases = collections
+        .iter()
+        .flat_map(|collection| &collection.environments)
+        .filter_map(|environment| environment.base);
+    for base in bases {
+        *counts.entry(base).or_insert(0) += 1;
+    }
+    counts
 }
 
 /// The name and location Save As starts with. A saved request (`linked`, as
@@ -1161,6 +1174,25 @@ mod tests {
         assert_eq!(held[0].environments[0].base, Some(deleted));
 
         assert!(unlink_base(&mut collections, deleted).is_empty());
+    }
+
+    #[test]
+    fn base_counts_count_environments_per_base() {
+        let (base, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut collections = Vec::new();
+        for base in [Some(base), Some(other), None] {
+            let (mut one, collection_id, environment_id) = with_environment(Vec::new());
+            set_environment_base(&mut one, collection_id, environment_id, base);
+            collections.append(&mut one);
+        }
+        let second = collections[1].id;
+        let also_based = add_environment(&mut collections, second).unwrap();
+        set_environment_base(&mut collections, second, also_based, Some(base));
+
+        let counts = base_counts(&collections);
+        assert_eq!(counts.len(), 2);
+        assert_eq!(counts[&base], 2);
+        assert_eq!(counts[&other], 1);
     }
 
     #[test]

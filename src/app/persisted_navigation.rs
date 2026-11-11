@@ -127,6 +127,7 @@ impl From<AppRoute> for NavEntry {
             },
             AppRoute::Settings => NavEntry::Settings,
             AppRoute::Collection(id) => NavEntry::Collection { id },
+            AppRoute::SharedEnvironments => NavEntry::SharedEnvironments,
         }
     }
 }
@@ -144,6 +145,7 @@ impl From<NavEntry> for AppRoute {
             },
             NavEntry::Settings => AppRoute::Settings,
             NavEntry::Collection { id } => AppRoute::Collection(id),
+            NavEntry::SharedEnvironments => AppRoute::SharedEnvironments,
         }
     }
 }
@@ -390,6 +392,7 @@ mod tests {
             },
             AppRoute::Settings,
             AppRoute::Collection(Uuid::new_v4()),
+            AppRoute::SharedEnvironments,
         ];
         for route in routes {
             assert_eq!(AppRoute::from(NavEntry::from(route)), route);

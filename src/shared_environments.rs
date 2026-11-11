@@ -91,10 +91,7 @@ impl SharedEnvironments {
             flushed.await.ok();
         }
     }
-}
 
-#[expect(dead_code, reason = "used by the shared environments page, task 56")]
-impl SharedEnvironments {
     pub fn add(&mut self, cx: &mut Context<Self>) -> Uuid {
         let id = environment::add(&mut self.environments);
         self.sort();

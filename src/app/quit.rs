@@ -71,7 +71,7 @@ impl Workspace {
             );
             return false;
         }
-        if self.flush_collection_variables(cx) {
+        if self.flush_pending_variables(cx) {
             self.close(Close::Window, window, cx);
             return false;
         }
@@ -83,7 +83,7 @@ impl Workspace {
     /// so choosing Save isn't lost.
     fn close(&mut self, close: Close, window: &mut Window, cx: &mut Context<Self>) {
         self.closing = true;
-        self.flush_collection_variables(cx);
+        self.flush_pending_variables(cx);
         let saved = future::join(
             self.collections.read(cx).flushed(),
             self.shared_environments.read(cx).flushed(),

@@ -8,9 +8,9 @@ use gpui_component::{ActiveTheme, h_resizable, input::Escape, resizable_panel};
 use super::{LeftPanelState, Workspace, navigation::Direction, routes::AppRoute};
 use crate::{
     actions::{
-        FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings, OpenTests,
-        QuickOpen, RevertRequest, SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar,
-        WORKSPACE_CONTEXT,
+        FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings,
+        OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest, SaveRequest, SaveRequestAs,
+        SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
     sidebar::SidebarTab,
     window_title_bar::WindowTitleBar,
@@ -100,6 +100,9 @@ impl Workspace {
         }))
         .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
             this.navigate(AppRoute::Settings, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &OpenSharedEnvironments, window, cx| {
+            this.open_shared_environments(None, window, cx);
         }))
         .on_action(cx.listener(|this, _: &QuickOpen, window, cx| {
             this.open_quick_open(window, cx);

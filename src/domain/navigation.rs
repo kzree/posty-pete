@@ -18,6 +18,7 @@ pub enum NavEntry {
     Collection {
         id: Uuid,
     },
+    SharedEnvironments,
 }
 
 /// The back/forward history and the unsaved draft, kept across restarts.
@@ -106,6 +107,16 @@ mod tests {
             serde_json::from_value::<SavedNavigation>(value).unwrap(),
             saved
         );
+    }
+
+    #[test]
+    fn shared_environments_entry_round_trips() {
+        let saved = load(
+            r#"{ "entries": [{ "kind": "draft" }, { "kind": "shared_environments" }], "index": 1 }"#,
+        );
+        assert_eq!(saved.entries[1], NavEntry::SharedEnvironments);
+        let value = serde_json::to_value(&saved).unwrap();
+        assert_eq!(value["entries"][1]["kind"], "shared_environments");
     }
 
     #[test]
