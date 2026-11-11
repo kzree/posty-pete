@@ -40,7 +40,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Customizable shortcuts.** Let users rebind the actions listed on the Shortcuts settings page.
 - [ ] **About links.** Make the licence/project URLs on the About page open in the browser, and add repository/licence links once `Cargo.toml` declares them.
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
-- [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
 - [ ] **Navigation: two-finger swipes.** Mouse side buttons and three-finger "swipe between pages" work; two-finger trackpad swipes arrive as plain scrolling and would need custom horizontal-scroll detection.
 - [ ] **Palette: match saved requests on URL and method.** Saved requests are matched on name and folder path only, so a URL fragment finds history entries but not the saved request.
 - [ ] **Palette recents: environments chosen inside the environment pages.** Selecting an environment on the shared environments page or a collection's Environments tab isn't recorded, because those views auto-select the first environment and would record ones you only glanced at. Record only deliberate selections.
