@@ -58,6 +58,8 @@ pub enum Body {
     None,
     /// Sent as `multipart/form-data`.
     FormData(Vec<KeyValue>),
+    /// Sent as `application/x-www-form-urlencoded`.
+    UrlEncoded(Vec<KeyValue>),
     Raw {
         kind: RawKind,
         text: String,
@@ -69,22 +71,40 @@ pub enum RawKind {
     #[default]
     Json,
     Text,
+    Xml,
+    Html,
 }
 
 impl RawKind {
-    pub const ALL: [RawKind; 2] = [Self::Json, Self::Text];
+    pub const ALL: [RawKind; 4] = [Self::Json, Self::Text, Self::Xml, Self::Html];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Json => "JSON",
             Self::Text => "Text",
+            Self::Xml => "XML",
+            Self::Html => "HTML",
         }
     }
 
-    pub fn mime(self) -> mime::Mime {
+    pub fn mime(self) -> &'static str {
         match self {
-            Self::Json => mime::APPLICATION_JSON,
-            Self::Text => mime::TEXT_PLAIN_UTF_8,
+            Self::Json => "application/json",
+            Self::Text => "text/plain; charset=utf-8",
+            Self::Xml => "application/xml",
+            Self::Html => "text/html",
+        }
+    }
+}
+
+impl Body {
+    /// The Content-Type sent unless the request sets one; form data's
+    /// multipart type is left to the sender.
+    pub fn content_type(&self) -> Option<&'static str> {
+        match self {
+            Self::None | Self::FormData(_) => None,
+            Self::UrlEncoded(_) => Some("application/x-www-form-urlencoded"),
+            Self::Raw { kind, .. } => Some(kind.mime()),
         }
     }
 }
@@ -168,6 +188,12 @@ mod tests {
          "body": {"Raw": {"kind": "Text", "text": "hi"}}, "auth": {"Basic": {"username": "u", "password": "p"}}},
         {"method": "Patch", "url": "", "params": [], "headers": [],
          "body": {"FormData": [{"enabled": true, "key": "f", "value": "v"}]}, "auth": {"Bearer": {"token": "t"}}},
+        {"method": "Patch", "url": "", "params": [], "headers": [],
+         "body": {"UrlEncoded": [{"enabled": true, "key": "u", "value": "v"}]}, "auth": "None"},
+        {"method": "Patch", "url": "", "params": [], "headers": [],
+         "body": {"Raw": {"kind": "Xml", "text": "<a/>"}}, "auth": "None"},
+        {"method": "Patch", "url": "", "params": [], "headers": [],
+         "body": {"Raw": {"kind": "Html", "text": "<p>"}}, "auth": "None"},
         {"method": "Delete", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
         {"method": "Head", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
         {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"}
@@ -208,6 +234,21 @@ mod tests {
             requests[2].auth,
             Auth::ApiKey {
                 location: ApiKeyLocation::Query,
+                ..
+            }
+        ));
+        assert!(matches!(&requests[5].body, Body::UrlEncoded(fields) if fields.len() == 1));
+        assert!(matches!(
+            requests[6].body,
+            Body::Raw {
+                kind: RawKind::Xml,
+                ..
+            }
+        ));
+        assert!(matches!(
+            requests[7].body,
+            Body::Raw {
+                kind: RawKind::Html,
                 ..
             }
         ));

@@ -283,6 +283,8 @@ fn build_request(client: &reqwest::Client, request: Request) -> anyhow::Result<r
             });
             builder.multipart(form)
         }
+        // The Content-Type is already in `headers`, so `form` keeps it.
+        ResolvedBody::UrlEncoded(fields) => builder.form(&fields),
         ResolvedBody::Raw(text) => builder.body(text.to_owned()),
     };
 
@@ -493,6 +495,36 @@ mod tests {
             built.headers().get(CONTENT_TYPE).unwrap(),
             "application/json"
         );
+    }
+
+    #[test]
+    fn built_url_encoded_body() {
+        let mut request = Request {
+            method: HttpMethod::Post,
+            url: "https://example.com".into(),
+            params: vec![],
+            headers: vec![],
+            body: Body::UrlEncoded(vec![
+                header("a b", "1&2=3", true),
+                header("off", "1", false),
+                header("c", "é", true),
+            ]),
+            auth: Auth::None,
+        };
+        let built = build_request(&reqwest::Client::new(), request.clone()).unwrap();
+        assert_eq!(
+            built.headers().get(CONTENT_TYPE).unwrap(),
+            "application/x-www-form-urlencoded"
+        );
+        assert_eq!(
+            built.body().and_then(|body| body.as_bytes()),
+            Some(&b"a+b=1%262%3D3&c=%C3%A9"[..])
+        );
+
+        request.headers = vec![header("Content-Type", "text/plain", true)];
+        let built = build_request(&reqwest::Client::new(), request).unwrap();
+        let types: Vec<_> = built.headers().get_all(CONTENT_TYPE).iter().collect();
+        assert_eq!(types, ["text/plain"]);
     }
 
     fn get(url: String) -> Request {

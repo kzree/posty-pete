@@ -30,16 +30,18 @@ use crate::{
 enum BodyMode {
     None,
     FormData,
+    UrlEncoded,
     Raw,
 }
 
 impl BodyMode {
-    const ALL: [BodyMode; 3] = [Self::None, Self::FormData, Self::Raw];
+    const ALL: [BodyMode; 4] = [Self::None, Self::FormData, Self::UrlEncoded, Self::Raw];
 
     fn label(self) -> &'static str {
         match self {
             Self::None => "None",
             Self::FormData => "Form data",
+            Self::UrlEncoded => "Form URL-encoded",
             Self::Raw => "Raw",
         }
     }
@@ -68,6 +70,7 @@ fn editor_language(kind: RawKind) -> &'static str {
     match kind {
         RawKind::Json => "json",
         RawKind::Text => "text",
+        RawKind::Html | RawKind::Xml => "html", // gpui-component 0.9 has no XML grammar
     }
 }
 
@@ -75,7 +78,8 @@ pub struct BodyEditor {
     mode: BodyMode,
     raw_kind: Entity<SelectState<Vec<RawKindItem>>>,
     raw: Entity<EditorState>,
-    form_data: Entity<KeyValueEditor>,
+    /// Shared by form data and URL-encoded, so switching between them keeps the fields.
+    form_fields: Entity<KeyValueEditor>,
     json_error: Option<SharedString>,
     json_check_pending: bool,
     /// Why the loaded body is empty; dropped when the body is edited or replaced.
@@ -91,7 +95,7 @@ impl BodyEditor {
         let raw_kind = cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
         let raw =
             cx.new(|cx| EditorState::new(window, cx).language(editor_language(RawKind::default())));
-        let form_data = cx.new(|cx| KeyValueEditor::new("field", window, cx));
+        let form_fields = cx.new(|cx| KeyValueEditor::new("field", window, cx));
 
         let sub = cx.subscribe_in(
             &raw_kind,
@@ -112,7 +116,7 @@ impl BodyEditor {
                 this.edited(cx);
             }
         });
-        let form_sub = cx.subscribe(&form_data, |this, _, _: &KeyValueEditorEvent, cx| {
+        let form_sub = cx.subscribe(&form_fields, |this, _, _: &KeyValueEditorEvent, cx| {
             this.edited(cx)
         });
 
@@ -120,7 +124,7 @@ impl BodyEditor {
             mode: BodyMode::None,
             raw_kind,
             raw,
-            form_data,
+            form_fields,
             json_error: None,
             json_check_pending: false,
             note: None,
@@ -190,12 +194,13 @@ impl BodyEditor {
         let (mode, fields, kind, text) = match body {
             Body::None => (BodyMode::None, &[][..], RawKind::default(), ""),
             Body::FormData(fields) => (BodyMode::FormData, &fields[..], RawKind::default(), ""),
+            Body::UrlEncoded(fields) => (BodyMode::UrlEncoded, &fields[..], RawKind::default(), ""),
             Body::Raw { kind, text } => (BodyMode::Raw, &[][..], *kind, text.as_str()),
         };
 
         self.mode = mode;
         self.note = None;
-        self.form_data
+        self.form_fields
             .update(cx, |form, cx| form.set_values(fields, window, cx));
         self.raw_kind.update(cx, |select, cx| {
             select.set_selected_value(&kind, window, cx)
@@ -211,7 +216,8 @@ impl BodyEditor {
     pub fn body(&self, cx: &App) -> Body {
         match self.mode {
             BodyMode::None => Body::None,
-            BodyMode::FormData => Body::FormData(self.form_data.read(cx).values(cx)),
+            BodyMode::FormData => Body::FormData(self.form_fields.read(cx).values(cx)),
+            BodyMode::UrlEncoded => Body::UrlEncoded(self.form_fields.read(cx).values(cx)),
             BodyMode::Raw => Body::Raw {
                 kind: self
                     .raw_kind
@@ -271,11 +277,11 @@ impl Render for BodyEditor {
                 .text_color(cx.theme().muted_foreground)
                 .child("This request has no body.")
                 .into_any_element(),
-            BodyMode::FormData => div()
+            BodyMode::FormData | BodyMode::UrlEncoded => div()
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scrollbar()
-                .child(self.form_data.clone())
+                .child(self.form_fields.clone())
                 .into_any_element(),
             BodyMode::Raw => v_flex()
                 .flex_1()

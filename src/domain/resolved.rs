@@ -24,6 +24,7 @@ pub enum ResolvedBody<'a> {
     None,
     /// Sent as `multipart/form-data`; the sender sets the Content-Type.
     FormData(Vec<(&'a str, &'a str)>),
+    UrlEncoded(Vec<(&'a str, &'a str)>),
     Raw(&'a str),
 }
 
@@ -50,12 +51,12 @@ impl Request {
                 ApiKeyLocation::Query => query.push((key, value)),
             }
         }
-        if let Body::Raw { kind, .. } = &self.body
+        if let Some(content_type) = self.body.content_type()
             && !headers
                 .iter()
                 .any(|(key, _)| key.eq_ignore_ascii_case("content-type"))
         {
-            headers.push(("Content-Type", Cow::Owned(kind.mime().to_string())));
+            headers.push(("Content-Type", Cow::Borrowed(content_type)));
         }
 
         let mut basic_auth = None;
@@ -78,6 +79,7 @@ impl Request {
             body: match &self.body {
                 Body::None => ResolvedBody::None,
                 Body::FormData(fields) => ResolvedBody::FormData(active(fields).collect()),
+                Body::UrlEncoded(fields) => ResolvedBody::UrlEncoded(active(fields).collect()),
                 Body::Raw { text, .. } => ResolvedBody::Raw(text),
             },
         }
@@ -232,6 +234,58 @@ mod tests {
         let resolved = request.resolve();
         assert_eq!(headers(&request), pairs(&[("X-A", "1")]));
         assert_eq!(resolved.body, ResolvedBody::FormData(vec![("a", "1")]));
+    }
+
+    #[test]
+    fn raw_kinds_send_their_content_type() {
+        for (kind, mime) in [
+            (RawKind::Text, "text/plain; charset=utf-8"),
+            (RawKind::Xml, "application/xml"),
+            (RawKind::Html, "text/html"),
+        ] {
+            let request = Request {
+                method: HttpMethod::Post,
+                body: Body::Raw {
+                    kind,
+                    text: "x".into(),
+                },
+                ..get("https://example.com")
+            };
+            assert_eq!(headers(&request), pairs(&[("Content-Type", mime)]));
+        }
+    }
+
+    #[test]
+    fn url_encoded_adds_content_type_unless_set() {
+        let mut request = Request {
+            method: HttpMethod::Post,
+            headers: vec![kv("X-A", "1")],
+            body: Body::UrlEncoded(vec![kv("a", "1 2"), disabled("b", "2"), kv("", "3")]),
+            ..get("https://example.com")
+        };
+        assert_eq!(
+            headers(&request),
+            pairs(&[
+                ("X-A", "1"),
+                ("Content-Type", "application/x-www-form-urlencoded")
+            ])
+        );
+        assert_eq!(
+            request.resolve().body,
+            ResolvedBody::UrlEncoded(vec![("a", "1 2")])
+        );
+
+        request.headers = vec![kv(
+            "content-type",
+            "application/x-www-form-urlencoded; charset=utf-8",
+        )];
+        assert_eq!(
+            headers(&request),
+            pairs(&[(
+                "content-type",
+                "application/x-www-form-urlencoded; charset=utf-8"
+            )])
+        );
     }
 
     #[test]

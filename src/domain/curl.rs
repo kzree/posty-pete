@@ -50,6 +50,11 @@ pub fn to_curl(request: &Request) -> String {
                 .iter()
                 .map(|(key, value)| format!("--form-string {}", quote(&format!("{key}={value}")))),
         ),
+        // curl encodes only the part after the first `=`, so the name is encoded here.
+        ResolvedBody::UrlEncoded(fields) => args.extend(fields.iter().map(|(key, value)| {
+            let key: String = url::form_urlencoded::byte_serialize(key.as_bytes()).collect();
+            format!("--data-urlencode {}", quote(&format!("{key}={value}")))
+        })),
         ResolvedBody::Raw(text) => args.push(format!("--data-raw {}", quote(text))),
     }
 
@@ -197,6 +202,44 @@ mod tests {
             to_curl(&request),
             "curl \\\n  'https://example.com/a?lang=en&q=1' \\\n  -H 'X-Key: v'"
         );
+    }
+
+    #[test]
+    fn url_encoded_fields() {
+        let request = Request {
+            method: HttpMethod::Post,
+            body: Body::UrlEncoded(vec![
+                kv("a=b @c", "1=2 @x"),
+                kv("d", "it's"),
+                KeyValue {
+                    enabled: false,
+                    ..kv("off", "1")
+                },
+            ]),
+            ..get("https://example.com")
+        };
+        assert_eq!(
+            to_curl(&request),
+            "curl \\\n  'https://example.com' \\\n  \
+             -H 'Content-Type: application/x-www-form-urlencoded' \\\n  \
+             --data-urlencode 'a%3Db+%40c=1=2 @x' \\\n  \
+             --data-urlencode 'd=it'\\''s'"
+        );
+    }
+
+    #[test]
+    fn xml_body_content_type() {
+        let request = Request {
+            method: HttpMethod::Put,
+            body: Body::Raw {
+                kind: RawKind::Xml,
+                text: "<a/>".into(),
+            },
+            ..get("https://example.com")
+        };
+        assert!(to_curl(&request).contains("-X PUT"));
+        assert!(to_curl(&request).contains("-H 'Content-Type: application/xml'"));
+        assert!(to_curl(&request).contains("--data-raw '<a/>'"));
     }
 
     #[test]

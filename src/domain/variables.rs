@@ -168,6 +168,7 @@ impl Request {
             body: match &self.body {
                 Body::None => Body::None,
                 Body::FormData(fields) => Body::FormData(s.rows(fields)),
+                Body::UrlEncoded(fields) => Body::UrlEncoded(s.rows(fields)),
                 Body::Raw { kind, text } => Body::Raw {
                     kind: *kind,
                     text: s.text(text),
@@ -190,6 +191,7 @@ impl Request {
             headers: s.rows(&self.headers),
             body: match &self.body {
                 Body::FormData(fields) => Body::FormData(s.rows(fields)),
+                Body::UrlEncoded(fields) => Body::UrlEncoded(s.rows(fields)),
                 _ => Body::None,
             },
             auth: s.auth(&self.auth),
@@ -200,7 +202,10 @@ impl Request {
             (&self.params[..], &substituted.params[..], false),
             (&self.headers[..], &substituted.headers[..], true),
             match (&self.body, &substituted.body) {
-                (Body::FormData(fields), Body::FormData(sent)) => (&fields[..], &sent[..], false),
+                (Body::FormData(fields), Body::FormData(sent))
+                | (Body::UrlEncoded(fields), Body::UrlEncoded(sent)) => {
+                    (&fields[..], &sent[..], false)
+                }
                 _ => (&[][..], &[][..], false),
             },
         ];
@@ -584,6 +589,33 @@ mod tests {
         assert_eq!(
             request.unresolved_variables(&Variables::default()),
             ["empty", "p", "h", "f"]
+        );
+    }
+
+    #[test]
+    fn url_encoded_fields_are_substituted_and_checked() {
+        let request = Request {
+            headers: vec![row(true, "Content-Type", "{{type}}")],
+            body: Body::UrlEncoded(vec![
+                row(true, "{{k}}", "{{v}}"),
+                row(false, "off", "{{off}}"),
+                row(true, "{{empty}}", "{{unsent}}"),
+            ]),
+            ..Request::default()
+        };
+        let v = vars(&[("k", "K"), ("v", "V"), ("empty", "")]);
+        assert_eq!(
+            request.with_variables(&v).body,
+            Body::UrlEncoded(vec![
+                row(true, "K", "V"),
+                row(false, "off", "{{off}}"),
+                row(true, "", "{{unsent}}"),
+            ])
+        );
+        assert_eq!(request.unresolved_variables(&v), ["type"]);
+        assert_eq!(
+            request.unresolved_variables(&Variables::default()),
+            ["type", "k", "v", "empty", "unsent"]
         );
     }
 

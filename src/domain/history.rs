@@ -53,11 +53,13 @@ pub fn retention_cutoff<Tz: TimeZone>(now: &DateTime<Tz>, retention_days: u32) -
 /// Bodies larger than this, in bytes, aren't kept in history.
 pub const MAX_STORED_BODY_SIZE: u64 = 1_000_000;
 
-/// Bytes of a raw body's text, or of all form fields' keys and values.
+/// Bytes of a raw body's text, or of all form or URL-encoded fields' keys and values.
 pub fn body_size(body: &Body) -> u64 {
     let size = match body {
         Body::None => 0,
-        Body::FormData(fields) => fields.iter().map(|f| f.key.len() + f.value.len()).sum(),
+        Body::FormData(fields) | Body::UrlEncoded(fields) => {
+            fields.iter().map(|f| f.key.len() + f.value.len()).sum()
+        }
         Body::Raw { text, .. } => text.len(),
     };
     size as u64
@@ -72,6 +74,7 @@ pub fn request_to_store(request: &Request) -> (Cow<'_, Request>, Option<u64>) {
     let body = match &request.body {
         Body::None => Body::None,
         Body::FormData(_) => Body::FormData(Vec::new()),
+        Body::UrlEncoded(_) => Body::UrlEncoded(Vec::new()),
         Body::Raw { kind, .. } => Body::Raw {
             kind: *kind,
             text: String::new(),
@@ -397,6 +400,29 @@ mod tests {
         let (stored, omitted) = request_to_store(&request);
         assert_eq!(omitted, Some(MAX_STORED_BODY_SIZE + 2));
         assert_eq!(stored.body, Body::FormData(Vec::new()));
+    }
+
+    #[test]
+    fn url_encoded_size_counts_keys_and_values() {
+        let body = Body::UrlEncoded(vec![KeyValue {
+            enabled: false,
+            key: "k".into(),
+            value: "v".repeat(MAX_STORED_BODY_SIZE as usize),
+        }]);
+        assert_eq!(body_size(&body), MAX_STORED_BODY_SIZE + 1);
+        let request = Request {
+            body,
+            ..Default::default()
+        };
+        let (stored, omitted) = request_to_store(&request);
+        assert_eq!(omitted, Some(MAX_STORED_BODY_SIZE + 1));
+        assert_eq!(stored.body, Body::UrlEncoded(Vec::new()));
+
+        let small = Request {
+            body: Body::UrlEncoded(vec![KeyValue::default()]),
+            ..Default::default()
+        };
+        assert_eq!(request_to_store(&small).1, None);
     }
 
     #[test]
