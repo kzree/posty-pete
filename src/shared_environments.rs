@@ -28,6 +28,7 @@ pub enum SharedEnvironmentsEvent {
 pub struct SharedEnvironments {
     /// Sorted by name, case-insensitively.
     environments: Vec<Arc<Environment>>,
+    loaded: bool,
     jobs: mpsc::UnboundedSender<Job>,
 }
 
@@ -63,12 +64,32 @@ impl SharedEnvironments {
 
         Self {
             environments: Vec::new(),
+            loaded: false,
             jobs,
         }
     }
 
     pub fn all(&self) -> &[Arc<Environment>] {
         &self.environments
+    }
+
+    /// Whether the stored environments loaded, so [`Self::all`] is complete.
+    pub fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    /// Resolves once every save requested so far has finished or failed.
+    pub fn flushed(&self) -> impl Future<Output = ()> + use<> {
+        let (done, flushed) = oneshot::channel();
+        let job: Job = Box::new(move |_| {
+            done.send(()).ok();
+            None
+        });
+        // If the queue is gone, `done` is dropped and `flushed` resolves too.
+        self.jobs.unbounded_send(job).ok();
+        async move {
+            flushed.await.ok();
+        }
     }
 }
 
@@ -104,20 +125,6 @@ impl SharedEnvironments {
     pub fn set_variables(&mut self, id: Uuid, variables: Vec<KeyValue>, cx: &mut Context<Self>) {
         if environment::set_variables(&mut self.environments, id, variables) {
             self.changed(id, cx);
-        }
-    }
-
-    /// Resolves once every save requested so far has finished or failed.
-    pub fn flushed(&self) -> impl Future<Output = ()> + use<> {
-        let (done, flushed) = oneshot::channel();
-        let job: Job = Box::new(move |_| {
-            done.send(()).ok();
-            None
-        });
-        // If the queue is gone, `done` is dropped and `flushed` resolves too.
-        self.jobs.unbounded_send(job).ok();
-        async move {
-            flushed.await.ok();
         }
     }
 }
@@ -178,6 +185,7 @@ impl SharedEnvironments {
             Ok(loaded) => {
                 self.environments.extend(loaded.into_iter().map(Arc::new));
                 self.sort();
+                self.loaded = true;
                 cx.emit(SharedEnvironmentsEvent::Changed);
                 cx.notify();
             }

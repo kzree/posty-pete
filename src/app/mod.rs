@@ -197,9 +197,10 @@ impl Workspace {
             cx.subscribe_in(
                 &self.shared_environments,
                 window,
-                |_, _, event, window, cx| {
-                    if let SharedEnvironmentsEvent::Failed { title, error } = event {
-                        show_error(title, error, window, cx);
+                |this, _, event, window, cx| match event {
+                    SharedEnvironmentsEvent::Changed => this.shared_environments_changed(cx),
+                    SharedEnvironmentsEvent::Failed { title, error } => {
+                        show_error(title, error, window, cx)
                     }
                 },
             ),
@@ -225,13 +226,15 @@ impl Workspace {
             cx.on_app_quit(|this, cx| {
                 this.save_navigation_now(cx);
                 // Best effort: gpui waits only briefly for quit handlers.
-                let flushed = this
+                let collections = this
                     .flush_collection_variables(cx)
                     .then(|| this.collections.read(cx).flushed());
+                let shared = this.shared_environments.read(cx).flushed();
                 async move {
-                    if let Some(flushed) = flushed {
-                        flushed.await;
+                    if let Some(collections) = collections {
+                        collections.await;
                     }
+                    shared.await;
                 }
             }),
         ]

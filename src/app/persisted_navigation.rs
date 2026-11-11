@@ -200,7 +200,7 @@ impl Workspace {
         };
         self.environments = EnvironmentSelection::new(
             mem::take(&mut saved.active_environments),
-            saved.draft_collection,
+            saved.draft_source,
         );
         if self.navigation_untouched(cx) {
             self.apply_saved_navigation(saved, window, cx);
@@ -279,7 +279,9 @@ impl Workspace {
             EditorContent::Saved { .. } => self.draft.clone(),
         };
         let collections = self.collections.read(cx).all();
-        let (active_environments, draft_collection) = self.environments.pruned(collections);
+        let shared = self.shared_environments.read(cx);
+        let shared = shared.is_loaded().then(|| shared.all());
+        let (active_environments, draft_source) = self.environments.pruned(collections, shared);
         let saved = SavedNavigation {
             entries: self
                 .route_history
@@ -290,7 +292,7 @@ impl Workspace {
             index: self.route_history.index(),
             draft,
             active_environments,
-            draft_collection,
+            draft_source,
         };
         self.persisted_navigation.save_job(saved)
     }
@@ -321,7 +323,7 @@ mod tests {
             index: 0,
             draft: None,
             active_environments: HashMap::new(),
-            draft_collection: None,
+            draft_source: Default::default(),
         }
     }
 

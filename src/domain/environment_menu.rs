@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use super::{collection::Collection, environment_selection::EnvironmentSelection};
+use super::{
+    collection::Collection, environment::Environment, environment_selection::EnvironmentSelection,
+};
 
 pub const NO_ENVIRONMENT: &str = "No environment";
 
@@ -43,7 +45,8 @@ pub struct EnvironmentMenu {
     pub scope: MenuScope,
     /// The active environment's name, or "No environment".
     pub label: String,
-    /// "Collection › Environment" when there's a collection.
+    /// "Collection › Environment" when there's a collection, "Shared ›
+    /// Environment" for a draft using a shared environment.
     pub tooltip: String,
     pub items: Vec<EnvironmentMenuItem>,
 }
@@ -54,20 +57,29 @@ impl EnvironmentMenu {
         scope: MenuScope,
         selection: &EnvironmentSelection,
         collections: &[Arc<Collection>],
+        shared: &[Arc<Environment>],
     ) -> Option<Self> {
         let collection = match scope {
             MenuScope::Collection(id) => Some(collections.iter().find(|c| c.id == id)?),
             MenuScope::Draft => selection.draft_collection(collections),
         };
-        let active = collection.and_then(|c| active_name(c, selection));
+        let draft_shared = match scope {
+            MenuScope::Collection(_) => None,
+            MenuScope::Draft => selection.draft_shared_environment(shared),
+        };
+        let active = match draft_shared {
+            Some(environment) => Some(environment.name.as_str()),
+            None => collection.and_then(|c| active_name(c, selection)),
+        };
         let label = active.unwrap_or(NO_ENVIRONMENT).to_string();
-        let tooltip = match collection {
-            Some(collection) => format!("{} › {label}", collection.name),
-            None => "Environment".to_string(),
+        let tooltip = match (collection, draft_shared) {
+            (Some(collection), _) => format!("{} › {label}", collection.name),
+            (None, Some(_)) => format!("Shared › {label}"),
+            (None, None) => "Environment".to_string(),
         };
         let items = match (scope, collection) {
             (MenuScope::Collection(_), Some(collection)) => collection_items(collection, selection),
-            _ => draft_items(collection, selection, collections),
+            _ => draft_items(collection, draft_shared.is_some(), selection, collections),
         };
         Some(Self {
             scope,
@@ -125,14 +137,15 @@ fn collection_items(
 }
 
 /// Every collection with environments, under its name; only the draft
-/// collection's active environment is checked.
+/// collection's active environment is checked. With `uses_shared`, none is.
 fn draft_items(
     draft: Option<&Arc<Collection>>,
+    uses_shared: bool,
     selection: &EnvironmentSelection,
     collections: &[Arc<Collection>],
 ) -> Vec<EnvironmentMenuItem> {
     let draft_active = draft.and_then(|c| selection.active_environment(c));
-    let mut items = vec![no_environment(draft_active.is_none())];
+    let mut items = vec![no_environment(draft_active.is_none() && !uses_shared)];
     for collection in collections.iter().filter(|c| !c.environments.is_empty()) {
         let is_draft = draft.is_some_and(|draft| draft.id == collection.id);
         items.push(EnvironmentMenuItem::Separator);
@@ -185,7 +198,8 @@ mod tests {
         selection.set_active_environment(api.id, Some(env_id(&api, 1)));
 
         let menu =
-            EnvironmentMenu::new(MenuScope::Collection(api.id), &selection, &collections).unwrap();
+            EnvironmentMenu::new(MenuScope::Collection(api.id), &selection, &collections, &[])
+                .unwrap();
 
         assert_eq!(menu.label, "Staging");
         assert_eq!(menu.tooltip, "API › Staging");
@@ -209,6 +223,7 @@ mod tests {
             MenuScope::Collection(api.id),
             &EnvironmentSelection::default(),
             &collections,
+            &[],
         )
         .unwrap();
 
@@ -230,6 +245,7 @@ mod tests {
             MenuScope::Collection(Uuid::new_v4()),
             &EnvironmentSelection::default(),
             &[],
+            &[],
         );
         assert_eq!(menu, None);
     }
@@ -244,7 +260,7 @@ mod tests {
         // Active, but not the draft collection's, so not checked.
         selection.set_active_environment(api.id, Some(env_id(&api, 0)));
 
-        let menu = EnvironmentMenu::new(MenuScope::Draft, &selection, &collections).unwrap();
+        let menu = EnvironmentMenu::new(MenuScope::Draft, &selection, &collections, &[]).unwrap();
 
         assert_eq!(menu.label, NO_ENVIRONMENT);
         assert_eq!(menu.tooltip, "Environment");
@@ -272,7 +288,7 @@ mod tests {
         selection.set_active_environment(api.id, Some(env_id(&api, 0)));
         selection.set_draft_collection(Some(payments.id), Some(env_id(&payments, 1)));
 
-        let menu = EnvironmentMenu::new(MenuScope::Draft, &selection, &collections).unwrap();
+        let menu = EnvironmentMenu::new(MenuScope::Draft, &selection, &collections, &[]).unwrap();
 
         assert_eq!(menu.label, "Prod");
         assert_eq!(menu.tooltip, "Payments › Prod");
@@ -300,7 +316,7 @@ mod tests {
         let mut selection = EnvironmentSelection::default();
         selection.set_draft_collection(Some(empty.id), None);
 
-        let menu = EnvironmentMenu::new(MenuScope::Draft, &selection, &collections).unwrap();
+        let menu = EnvironmentMenu::new(MenuScope::Draft, &selection, &collections, &[]).unwrap();
 
         assert_eq!(menu.tooltip, "Empty › No environment");
         assert_eq!(
@@ -311,5 +327,42 @@ mod tests {
                 EnvironmentMenuItem::Manage(empty.id),
             ]
         );
+    }
+
+    #[test]
+    fn draft_using_a_shared_environment_checks_no_collection_item() {
+        let api = collection("API", &["Local"]);
+        let collections = [api.clone()];
+        let dev = Arc::new(environment("Dev"));
+        let mut selection = EnvironmentSelection::default();
+        selection.set_draft_collection(Some(api.id), Some(env_id(&api, 0)));
+        selection.set_draft_shared_environment(dev.id);
+
+        let menu =
+            EnvironmentMenu::new(MenuScope::Draft, &selection, &collections, &[dev]).unwrap();
+
+        assert_eq!(menu.label, "Dev");
+        assert_eq!(menu.tooltip, "Shared › Dev");
+        assert_eq!(
+            menu.items,
+            vec![
+                no_environment(false),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::Heading("API".into()),
+                choice(&api, 0, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn draft_using_a_deleted_shared_environment_has_no_environment() {
+        let mut selection = EnvironmentSelection::default();
+        selection.set_draft_shared_environment(Uuid::new_v4());
+
+        let menu = EnvironmentMenu::new(MenuScope::Draft, &selection, &[], &[]).unwrap();
+
+        assert_eq!(menu.label, NO_ENVIRONMENT);
+        assert_eq!(menu.tooltip, "Environment");
+        assert_eq!(menu.items, vec![no_environment(true)]);
     }
 }

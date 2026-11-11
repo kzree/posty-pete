@@ -1,11 +1,12 @@
 use std::time::Duration;
 
+use futures::future;
 use gpui::{App, Context, FutureExt as _, Window};
 
 use super::Workspace;
 use crate::actions::Quit;
 
-/// How long closing waits for queued collection saves.
+/// How long closing waits for queued collection and shared environment saves.
 const SAVE_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
@@ -78,18 +79,22 @@ impl Workspace {
         true
     }
 
-    /// Closes once the collection saves are on disk, so choosing Save isn't lost.
+    /// Closes once the collection and shared environment saves are on disk,
+    /// so choosing Save isn't lost.
     fn close(&mut self, close: Close, window: &mut Window, cx: &mut Context<Self>) {
         self.closing = true;
         self.flush_collection_variables(cx);
-        let saved = self.collections.read(cx).flushed();
+        let saved = future::join(
+            self.collections.read(cx).flushed(),
+            self.shared_environments.read(cx).flushed(),
+        );
         cx.spawn_in(window, async move |this, cx| {
             if saved
                 .with_timeout(SAVE_TIMEOUT, cx.background_executor())
                 .await
                 .is_err()
             {
-                tracing::warn!("closing before the collections were saved");
+                tracing::warn!("closing before the collections and environments were saved");
             }
             this.update_in(cx, |this, window, cx| match close {
                 Close::Window => {

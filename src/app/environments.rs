@@ -35,6 +35,18 @@ impl Workspace {
         self.environments_changed(window, cx);
     }
 
+    /// Resolves drafts against shared environment `id` alone.
+    #[expect(dead_code, reason = "used by the picker's Shared group, task 58")]
+    pub(super) fn set_draft_shared_environment(
+        &mut self,
+        id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.environments.set_draft_shared_environment(id);
+        self.environments_changed(window, cx);
+    }
+
     /// Opens the collection's page on the Environments tab, with
     /// `environment_id` selected if given.
     pub(super) fn open_environments(
@@ -129,7 +141,12 @@ impl Workspace {
     }
 
     fn environment_menu(&self, scope: MenuScope, cx: &App) -> Option<EnvironmentMenu> {
-        EnvironmentMenu::new(scope, &self.environments, self.collections.read(cx).all())
+        EnvironmentMenu::new(
+            scope,
+            &self.environments,
+            self.collections.read(cx).all(),
+            self.shared_environments.read(cx).all(),
+        )
     }
 
     fn on_environment_picker_action(
@@ -168,6 +185,15 @@ impl Workspace {
     fn environments_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_collection_view(window, cx);
         self.refresh_dirty(window, cx);
+        self.schedule_navigation_save(cx);
+        cx.notify();
+    }
+
+    /// Shared environments loaded or changed: the hint and the picker may
+    /// read differently, and a deleted draft source is dropped on save.
+    pub(super) fn shared_environments_changed(&mut self, cx: &mut Context<Self>) {
+        let request = self.request_editor.read(cx).build_request(cx);
+        self.sync_unresolved_variables(&request, cx);
         self.schedule_navigation_save(cx);
         cx.notify();
     }

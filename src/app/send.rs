@@ -30,30 +30,22 @@ fn flatten_send_result(
     }
 }
 
-/// The collection the editor's request resolves against: a saved request's
-/// own, the draft collection for the draft.
-fn editor_collection<'a>(
-    content: EditorContent,
-    selection: &EnvironmentSelection,
-    collections: &'a [Arc<Collection>],
-) -> Option<&'a Arc<Collection>> {
-    match content {
-        EditorContent::Saved { collection_id, .. } => collections
-            .iter()
-            .find(|collection| collection.id == collection_id),
-        EditorContent::Draft => selection.draft_collection(collections),
-    }
-}
-
-/// The variables that apply to what the editor holds: its collection's, with
-/// that collection's active environment and its base. `None` without a collection.
+/// The variables that apply to what the editor holds: a saved request's
+/// collection's, with that collection's active environment and its base; the
+/// draft's source's for the draft. `None` with nothing to resolve against.
 fn editor_variables(
     content: EditorContent,
     selection: &EnvironmentSelection,
     collections: &[Arc<Collection>],
     shared: &[Arc<Environment>],
 ) -> Option<Variables> {
-    editor_collection(content, selection, collections).map(|c| selection.variables(c, shared))
+    match content {
+        EditorContent::Saved { collection_id, .. } => collections
+            .iter()
+            .find(|collection| collection.id == collection_id)
+            .map(|collection| selection.variables(collection, shared)),
+        EditorContent::Draft => selection.draft_variables(collections, shared),
+    }
 }
 
 fn resolve(request: Request, variables: Option<&Variables>) -> Request {
@@ -208,7 +200,7 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        collection::{add_environment, set_environment_variables},
+        collection::{add_environment, set_environment_base, set_environment_variables},
         request::KeyValue,
     };
 
@@ -334,6 +326,55 @@ mod tests {
         let collections = [collection(vec![row(true, "base", "https://api")])];
         let mut selection = none();
         selection.set_draft_collection(Some(Uuid::new_v4()), None);
+        assert_eq!(
+            editor_variables(EditorContent::Draft, &selection, &collections, &[]),
+            None
+        );
+    }
+
+    fn shared(variables: Vec<KeyValue>) -> Arc<Environment> {
+        let mut environment = Environment::new("Shared");
+        environment.variables = variables;
+        Arc::new(environment)
+    }
+
+    #[test]
+    fn saved_request_uses_the_base_of_its_active_environment() {
+        let base = collection(vec![row(true, "id", "1")]);
+        let (own, staging) = with_environment(&base);
+        let dev = shared(vec![row(true, "base", "https://dev"), row(true, "id", "2")]);
+        let mut collections = [own.clone()];
+        assert!(set_environment_base(
+            &mut collections,
+            own.id,
+            staging,
+            Some(dev.id)
+        ));
+        let mut selection = none();
+        selection.set_active_environment(own.id, Some(staging));
+
+        let variables =
+            editor_variables(saved_in(own.id), &selection, &collections, &[dev]).unwrap();
+        assert_eq!(variables.get("base"), Some("https://staging"));
+        assert_eq!(variables.get("id"), Some("2"));
+    }
+
+    #[test]
+    fn draft_with_a_shared_environment_uses_only_its_variables() {
+        let collections = [collection(vec![row(true, "id", "1")])];
+        let dev = shared(vec![row(true, "base", "https://dev")]);
+        let mut selection = none();
+        selection.set_draft_shared_environment(dev.id);
+
+        let variables = editor_variables(
+            EditorContent::Draft,
+            &selection,
+            &collections,
+            std::slice::from_ref(&dev),
+        );
+        let sent = resolve(templated(), variables.as_ref());
+        assert_eq!(sent.url, "https://dev/users/{{id}}");
+
         assert_eq!(
             editor_variables(EditorContent::Draft, &selection, &collections, &[]),
             None

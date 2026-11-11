@@ -40,7 +40,6 @@ pub fn find(shared: &[Arc<Environment>], id: Uuid) -> Option<&Environment> {
 
 /// The shared environment's variables alone, or `None` if there's no such
 /// environment.
-#[cfg_attr(not(test), expect(dead_code, reason = "used for drafts from task 55"))]
 pub fn shared_variables(shared: &[Arc<Environment>], id: Uuid) -> Option<Variables> {
     find(shared, id).map(|env| Variables::layered([env.variables.as_slice()]))
 }
