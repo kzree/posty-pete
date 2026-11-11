@@ -41,7 +41,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## App
 
 - [ ] **In-window menu bar on Windows/Linux.** The native menu bar (`src/menus.rs`) only shows on macOS.
-- [ ] **Apply and save settings.** The Settings page (General, Appearance, Requests, History & data, AI, Shortcuts, About) is UI only: controls keep local state and change nothing. Persist them (e.g. `settings.json`) and apply them; wiring notes are in task 61.
+- [ ] **Apply and save the remaining settings.** `settings.json` and the `AppSettings` global exist and the theme is wired (tasks 65–66). The other Settings controls are still UI only; wire them one by one (notes in task 61).
 - [ ] **MCP server.** A built-in MCP server so AI assistants (Claude Code, Claude Desktop, ...) can list collections and environments, send requests and read responses and history. Local only (127.0.0.1) with an access token, per-capability permissions and "ask before sending". Its settings UI is on Settings › AI (UI only so far). When wiring it: generate and keep a real token in the keychain, make Copy and Regenerate work, and decide whether the client snippet shows the real token.
 - [ ] **Customizable shortcuts.** Let users rebind the actions listed on the Shortcuts settings page.
 - [ ] **About links.** Make the licence/project URLs on the About page open in the browser, and add repository/licence links once `Cargo.toml` declares them.
