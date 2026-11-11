@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use futures::{
-    StreamExt,
-    channel::{mpsc, oneshot},
-};
+use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
 use crate::domain::{
     collection::{self, Collection, Folder, Item, Location, SavedRequest},
     request::{KeyValue, Request},
-    store::{self, collection::CollectionStore},
+    store::{
+        self,
+        collection::CollectionStore,
+        jobs::{FailedWrites, StoreJob, WriteFailure},
+    },
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +45,7 @@ pub struct Collections {
     jobs: mpsc::UnboundedSender<Job>,
 }
 
-type Job = Box<dyn FnOnce(&CollectionStore) -> Option<CollectionsEvent> + Send>;
+type Job = StoreJob<CollectionStore>;
 
 impl EventEmitter<CollectionsEvent> for Collections {}
 
@@ -53,20 +54,24 @@ impl Collections {
         let (jobs, mut queued) = mpsc::unbounded::<Job>();
         cx.spawn(async move |this, cx| {
             let opened = cx.background_spawn(async { open_and_load() }).await;
-            let Ok(Some(mut store)) = this.update(cx, |this, cx| this.finish_loading(opened, cx))
-            else {
+            let Ok(mut store) = this.update(cx, |this, cx| this.finish_loading(opened, cx)) else {
                 return;
             };
+            let mut failed = FailedWrites::default();
             while let Some(job) = queued.next().await {
-                let (returned, event) = cx
+                let failure;
+                (store, failed, failure) = cx
                     .background_spawn(async move {
-                        let event = job(&store);
-                        (store, event)
+                        let failure = failed.run(store.as_ref(), job);
+                        (store, failed, failure)
                     })
                     .await;
-                store = returned;
-                if let Some(event) = event
-                    && this.update(cx, |_, cx| cx.emit(event)).is_err()
+                if let Some(WriteFailure { title, error }) = failure
+                    && this
+                        .update(cx, |_, cx| {
+                            cx.emit(CollectionsEvent::Failed { title, error })
+                        })
+                        .is_err()
                 {
                     break;
                 }
@@ -302,9 +307,7 @@ impl Collections {
         self.collections.remove(index);
         cx.emit(CollectionsEvent::Changed);
         cx.notify();
-        self.enqueue("Couldn't delete collection", cx, move |store| {
-            store.delete(collection_id)
-        });
+        self.enqueue_delete(collection_id, cx);
     }
 
     fn add_item(
@@ -323,17 +326,23 @@ impl Collections {
         added
     }
 
-    /// Resolves once every save requested so far has finished or failed.
-    pub fn flushed(&self) -> impl Future<Output = ()> + use<> {
-        let (done, flushed) = oneshot::channel();
-        let job: Job = Box::new(move |_| {
-            done.send(()).ok();
-            None
-        });
-        // If the queue is gone, `done` is dropped and `flushed` resolves too.
+    /// Resolves once every save requested so far has finished or failed, with
+    /// the collections whose last save or delete failed.
+    pub fn flushed(&self) -> impl Future<Output = Vec<Uuid>> + use<> {
+        let (job, flushed) = Job::flush();
+        // If the queue is gone, the job is dropped and `flushed` resolves too.
         self.jobs.unbounded_send(job).ok();
-        async move {
-            flushed.await.ok();
+        async move { flushed.await.unwrap_or_default() }
+    }
+
+    /// Saves each of `ids` again, or deletes it again if it's gone.
+    pub fn retry(&self, ids: &[Uuid], cx: &mut Context<Self>) {
+        for &id in ids {
+            if self.get(id).is_some() {
+                self.enqueue_save(id, cx);
+            } else {
+                self.enqueue_delete(id, cx);
+            }
         }
     }
 
@@ -351,22 +360,27 @@ impl Collections {
         let Some(collection) = self.shared(collection_id) else {
             return;
         };
-        self.enqueue("Couldn't save collection", cx, move |store| {
+        let title = "Couldn't save collection";
+        self.enqueue(collection_id, title, cx, move |store| {
             store.save(&collection)
+        });
+    }
+
+    fn enqueue_delete(&self, collection_id: Uuid, cx: &mut Context<Self>) {
+        let title = "Couldn't delete collection";
+        self.enqueue(collection_id, title, cx, move |store| {
+            store.delete(collection_id)
         });
     }
 
     fn enqueue(
         &self,
+        collection_id: Uuid,
         title: &'static str,
         cx: &mut Context<Self>,
         work: impl FnOnce(&CollectionStore) -> anyhow::Result<()> + Send + 'static,
     ) {
-        let job: Job = Box::new(move |store| {
-            work(store)
-                .err()
-                .map(|error| CollectionsEvent::Failed { title, error })
-        });
+        let job = Job::write(collection_id, title, work);
         if self.jobs.unbounded_send(job).is_err() {
             cx.emit(CollectionsEvent::Failed {
                 title,

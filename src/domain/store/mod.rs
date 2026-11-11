@@ -9,6 +9,7 @@ use serde::Serialize;
 pub mod collection;
 pub mod environment;
 pub mod history;
+pub mod jobs;
 mod json_dir;
 pub mod navigation;
 pub mod settings;

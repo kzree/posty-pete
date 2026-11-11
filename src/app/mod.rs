@@ -119,7 +119,8 @@ pub struct Workspace {
     discard_prompt: Option<Continuation>,
     /// Set while a continuation runs, after the user saved or discarded.
     discard_confirmed: bool,
-    /// Set once the user agreed to quit or close the window, so they aren't asked again.
+    /// Set while quitting or closing the window waits for saves or asks about
+    /// failed ones, so neither starts again.
     closing: bool,
     command_palette_subscription: Option<Subscription>,
     pending: Option<Task<()>>,
@@ -260,15 +261,13 @@ impl Workspace {
             cx.on_app_quit(|this, cx| {
                 this.save_navigation_now(cx);
                 // Best effort: gpui waits only briefly for quit handlers.
-                let collections = this
-                    .flush_pending_variables(cx)
-                    .then(|| this.collections.read(cx).flushed());
-                let shared = this.shared_environments.read(cx).flushed();
+                this.flush_pending_variables(cx);
+                let saved = futures::future::join(
+                    this.collections.read(cx).flushed(),
+                    this.shared_environments.read(cx).flushed(),
+                );
                 async move {
-                    if let Some(collections) = collections {
-                        collections.await;
-                    }
-                    shared.await;
+                    saved.await;
                 }
             }),
         ]

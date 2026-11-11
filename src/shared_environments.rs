@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use futures::{
-    StreamExt,
-    channel::{mpsc, oneshot},
-};
+use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
 use crate::domain::{
     environment::{self, Environment},
     request::KeyValue,
-    store::{self, environment::EnvironmentStore},
+    store::{
+        self,
+        environment::EnvironmentStore,
+        jobs::{FailedWrites, StoreJob, WriteFailure},
+    },
 };
 
 pub enum SharedEnvironmentsEvent {
@@ -32,7 +33,7 @@ pub struct SharedEnvironments {
     jobs: mpsc::UnboundedSender<Job>,
 }
 
-type Job = Box<dyn FnOnce(&EnvironmentStore) -> Option<SharedEnvironmentsEvent> + Send>;
+type Job = StoreJob<EnvironmentStore>;
 
 impl EventEmitter<SharedEnvironmentsEvent> for SharedEnvironments {}
 
@@ -41,20 +42,24 @@ impl SharedEnvironments {
         let (jobs, mut queued) = mpsc::unbounded::<Job>();
         cx.spawn(async move |this, cx| {
             let opened = cx.background_spawn(async { open_and_load() }).await;
-            let Ok(Some(mut store)) = this.update(cx, |this, cx| this.finish_loading(opened, cx))
-            else {
+            let Ok(mut store) = this.update(cx, |this, cx| this.finish_loading(opened, cx)) else {
                 return;
             };
+            let mut failed = FailedWrites::default();
             while let Some(job) = queued.next().await {
-                let (returned, event) = cx
+                let failure;
+                (store, failed, failure) = cx
                     .background_spawn(async move {
-                        let event = job(&store);
-                        (store, event)
+                        let failure = failed.run(store.as_ref(), job);
+                        (store, failed, failure)
                     })
                     .await;
-                store = returned;
-                if let Some(event) = event
-                    && this.update(cx, |_, cx| cx.emit(event)).is_err()
+                if let Some(WriteFailure { title, error }) = failure
+                    && this
+                        .update(cx, |_, cx| {
+                            cx.emit(SharedEnvironmentsEvent::Failed { title, error })
+                        })
+                        .is_err()
                 {
                     break;
                 }
@@ -78,17 +83,30 @@ impl SharedEnvironments {
         self.loaded
     }
 
-    /// Resolves once every save requested so far has finished or failed.
-    pub fn flushed(&self) -> impl Future<Output = ()> + use<> {
-        let (done, flushed) = oneshot::channel();
-        let job: Job = Box::new(move |_| {
-            done.send(()).ok();
-            None
-        });
-        // If the queue is gone, `done` is dropped and `flushed` resolves too.
+    pub fn get(&self, id: Uuid) -> Option<&Environment> {
+        self.environments
+            .iter()
+            .find(|env| env.id == id)
+            .map(|env| &**env)
+    }
+
+    /// Resolves once every save requested so far has finished or failed, with
+    /// the environments whose last save or delete failed.
+    pub fn flushed(&self) -> impl Future<Output = Vec<Uuid>> + use<> {
+        let (job, flushed) = Job::flush();
+        // If the queue is gone, the job is dropped and `flushed` resolves too.
         self.jobs.unbounded_send(job).ok();
-        async move {
-            flushed.await.ok();
+        async move { flushed.await.unwrap_or_default() }
+    }
+
+    /// Saves each of `ids` again, or deletes it again if it's gone.
+    pub fn retry(&self, ids: &[Uuid], cx: &mut Context<Self>) {
+        for &id in ids {
+            if self.get(id).is_some() {
+                self.enqueue_save(id, cx);
+            } else {
+                self.enqueue_delete(id, cx);
+            }
         }
     }
 
@@ -113,9 +131,7 @@ impl SharedEnvironments {
         }
         cx.emit(SharedEnvironmentsEvent::Changed);
         cx.notify();
-        self.enqueue("Couldn't delete environment", cx, move |store| {
-            store.delete(id)
-        });
+        self.enqueue_delete(id, cx);
     }
 
     /// Saves only if `variables` differ from the stored ones.
@@ -130,25 +146,32 @@ impl SharedEnvironments {
     fn changed(&mut self, id: Uuid, cx: &mut Context<Self>) {
         cx.emit(SharedEnvironmentsEvent::Changed);
         cx.notify();
+        self.enqueue_save(id, cx);
+    }
+
+    fn enqueue_save(&self, id: Uuid, cx: &mut Context<Self>) {
         let Some(environment) = self.environments.iter().find(|env| env.id == id).cloned() else {
             return;
         };
-        self.enqueue("Couldn't save environment", cx, move |store| {
+        self.enqueue(id, "Couldn't save environment", cx, move |store| {
             store.save(&environment)
+        });
+    }
+
+    fn enqueue_delete(&self, id: Uuid, cx: &mut Context<Self>) {
+        self.enqueue(id, "Couldn't delete environment", cx, move |store| {
+            store.delete(id)
         });
     }
 
     fn enqueue(
         &self,
+        id: Uuid,
         title: &'static str,
         cx: &mut Context<Self>,
         work: impl FnOnce(&EnvironmentStore) -> anyhow::Result<()> + Send + 'static,
     ) {
-        let job: Job = Box::new(move |store| {
-            work(store)
-                .err()
-                .map(|error| SharedEnvironmentsEvent::Failed { title, error })
-        });
+        let job = Job::write(id, title, work);
         if self.jobs.unbounded_send(job).is_err() {
             cx.emit(SharedEnvironmentsEvent::Failed {
                 title,
