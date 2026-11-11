@@ -352,7 +352,7 @@ mod tests {
             .insert(&ok(now - TimeDelta::days(15), "drop"))
             .unwrap();
 
-        assert_eq!(store.prune(retention_cutoff(&now)).unwrap(), 1);
+        assert_eq!(store.prune(retention_cutoff(&now, 14)).unwrap(), 1);
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "keep");
@@ -367,7 +367,7 @@ mod tests {
             .insert(&ok(now - TimeDelta::days(15), "drop"))
             .unwrap();
 
-        let entries = store.prune_and_load(retention_cutoff(&now)).unwrap();
+        let entries = store.prune_and_load(retention_cutoff(&now, 14)).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "keep");
         assert_eq!(store.since(DateTime::UNIX_EPOCH).unwrap().len(), 1);
@@ -389,7 +389,7 @@ mod tests {
             .unwrap();
 
         let store = HistoryStore::open(&path).unwrap();
-        assert!(store.prune_and_load(retention_cutoff(&now)).is_err());
+        assert!(store.prune_and_load(retention_cutoff(&now, 14)).is_err());
         store.insert(&ok(now, "new")).unwrap();
     }
 

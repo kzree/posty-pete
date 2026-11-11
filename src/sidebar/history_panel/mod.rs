@@ -2,6 +2,7 @@ mod delegate;
 mod format;
 mod menu;
 
+use chrono::{DateTime, Utc};
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, Styled, Subscription, Window, div,
@@ -92,6 +93,15 @@ impl HistoryPanel {
         });
     }
 
+    /// Drops entries sent before `cutoff`, and refreshes the day labels.
+    pub fn prune(&mut self, cutoff: DateTime<Utc>, window: &mut Window, cx: &mut Context<Self>) {
+        let mut removed = false;
+        self.update_rows(window, cx, |delegate| removed = delegate.prune(cutoff));
+        if removed {
+            self.deselect(window, cx);
+        }
+    }
+
     pub fn push(&mut self, entry: HistorySummary, window: &mut Window, cx: &mut Context<Self>) {
         self.update_rows_and_deselect(window, cx, |delegate| delegate.push(entry));
     }
@@ -108,6 +118,10 @@ impl HistoryPanel {
         f: impl FnOnce(&mut HistoryDelegate),
     ) {
         self.update_rows(window, cx, f);
+        self.deselect(window, cx);
+    }
+
+    fn deselect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.list
             .update(cx, |list, cx| list.set_selected_index(None, window, cx));
     }
@@ -151,7 +165,8 @@ impl HistoryPanel {
         }
     }
 
-    fn confirm_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Asks before emitting [`HistoryPanelEvent::Clear`].
+    pub fn confirm_clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.list.read(cx).delegate().entries.len();
         let panel = cx.weak_entity();
         open_confirm_dialog(

@@ -42,7 +42,7 @@ use crate::{
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},
     settings::{AppSettings, SettingsEvent},
-    settings_page::SettingsPage,
+    settings_page::{SettingsPage, SettingsPageEvent},
     shared_environments::{SharedEnvironments, SharedEnvironmentsEvent},
     shared_environments_view::SharedEnvironmentsView,
     sidebar::{Sidebar, SidebarTab, history_panel::HistoryPanel, library_panel::LibraryPanel},
@@ -244,6 +244,20 @@ impl Workspace {
             cx.subscribe_in(&self.history_panel, window, |this, _, event, window, cx| {
                 this.on_history_panel_event(event, window, cx)
             }),
+            cx.observe(&self.history_panel, |this, panel, cx| {
+                let empty = panel.read(cx).entries(cx).is_empty();
+                this.settings_page
+                    .update(cx, |page, cx| page.set_history_empty(empty, cx));
+            }),
+            cx.subscribe_in(
+                &self.settings_page,
+                window,
+                |this, _, event, window, cx| match event {
+                    SettingsPageEvent::ClearHistory => this
+                        .history_panel
+                        .update(cx, |panel, cx| panel.confirm_clear(window, cx)),
+                },
+            ),
             cx.subscribe_in(
                 &self.request_editor,
                 window,

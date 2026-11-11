@@ -9,9 +9,9 @@ mod reveal;
 mod shortcuts;
 
 use gpui::{
-    AnyElement, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Point, Render, Role, ScrollHandle, StatefulInteractiveElement,
-    Styled, Window, div, px,
+    AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Point, Render, Role, ScrollHandle,
+    StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, Selectable, StyledExt,
@@ -31,7 +31,7 @@ use about::AboutPage;
 use ai::AiPage;
 use appearance::AppearancePage;
 use general::GeneralPage;
-use history_and_data::HistoryAndDataPage;
+use history_and_data::{HistoryAndDataEvent, HistoryAndDataPage};
 use requests::RequestsPage;
 use reveal::{Reveal, row, row_standing_in};
 use shortcuts::ShortcutsPage;
@@ -48,6 +48,11 @@ fn section_icon(section: SettingsSection) -> Icon {
     }
 }
 
+pub enum SettingsPageEvent {
+    /// Clear history was clicked; the confirmation is still to come.
+    ClearHistory,
+}
+
 /// The `/settings` page: a menu of sections and the selected one.
 pub struct SettingsPage {
     section: SettingsSection,
@@ -62,12 +67,19 @@ pub struct SettingsPage {
     ai: Entity<AiPage>,
     shortcuts: Entity<ShortcutsPage>,
     about: Entity<AboutPage>,
+    _history_and_data: Subscription,
 }
+
+impl EventEmitter<SettingsPageEvent> for SettingsPage {}
 
 impl SettingsPage {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let scroll = ScrollHandle::new();
         let reveal = cx.new(|_| Reveal::new(scroll.clone()));
+        let history_and_data = cx.new(|cx| HistoryAndDataPage::new(reveal.clone(), window, cx));
+        let _history_and_data = cx.subscribe(&history_and_data, |_, _, event, cx| match event {
+            HistoryAndDataEvent::ClearHistory => cx.emit(SettingsPageEvent::ClearHistory),
+        });
         Self {
             section: SettingsSection::default(),
             menu_focus: SettingsSection::ALL
@@ -78,12 +90,19 @@ impl SettingsPage {
             general: cx.new(|cx| GeneralPage::new(reveal.clone(), cx)),
             appearance: cx.new(|cx| AppearancePage::new(reveal.clone(), window, cx)),
             requests: cx.new(|cx| RequestsPage::new(reveal.clone(), window, cx)),
-            history_and_data: cx.new(|cx| HistoryAndDataPage::new(reveal.clone(), window, cx)),
+            history_and_data,
             ai: cx.new(|cx| AiPage::new(reveal.clone(), window, cx)),
             shortcuts: cx.new(|_| ShortcutsPage::new(reveal.clone())),
             about: cx.new(|_| AboutPage),
             reveal,
+            _history_and_data,
         }
+    }
+
+    /// Disables Clear history when there's nothing to clear.
+    pub fn set_history_empty(&mut self, empty: bool, cx: &mut Context<Self>) {
+        self.history_and_data
+            .update(cx, |page, cx| page.set_history_empty(empty, cx));
     }
 
     /// Shows `section`, from the top.

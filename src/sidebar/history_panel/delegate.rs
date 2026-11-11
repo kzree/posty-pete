@@ -1,6 +1,6 @@
 use std::{collections::HashSet, ops::Range};
 
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
 use gpui::{
     App, Context, IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
@@ -55,6 +55,15 @@ impl HistoryDelegate {
     pub(super) fn remove(&mut self, id: i64) {
         self.entries.retain(|entry| entry.id != id);
         self.regroup();
+    }
+
+    /// Returns whether any entries were removed.
+    pub(super) fn prune(&mut self, cutoff: DateTime<Utc>) -> bool {
+        let removed = history::prune_summaries(&mut self.entries, cutoff);
+        if removed {
+            self.regroup();
+        }
+        removed
     }
 
     pub(super) fn toggle(&mut self, day: NaiveDate) {

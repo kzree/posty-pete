@@ -12,6 +12,7 @@ pub struct Settings {
     pub general: GeneralSettings,
     pub appearance: AppearanceSettings,
     pub requests: RequestSettings,
+    pub history: HistorySettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +137,29 @@ pub enum ProxyMode {
     #[default]
     System,
     Custom,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistorySettings {
+    pub retention_days: u32,
+}
+
+impl HistorySettings {
+    pub const DEFAULT_RETENTION_DAYS: u32 = 14;
+    pub const RETENTION_DAYS: RangeInclusive<u32> = 1..=365;
+
+    pub fn retention_days(&self) -> u32 {
+        clamp(self.retention_days, &Self::RETENTION_DAYS)
+    }
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        Self {
+            retention_days: Self::DEFAULT_RETENTION_DAYS,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -301,5 +325,36 @@ mod tests {
         assert_eq!(appearance.editor_font_family(), None);
         appearance.editor_font_family = " Fira Code ".into();
         assert_eq!(appearance.editor_font_family(), Some("Fira Code"));
+    }
+
+    #[test]
+    fn missing_history_loads_as_defaults() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"appearance":{"theme":"light"}}"#).unwrap();
+        assert_eq!(settings.history.retention_days, 14);
+        assert_eq!(settings.history.retention_days(), 14);
+    }
+
+    #[test]
+    fn history_round_trips() {
+        let settings = Settings {
+            history: HistorySettings { retention_days: 30 },
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains(r#""retention_days":30"#), "{json}");
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
+    }
+
+    #[test]
+    fn retention_from_the_file_is_clamped() {
+        assert_eq!(HistorySettings { retention_days: 0 }.retention_days(), 1);
+        assert_eq!(
+            HistorySettings {
+                retention_days: 9999
+            }
+            .retention_days(),
+            365
+        );
     }
 }

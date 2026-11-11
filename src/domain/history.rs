@@ -4,8 +4,6 @@ use chrono::{DateTime, Datelike, Days, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use super::request::{HttpMethod, Request};
 
-pub const RETENTION_DAYS: u64 = 14;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Outcome {
     pub status: u16,
@@ -37,19 +35,50 @@ pub enum OpenMode {
     Send,
 }
 
-/// Start of the oldest day to keep: local midnight `RETENTION_DAYS - 1` days before `now`.
-/// Where a DST change skips midnight, the day starts at its first valid hour.
-pub fn retention_cutoff<Tz: TimeZone>(now: &DateTime<Tz>) -> DateTime<Utc> {
-    let first_day = now.date_naive() - Days::new(RETENTION_DAYS - 1);
+/// Start of the oldest day to keep: local midnight `retention_days - 1` days
+/// before `now`, so 1 keeps only today.
+pub fn retention_cutoff<Tz: TimeZone>(now: &DateTime<Tz>, retention_days: u32) -> DateTime<Utc> {
+    let first_day = now.date_naive() - Days::new(retention_days.max(1) as u64 - 1);
+    day_start(first_day, &now.timezone())
+}
+
+/// Local midnight of `day`. Where a DST change skips midnight, the day starts
+/// at its first valid hour.
+fn day_start<Tz: TimeZone>(day: NaiveDate, tz: &Tz) -> DateTime<Utc> {
     (0..24)
         .find_map(|hour| {
-            first_day
-                .and_hms_opt(hour, 0, 0)?
-                .and_local_timezone(now.timezone())
+            day.and_hms_opt(hour, 0, 0)?
+                .and_local_timezone(tz.clone())
                 .earliest()
         })
         .map(|t| t.with_timezone(&Utc))
-        .unwrap_or_else(|| first_day.and_time(NaiveTime::MIN).and_utc())
+        .unwrap_or_else(|| day.and_time(NaiveTime::MIN).and_utc())
+}
+
+/// Drops entries sent before `cutoff`. Returns whether any were.
+pub fn prune_summaries(entries: &mut Vec<HistorySummary>, cutoff: DateTime<Utc>) -> bool {
+    let len = entries.len();
+    entries.retain(|entry| entry.sent_at >= cutoff);
+    entries.len() != len
+}
+
+/// Whether `now` is on a different local day than `last_day`, so day labels
+/// ("Today", "Yesterday") need refreshing.
+pub fn day_rolled_over<Tz: TimeZone>(last_day: NaiveDate, now: &DateTime<Tz>) -> bool {
+    now.date_naive() != last_day
+}
+
+/// How long to wait before the next prune: `interval`, or until just after
+/// the next local midnight if that's sooner.
+pub fn next_prune_in<Tz: TimeZone>(now: &DateTime<Tz>, interval: Duration) -> Duration {
+    const PAST_MIDNIGHT: Duration = Duration::from_secs(1);
+    let Some(tomorrow) = now.date_naive().succ_opt() else {
+        return interval;
+    };
+    let until_midnight = (day_start(tomorrow, &now.timezone()) - now.with_timezone(&Utc))
+        .to_std()
+        .unwrap_or_default();
+    interval.min(until_midnight + PAST_MIDNIGHT)
 }
 
 /// Index ranges into `entries`, one per local day. Expects `entries` newest first,
@@ -95,6 +124,7 @@ mod tests {
     use chrono::FixedOffset;
 
     use super::*;
+    use crate::domain::settings::HistorySettings;
 
     fn at(rfc3339: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(rfc3339).unwrap().to_utc()
@@ -146,7 +176,77 @@ mod tests {
     fn retention_cutoff_is_local_midnight() {
         let tz = FixedOffset::east_opt(2 * 3600).unwrap();
         let now = tz.with_ymd_and_hms(2026, 11, 10, 15, 30, 0).unwrap();
-        assert_eq!(retention_cutoff(&now), at("2026-10-28T00:00:00+02:00"));
+        assert_eq!(retention_cutoff(&now, 14), at("2026-10-28T00:00:00+02:00"));
+    }
+
+    #[test]
+    fn retention_cutoff_follows_the_setting() {
+        let tz = FixedOffset::east_opt(2 * 3600).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 11, 10, 15, 30, 0).unwrap();
+        let days = HistorySettings { retention_days: 1 }.retention_days();
+        assert_eq!(
+            retention_cutoff(&now, days),
+            at("2026-11-10T00:00:00+02:00")
+        );
+        let days = HistorySettings { retention_days: 0 }.retention_days();
+        assert_eq!(
+            retention_cutoff(&now, days),
+            at("2026-11-10T00:00:00+02:00")
+        );
+        assert_eq!(retention_cutoff(&now, 0), at("2026-11-10T00:00:00+02:00"));
+        let days = HistorySettings {
+            retention_days: 365,
+        }
+        .retention_days();
+        assert_eq!(
+            retention_cutoff(&now, days),
+            at("2025-11-11T00:00:00+02:00")
+        );
+    }
+
+    #[test]
+    fn prune_summaries_drops_entries_before_the_cutoff() {
+        let mut entries = vec![
+            summary("2026-11-10T08:00:00Z"),
+            summary("2026-11-09T00:00:00Z"),
+            summary("2026-11-08T23:59:59Z"),
+        ];
+        assert!(prune_summaries(&mut entries, at("2026-11-09T00:00:00Z")));
+        let kept: Vec<_> = entries.iter().map(|e| e.sent_at).collect();
+        assert_eq!(
+            kept,
+            [at("2026-11-10T08:00:00Z"), at("2026-11-09T00:00:00Z")]
+        );
+        assert!(!prune_summaries(&mut entries, at("2026-11-09T00:00:00Z")));
+        assert!(prune_summaries(&mut entries, at("2026-11-11T00:00:00Z")));
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn day_rolls_over_at_local_midnight() {
+        let tz = FixedOffset::east_opt(2 * 3600).unwrap();
+        let day = date(2026, 11, 10);
+        let before = tz.with_ymd_and_hms(2026, 11, 10, 23, 59, 59).unwrap();
+        let after = tz.with_ymd_and_hms(2026, 11, 11, 0, 0, 1).unwrap();
+        assert!(!day_rolled_over(day, &before));
+        assert!(day_rolled_over(day, &after));
+        // 22:30 UTC is already the next day here.
+        assert!(day_rolled_over(
+            day,
+            &at("2026-11-10T22:30:00Z").with_timezone(&tz)
+        ));
+    }
+
+    #[test]
+    fn next_prune_is_hourly_or_just_after_midnight() {
+        let tz = FixedOffset::east_opt(2 * 3600).unwrap();
+        let hour = Duration::from_secs(3600);
+        let noon = tz.with_ymd_and_hms(2026, 11, 10, 12, 0, 0).unwrap();
+        assert_eq!(next_prune_in(&noon, hour), hour);
+        let late = tz.with_ymd_and_hms(2026, 11, 10, 23, 50, 0).unwrap();
+        assert_eq!(next_prune_in(&late, hour), Duration::from_secs(10 * 60 + 1));
+        let midnight = tz.with_ymd_and_hms(2026, 11, 11, 0, 0, 0).unwrap();
+        assert_eq!(next_prune_in(&midnight, hour), hour);
     }
 
     #[test]

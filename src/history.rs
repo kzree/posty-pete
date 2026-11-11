@@ -1,18 +1,21 @@
-use std::mem;
+use std::{mem, time::Duration};
 
 use anyhow::{Context as _, anyhow};
-use chrono::Local;
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use futures::{
     StreamExt,
     channel::{mpsc, oneshot},
 };
-use gpui::{App, AppContext, Context, EventEmitter, Task};
+use gpui::{App, AppContext, Context, EventEmitter, Subscription, Task};
 
 use crate::domain::{
     history::{self, HistoryRecord, HistorySummary, OpenMode},
     request::Request,
     store::{self, history::HistoryStore},
 };
+use crate::settings::AppSettings;
+
+const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 pub enum HistoryEvent {
     /// Sent once at startup. Always emitted before any `Recorded`.
@@ -29,6 +32,10 @@ pub enum HistoryEvent {
     },
     Deleted(i64),
     Cleared,
+    /// Entries sent before `cutoff` were removed, or the local day changed.
+    Pruned {
+        cutoff: DateTime<Utc>,
+    },
     /// `title` says what didn't happen, e.g. "Couldn't clear history".
     Failed {
         title: &'static str,
@@ -44,6 +51,11 @@ pub enum HistoryEvent {
 /// database, e.g. a save can't land after a later Clear.
 pub struct History {
     state: State,
+    retention_days: u32,
+    /// The local day of the last prune.
+    today: NaiveDate,
+    _prune_timer: Task<()>,
+    _settings: Subscription,
 }
 
 type Job = Box<dyn FnOnce(&HistoryStore) -> Option<HistoryEvent> + Send>;
@@ -61,16 +73,61 @@ impl EventEmitter<HistoryEvent> for History {}
 
 impl History {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let retention_days = retention_days(cx);
         cx.spawn(async move |this, cx| {
-            let opened = cx.background_spawn(async { open_and_load() }).await;
+            let opened = cx
+                .background_spawn(async move { open_and_load(retention_days) })
+                .await;
             this.update(cx, |this, cx| this.finish_opening(opened, cx))
                 .ok();
         })
         .detach();
 
+        let _prune_timer = cx.spawn(async move |this, cx| {
+            loop {
+                let delay = history::next_prune_in(&Local::now(), PRUNE_INTERVAL);
+                cx.background_executor().timer(delay).await;
+                if this.update(cx, |this, cx| this.prune(cx)).is_err() {
+                    break;
+                }
+            }
+        });
+
         Self {
             state: State::Opening { queued: Vec::new() },
+            retention_days,
+            today: Local::now().date_naive(),
+            _prune_timer,
+            _settings: cx.observe_global::<AppSettings>(Self::settings_changed),
         }
+    }
+
+    fn settings_changed(&mut self, cx: &mut Context<Self>) {
+        let days = retention_days(cx);
+        if days == self.retention_days {
+            return;
+        }
+        self.retention_days = days;
+        self.prune(cx);
+    }
+
+    /// Removes entries older than the retention setting allows. Emits
+    /// `Pruned` if any were removed or the local day changed.
+    fn prune(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.state, State::Ready(_)) {
+            return;
+        }
+        let now = Local::now();
+        let rolled_over = history::day_rolled_over(self.today, &now);
+        self.today = now.date_naive();
+        let cutoff = history::retention_cutoff(&now, retention_days(cx));
+        self.enqueue(Box::new(move |store| {
+            let removed = store.prune(cutoff).unwrap_or_else(|e| {
+                tracing::warn!("failed to prune history: {e:#}");
+                0
+            });
+            (removed > 0 || rolled_over).then_some(HistoryEvent::Pruned { cutoff })
+        }));
     }
 
     pub fn open(&mut self, id: i64, mode: OpenMode, cx: &mut Context<Self>) {
@@ -233,13 +290,19 @@ impl History {
 }
 
 /// Fails only if the database can't be opened; a failed load still returns the store.
-fn open_and_load() -> anyhow::Result<(HistoryStore, anyhow::Result<Vec<HistorySummary>>)> {
+fn open_and_load(
+    retention_days: u32,
+) -> anyhow::Result<(HistoryStore, anyhow::Result<Vec<HistorySummary>>)> {
     let path = store::data_dir()?.join("history.db");
     let store =
         HistoryStore::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
 
-    let entries = store.prune_and_load(history::retention_cutoff(&Local::now()));
+    let entries = store.prune_and_load(history::retention_cutoff(&Local::now(), retention_days));
     Ok((store, entries))
+}
+
+fn retention_days(cx: &App) -> u32 {
+    AppSettings::get(cx).history.retention_days()
 }
 
 fn unavailable() -> anyhow::Error {

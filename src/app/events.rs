@@ -57,6 +57,9 @@ impl Workspace {
             HistoryEvent::Cleared => self
                 .history_panel
                 .update(cx, |panel, cx| panel.clear(window, cx)),
+            HistoryEvent::Pruned { cutoff } => self
+                .history_panel
+                .update(cx, |panel, cx| panel.prune(*cutoff, window, cx)),
             HistoryEvent::Failed { title, error } => show_error(title, error, window, cx),
         }
     }
