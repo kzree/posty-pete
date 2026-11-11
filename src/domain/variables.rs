@@ -36,7 +36,7 @@ fn next_reference(text: &str, mut from: usize) -> Option<Reference<'_>> {
         let last_bad = start + 1 + text[start + 1..end].rfind(['{', '}', '\n', '\r'])?;
         let inner = &text[last_bad + 1..end];
         let name = inner.trim();
-        if text[last_bad - 1..=last_bad] == *"{{" && !name.is_empty() {
+        if text.as_bytes()[last_bad - 1..=last_bad] == *b"{{" && !name.is_empty() {
             return Some(Reference {
                 range: last_bad - 1..end + 2,
                 name,
@@ -284,6 +284,69 @@ mod tests {
         assert_eq!(names("{{ {{x}}"), ["x"]);
         assert_eq!(names("{{{x}}}"), ["x"]);
         assert_eq!(names("}}{{x}}"), ["x"]);
+    }
+
+    #[test]
+    fn multibyte_before_a_delimiter_does_not_panic() {
+        for text in [
+            "{{é\nx}}",
+            "{{é{x}}",
+            "{{ü}x}}",
+            "{{é\rx}}",
+            "{{😀\nx}}",
+            "{{e\u{301}{x}}",
+        ] {
+            assert!(names(text).is_empty(), "{text:?}");
+        }
+        assert_eq!(names("{{é{{x}}"), ["x"]);
+        assert_eq!(names("é{{ü}} {{😀\n{{y}}"), ["ü", "y"]);
+    }
+
+    #[test]
+    fn unicode_names_have_exact_ranges() {
+        let refs: Vec<_> = references("ä{{naïve}}").collect();
+        assert_eq!(
+            refs,
+            [Reference {
+                range: 2..12,
+                name: "naïve"
+            }]
+        );
+        assert_eq!(names("{{ 😀 }}{{e\u{301}}}"), ["😀", "e\u{301}"]);
+    }
+
+    #[test]
+    fn awkward_strings_never_panic() {
+        const PIECES: [&str; 9] = ["{", "}", "\n", "\r", "é", "😀", "\u{301}", "x", " "];
+        let v = vars(&[("x", "é"), ("é", "{{x}}")]);
+        let mut text = String::new();
+        let mut digits = Vec::new();
+        for len in 0..=6 {
+            digits.clear();
+            digits.resize(len, 0);
+            loop {
+                text.clear();
+                text.extend(digits.iter().map(|&d| PIECES[d]));
+                let mut previous_end = 0;
+                for reference in references(&text) {
+                    let range = reference.range.clone();
+                    assert!(range.start >= previous_end, "{text:?}");
+                    assert!(text.is_char_boundary(range.start), "{text:?}");
+                    assert!(text.is_char_boundary(range.end), "{text:?}");
+                    let slice = &text[range.clone()];
+                    assert!(slice.starts_with("{{") && slice.ends_with("}}"), "{text:?}");
+                    assert_eq!(slice[2..slice.len() - 2].trim(), reference.name);
+                    previous_end = range.end;
+                }
+                sub(&v, &text);
+
+                let Some(i) = digits.iter().rposition(|&d| d + 1 < PIECES.len()) else {
+                    break;
+                };
+                digits[i] += 1;
+                digits[i + 1..].fill(0);
+            }
+        }
     }
 
     #[test]
