@@ -12,7 +12,11 @@ use crate::{
         OpenLibrary, OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest,
         SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
-    domain::{command::Command, palette::Scope},
+    domain::{
+        command::Command,
+        layout::{SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH},
+        palette::Scope,
+    },
     sidebar::SidebarTab,
     window_title_bar::WindowTitleBar,
 };
@@ -169,8 +173,8 @@ impl Workspace {
             .with_state(&self.main_layout)
             .child(
                 resizable_panel()
-                    .size(px(280.))
-                    .size_range(px(200.)..px(400.))
+                    .size(px(self.sidebar_initial_width))
+                    .size_range(px(SIDEBAR_MIN_WIDTH)..px(SIDEBAR_MAX_WIDTH))
                     .fixed()
                     .child(self.sidebar.clone()),
             )

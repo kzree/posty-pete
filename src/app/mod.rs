@@ -4,6 +4,7 @@ mod editor;
 mod environments;
 mod events;
 mod focus;
+mod layout;
 mod menu_fallback;
 mod navigation;
 mod persisted_navigation;
@@ -20,11 +21,14 @@ use std::cell::Cell;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, ParentElement, Styled, Subscription, Window, px,
 };
-use gpui_component::{ResizableState, Root, WindowExt, notification::Notification};
+use gpui_component::{
+    ResizablePanelEvent, ResizableState, Root, WindowExt, notification::Notification,
+};
 use uuid::Uuid;
 
 use self::{
     dirty::{Baseline, PendingCheck},
+    layout::OwnResizes,
     persisted_navigation::PersistedNavigation,
     response_cache::ResponseCache,
     routes::{AppRoute, RouteHistory},
@@ -36,6 +40,7 @@ use crate::{
     domain::{
         self,
         environment_selection::EnvironmentSelection,
+        layout::Layout,
         palette::Scope,
         recents::{Recent, Recents},
     },
@@ -125,6 +130,14 @@ pub struct Workspace {
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
     request_response_layout: Entity<ResizableState>,
+    layout: Layout,
+    /// The restored sidebar width, clamped to the window, for before the sidebar is laid out.
+    sidebar_initial_width: f32,
+    /// Set from restoring the layout until the split is laid out and restored.
+    split_pending: bool,
+    /// `Resized` events still to come from restoring the layout, which
+    /// mustn't overwrite the stored sizes with the clamped ones.
+    own_resizes: OwnResizes,
     /// The OS window title last set.
     os_window_title: String,
     os_window_edited: bool,
@@ -182,6 +195,10 @@ impl Workspace {
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
             request_response_layout: cx.new(|_| ResizableState::default()),
+            layout: Layout::default(),
+            sidebar_initial_width: domain::layout::SIDEBAR_DEFAULT_WIDTH,
+            split_pending: false,
+            own_resizes: OwnResizes::default(),
             os_window_title: String::new(),
             os_window_edited: false,
             focus_handle: cx.focus_handle(),
@@ -270,6 +287,18 @@ impl Workspace {
                 &self.request_editor,
                 window,
                 |this, _, event, window, cx| this.on_editor_event(event, window, cx),
+            ),
+            cx.subscribe(&self.main_layout, |this, _, _: &ResizablePanelEvent, cx| {
+                this.sidebar_resized(cx)
+            }),
+            cx.subscribe(
+                &self.request_response_layout,
+                |this, _, _: &ResizablePanelEvent, cx| this.split_resized(cx),
+            ),
+            cx.observe_in(
+                &self.request_response_layout,
+                window,
+                |this, _, window, cx| this.apply_pending_split(window, cx),
             ),
             cx.subscribe(&self.response_view, |this, _, event, _| match event {
                 ResponseViewEvent::Cleared => this.responses.remove(this.editor_content),
@@ -444,10 +473,23 @@ impl Workspace {
     }
 
     fn toggle_left_panel(&mut self, cx: &mut Context<Self>) {
-        match self.left_panel {
-            LeftPanelState::Closed => self.left_panel = LeftPanelState::Open,
-            LeftPanelState::Open => self.left_panel = LeftPanelState::Closed,
+        let panel = match self.left_panel {
+            LeftPanelState::Closed => LeftPanelState::Open,
+            LeftPanelState::Open => LeftPanelState::Closed,
+        };
+        self.set_left_panel(panel, cx);
+    }
+
+    fn set_left_panel(&mut self, panel: LeftPanelState, cx: &mut Context<Self>) {
+        if self.left_panel == panel {
+            return;
         }
+        self.left_panel = panel;
+        self.left_panel_changed(cx);
+        self.schedule_navigation_save(cx);
+    }
+
+    fn left_panel_changed(&mut self, cx: &mut Context<Self>) {
         let open = self.left_panel == LeftPanelState::Open;
         self.status_bar.update(cx, |status_bar, cx| {
             status_bar.set_left_panel_open(open, cx)

@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{environment_selection::DraftSource, recents::Recents, request::Request};
+use crate::domain::{
+    environment_selection::DraftSource, layout::Layout, recents::Recents, request::Request,
+};
 
 /// A back/forward history entry as stored on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +40,8 @@ pub struct SavedNavigation {
     /// What the palette lists as recent.
     #[serde(default, skip_serializing_if = "Recents::is_empty")]
     pub recents: Recents,
+    #[serde(default)]
+    pub layout: Layout,
 }
 
 /// [`SavedNavigation`] as read, also accepting the `draft_collection` that
@@ -56,6 +60,8 @@ struct StoredNavigation {
     draft_collection: Option<Uuid>,
     #[serde(default)]
     recents: Recents,
+    #[serde(default)]
+    layout: Layout,
 }
 
 impl From<StoredNavigation> for SavedNavigation {
@@ -71,6 +77,7 @@ impl From<StoredNavigation> for SavedNavigation {
             active_environments: stored.active_environments,
             draft_source,
             recents: stored.recents,
+            layout: stored.layout,
         }
     }
 }
@@ -170,6 +177,7 @@ mod tests {
             active_environments: HashMap::new(),
             draft_source: DraftSource::None,
             recents: Recents::default(),
+            layout: Layout::default(),
         }
     }
 
@@ -291,6 +299,7 @@ mod tests {
             active_environments: HashMap::new(),
             draft_source: DraftSource::Shared(Uuid::new_v4()),
             recents: Recents::default(),
+            layout: Layout::default(),
         };
         let value = serde_json::to_value(&saved).unwrap();
         assert!(value.get("draft_collection").is_none());
@@ -345,6 +354,43 @@ mod tests {
             serde_json::from_value::<SavedNavigation>(value).unwrap(),
             saved
         );
+    }
+
+    #[test]
+    fn files_without_a_layout_load_with_the_default() {
+        let saved = load(r#"{ "entries": [{ "kind": "draft" }], "index": 0 }"#);
+        assert_eq!(saved.layout, Layout::default());
+    }
+
+    #[test]
+    fn layout_round_trips() {
+        let mut saved = blank();
+        saved.layout = Layout {
+            sidebar_width: 333.,
+            sidebar_collapsed: true,
+            request_split: Some(0.6),
+        };
+        let value = serde_json::to_value(&saved).unwrap();
+        assert_eq!(
+            serde_json::from_value::<SavedNavigation>(value).unwrap(),
+            saved
+        );
+    }
+
+    #[test]
+    fn layout_is_restored_and_written_without_restoring_the_session() {
+        let mut stored = session(
+            vec![NavEntry::Draft, NavEntry::Settings],
+            Some(edited_draft()),
+        );
+        stored.layout.sidebar_width = 333.;
+        let startup = Startup::new(Some(stored.clone()), false);
+        assert_eq!(startup.restore.unwrap().layout, stored.layout);
+
+        let mut kept = startup.kept;
+        let mut current = blank();
+        current.layout.request_split = Some(0.3);
+        assert_eq!(kept.apply(current.clone()).layout, current.layout);
     }
 
     #[test]

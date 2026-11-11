@@ -47,6 +47,7 @@ mod tests {
     use crate::domain::store::test_support::TempDir;
     use crate::domain::{
         environment_selection::DraftSource,
+        layout::Layout,
         navigation::NavEntry,
         recents::{Recent, Recents},
         request::{HttpMethod, Request},
@@ -78,6 +79,11 @@ mod tests {
             active_environments: HashMap::from([(Uuid::new_v4(), Uuid::new_v4())]),
             draft_source: DraftSource::Collection(Uuid::new_v4()),
             recents: Recents::new([Recent::Collection { id: Uuid::new_v4() }]),
+            layout: Layout {
+                sidebar_width: 320.,
+                sidebar_collapsed: true,
+                request_split: Some(0.4),
+            },
         }
     }
 
