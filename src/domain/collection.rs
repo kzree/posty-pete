@@ -3,7 +3,10 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::request::{KeyValue, Request};
+use super::{
+    request::{KeyValue, Request},
+    variables::Variables,
+};
 
 /// A named tree of folders and saved requests, stored as one JSON file.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -12,6 +15,16 @@ pub struct Collection {
     pub name: String,
     pub items: Vec<Item>,
     #[serde(default)]
+    pub variables: Vec<KeyValue>,
+    #[serde(default)]
+    pub environments: Vec<Environment>,
+}
+
+/// A named set of variables layered in front of the collection's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Environment {
+    pub id: Uuid,
+    pub name: String,
     pub variables: Vec<KeyValue>,
 }
 
@@ -38,6 +51,7 @@ pub struct SavedRequest {
 
 pub const NEW_COLLECTION_NAME: &str = "New Collection";
 pub const NEW_REQUEST_NAME: &str = "New Request";
+pub const NEW_ENVIRONMENT_NAME: &str = "New environment";
 
 /// Where a new request goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +126,105 @@ pub fn set_variables(
         })
 }
 
+/// Adds an environment named [`NEW_ENVIRONMENT_NAME`], numbered if that's
+/// taken. Returns its id, or `None` if there's no such collection.
+pub fn add_environment(collections: &mut [Arc<Collection>], collection_id: Uuid) -> Option<Uuid> {
+    let mut id = None;
+    modify(collections, collection_id, |collection| {
+        let names = collection.environments.iter().map(|env| env.name.as_str());
+        let environment = Environment::new(unique_name(NEW_ENVIRONMENT_NAME, names));
+        id = Some(environment.id);
+        collection.environments.push(environment);
+        true
+    });
+    id
+}
+
+/// Returns `false`, changing (and copying) nothing, if there's no such
+/// environment or the name is the same.
+pub fn rename_environment(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+    name: impl Into<String>,
+) -> bool {
+    let name = name.into();
+    find_environment(collections, collection_id, environment_id)
+        .is_some_and(|environment| environment.name != name)
+        && modify_environment(collections, collection_id, environment_id, |environment| {
+            environment.name = name;
+        })
+}
+
+/// Returns `false` if there's no such environment.
+pub fn delete_environment(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+) -> bool {
+    find_environment(collections, collection_id, environment_id).is_some()
+        && modify(collections, collection_id, |collection| {
+            collection
+                .environments
+                .retain(|env| env.id != environment_id);
+            true
+        })
+}
+
+/// Replaces the environment's variables. Returns `false`, changing (and
+/// copying) nothing, if there's no such environment or they're the same.
+pub fn set_environment_variables(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+    variables: Vec<KeyValue>,
+) -> bool {
+    find_environment(collections, collection_id, environment_id)
+        .is_some_and(|environment| environment.variables != variables)
+        && modify_environment(collections, collection_id, environment_id, |environment| {
+            environment.variables = variables;
+        })
+}
+
+fn find_environment(
+    collections: &[Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+) -> Option<&Environment> {
+    collections
+        .iter()
+        .find(|collection| collection.id == collection_id)?
+        .environment(environment_id)
+}
+
+fn modify_environment(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+    f: impl FnOnce(&mut Environment),
+) -> bool {
+    modify(collections, collection_id, |collection| {
+        collection
+            .environments
+            .iter_mut()
+            .find(|env| env.id == environment_id)
+            .map(f)
+            .is_some()
+    })
+}
+
+/// `base`, or `base 2`, `base 3`, ... whichever is the first not in `taken`.
+fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone) -> String {
+    let is_taken = |name: &str| taken.clone().any(|taken| taken == name);
+    if !is_taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base} {n}"))
+        .find(|name| !is_taken(name))
+        .expect("some number is free")
+}
+
 /// The name and location Save As starts with. A saved request (`linked`, as
 /// collection and request ids) goes next to itself, named `typed_name` or
 /// else its stored name; a draft goes to the first collection's root.
@@ -162,7 +275,22 @@ impl Collection {
             name: name.into(),
             items: Vec::new(),
             variables: Vec::new(),
+            environments: Vec::new(),
         }
+    }
+
+    pub fn environment(&self, id: Uuid) -> Option<&Environment> {
+        self.environments.iter().find(|env| env.id == id)
+    }
+
+    /// The environment's variables in front of the collection's. An unknown
+    /// id gives just the collection's.
+    #[allow(dead_code)] // Until resolving with the active environment (task 51).
+    pub fn variables_with(&self, environment_id: Option<Uuid>) -> Variables {
+        let environment = environment_id
+            .and_then(|id| self.environment(id))
+            .map(|env| env.variables.as_slice());
+        Variables::layered(environment.into_iter().chain([self.variables.as_slice()]))
     }
 
     pub fn find_request(&self, id: Uuid) -> Option<&SavedRequest> {
@@ -236,6 +364,16 @@ impl Item {
         match self {
             Self::Folder(folder) => folder.id,
             Self::Request(request) => request.id,
+        }
+    }
+}
+
+impl Environment {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            variables: Vec::new(),
         }
     }
 }
@@ -801,6 +939,170 @@ mod tests {
             Uuid::new_v4(),
             vec![variable("host", "example.com")]
         ));
+        assert!(collections[0].variables.is_empty());
+    }
+
+    fn with_environment(variables: Vec<KeyValue>) -> (Vec<Arc<Collection>>, Uuid, Uuid) {
+        let mut collections = vec![Arc::new(Collection::new("API"))];
+        let collection_id = collections[0].id;
+        let environment_id = add_environment(&mut collections, collection_id).unwrap();
+        set_environment_variables(&mut collections, collection_id, environment_id, variables);
+        (collections, collection_id, environment_id)
+    }
+
+    #[test]
+    fn json_without_environments_loads_and_environments_round_trip() {
+        let json = r#"{"id": "6f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f", "name": "Old", "items": []}"#;
+        let loaded: Collection = serde_json::from_str(json).unwrap();
+        assert!(loaded.environments.is_empty());
+
+        let (collections, _, environment_id) =
+            with_environment(vec![variable("host", "staging.example.com")]);
+        let value = serde_json::to_value(&*collections[0]).unwrap();
+        assert_eq!(value["environments"][0]["name"], NEW_ENVIRONMENT_NAME);
+        let reloaded: Collection = serde_json::from_value(value).unwrap();
+        assert_eq!(reloaded.environments, collections[0].environments);
+        assert_eq!(reloaded.environments[0].id, environment_id);
+    }
+
+    #[test]
+    fn variables_with_an_environment_put_its_rows_first() {
+        let mut disabled = variable("token", "env-token");
+        disabled.enabled = false;
+        let (mut collections, collection_id, environment_id) =
+            with_environment(vec![variable("host", "staging"), disabled]);
+        assert!(set_variables(
+            &mut collections,
+            collection_id,
+            vec![variable("host", "local"), variable("token", "t")]
+        ));
+        let collection = &collections[0];
+
+        let variables = collection.variables_with(Some(environment_id));
+        assert_eq!(variables.get("host"), Some("staging"));
+        assert_eq!(variables.get("token"), Some("t"));
+
+        let variables = collection.variables_with(None);
+        assert_eq!(variables.get("host"), Some("local"));
+        assert_eq!(
+            collection.variables_with(Some(Uuid::new_v4())),
+            collection.variables_with(None)
+        );
+    }
+
+    #[test]
+    fn add_environment_numbers_taken_default_names() {
+        let mut collections = vec![Arc::new(Collection::new("API"))];
+        let id = collections[0].id;
+        let first = add_environment(&mut collections, id).unwrap();
+        let second = add_environment(&mut collections, id).unwrap();
+        assert!(rename_environment(&mut collections, id, first, "Local"));
+        let third = add_environment(&mut collections, id).unwrap();
+        add_environment(&mut collections, id).unwrap();
+
+        let names: Vec<_> = collections[0]
+            .environments
+            .iter()
+            .map(|env| env.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "Local",
+                "New environment 2",
+                "New environment",
+                "New environment 3"
+            ]
+        );
+        assert_ne!(second, third);
+        assert!(add_environment(&mut collections, Uuid::new_v4()).is_none());
+    }
+
+    #[test]
+    fn rename_environment_only_when_it_changes() {
+        let (mut collections, collection_id, environment_id) = with_environment(Vec::new());
+        let held = collections.clone();
+
+        assert!(!rename_environment(
+            &mut collections,
+            collection_id,
+            environment_id,
+            NEW_ENVIRONMENT_NAME
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+        assert!(!rename_environment(
+            &mut collections,
+            collection_id,
+            Uuid::new_v4(),
+            "Prod"
+        ));
+        assert!(!rename_environment(
+            &mut collections,
+            Uuid::new_v4(),
+            environment_id,
+            "Prod"
+        ));
+
+        assert!(rename_environment(
+            &mut collections,
+            collection_id,
+            environment_id,
+            "Prod"
+        ));
+        assert_eq!(
+            collections[0].environment(environment_id).unwrap().name,
+            "Prod"
+        );
+        assert_eq!(held[0].environments[0].name, NEW_ENVIRONMENT_NAME);
+    }
+
+    #[test]
+    fn delete_environment_removes_only_it() {
+        let (mut collections, collection_id, deleted) = with_environment(Vec::new());
+        let kept = add_environment(&mut collections, collection_id).unwrap();
+
+        assert!(delete_environment(&mut collections, collection_id, deleted));
+        assert!(collections[0].environment(deleted).is_none());
+        assert!(collections[0].environment(kept).is_some());
+
+        let held = collections.clone();
+        assert!(!delete_environment(
+            &mut collections,
+            collection_id,
+            deleted
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+    }
+
+    #[test]
+    fn set_environment_variables_only_when_they_change() {
+        let rows = vec![variable("host", "staging")];
+        let (mut collections, collection_id, environment_id) = with_environment(rows.clone());
+        assert_eq!(collections[0].environments[0].variables, rows);
+        let held = collections.clone();
+
+        assert!(!set_environment_variables(
+            &mut collections,
+            collection_id,
+            environment_id,
+            rows.clone()
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+        assert!(!set_environment_variables(
+            &mut collections,
+            collection_id,
+            Uuid::new_v4(),
+            Vec::new()
+        ));
+
+        assert!(set_environment_variables(
+            &mut collections,
+            collection_id,
+            environment_id,
+            Vec::new()
+        ));
+        assert!(collections[0].environments[0].variables.is_empty());
+        assert_eq!(held[0].environments[0].variables, rows);
         assert!(collections[0].variables.is_empty());
     }
 }

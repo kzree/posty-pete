@@ -210,6 +210,59 @@ impl Collections {
         }
     }
 
+    #[allow(dead_code)] // Until the Environments tab (task 52).
+    pub fn add_environment(&mut self, collection_id: Uuid, cx: &mut Context<Self>) -> Option<Uuid> {
+        let id = collection::add_environment(&mut self.collections, collection_id)?;
+        self.changed(collection_id, cx);
+        Some(id)
+    }
+
+    #[allow(dead_code)] // Until the Environments tab (task 52).
+    pub fn rename_environment(
+        &mut self,
+        collection_id: Uuid,
+        environment_id: Uuid,
+        name: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let collections = &mut self.collections;
+        if collection::rename_environment(collections, collection_id, environment_id, name) {
+            self.changed(collection_id, cx);
+        }
+    }
+
+    #[allow(dead_code)] // Until the Environments tab (task 52).
+    pub fn delete_environment(
+        &mut self,
+        collection_id: Uuid,
+        environment_id: Uuid,
+        cx: &mut Context<Self>,
+    ) {
+        if collection::delete_environment(&mut self.collections, collection_id, environment_id) {
+            self.changed(collection_id, cx);
+        }
+    }
+
+    /// Saves only if `variables` differ from the stored ones.
+    #[allow(dead_code)] // Until the Environments tab (task 52).
+    pub fn set_environment_variables(
+        &mut self,
+        collection_id: Uuid,
+        environment_id: Uuid,
+        variables: Vec<KeyValue>,
+        cx: &mut Context<Self>,
+    ) {
+        let collections = &mut self.collections;
+        if collection::set_environment_variables(
+            collections,
+            collection_id,
+            environment_id,
+            variables,
+        ) {
+            self.changed(collection_id, cx);
+        }
+    }
+
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {
         let removed = self.modify(collection_id, |collection| {
             collection.remove(item_id).is_some()

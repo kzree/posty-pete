@@ -78,8 +78,8 @@ mod tests {
     use super::*;
     use crate::domain::store::test_support::TempDir;
     use crate::domain::{
-        collection::{Folder, Item, SavedRequest},
-        request::{Auth, Body, HttpMethod, Request},
+        collection::{Environment, Folder, Item, SavedRequest},
+        request::{Auth, Body, HttpMethod, KeyValue, Request},
     };
 
     fn setup() -> (TempDir, CollectionStore) {
@@ -115,6 +115,13 @@ mod tests {
         let request_id = request.id;
         assert!(collection.add_item(None, Item::Folder(folder)));
         assert!(collection.add_item(Some(folder_id), Item::Request(request)));
+        let mut environment = Environment::new("Staging");
+        environment.variables.push(KeyValue {
+            enabled: true,
+            key: "host".into(),
+            value: "staging.example.com".into(),
+        });
+        collection.environments.push(environment);
         (collection, request_id)
     }
 
@@ -138,6 +145,7 @@ mod tests {
         assert_eq!(loaded[0].name, "API");
         let deep = loaded[0].find_request(request_id).unwrap();
         assert_eq!(deep.request.url, "example.com/deep");
+        assert_eq!(loaded[0].environments, collection.environments);
         assert_eq!(
             serde_json::to_value(&loaded[0]).unwrap(),
             serde_json::to_value(&collection).unwrap()
