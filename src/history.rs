@@ -16,7 +16,12 @@ use crate::domain::{
 
 pub enum HistoryEvent {
     /// Sent once at startup. Always emitted before any `Recorded`.
-    Loaded(Vec<HistorySummary>),
+    /// `load_failed` means older entries couldn't be read, though new ones
+    /// are still recorded.
+    Loaded {
+        entries: Vec<HistorySummary>,
+        load_failed: bool,
+    },
     Recorded(HistorySummary),
     Opened {
         request: Request,
@@ -192,7 +197,7 @@ impl History {
 
     fn finish_opening(
         &mut self,
-        opened: anyhow::Result<(HistoryStore, Vec<HistorySummary>)>,
+        opened: anyhow::Result<(HistoryStore, anyhow::Result<Vec<HistorySummary>>)>,
         cx: &mut Context<Self>,
     ) {
         let queued = match &mut self.state {
@@ -201,9 +206,17 @@ impl History {
         };
 
         match opened {
-            Ok((store, entries)) => {
+            Ok((store, loaded)) => {
                 self.state = State::Ready(Self::start_worker(store, cx));
-                cx.emit(HistoryEvent::Loaded(entries));
+                let load_failed = loaded.is_err();
+                let entries = loaded.unwrap_or_else(|e| {
+                    tracing::error!("failed to load history: {e:#}");
+                    Vec::new()
+                });
+                cx.emit(HistoryEvent::Loaded {
+                    entries,
+                    load_failed,
+                });
                 for record in queued {
                     self.record(record, cx);
                 }
@@ -219,19 +232,13 @@ impl History {
     }
 }
 
-fn open_and_load() -> anyhow::Result<(HistoryStore, Vec<HistorySummary>)> {
+/// Fails only if the database can't be opened; a failed load still returns the store.
+fn open_and_load() -> anyhow::Result<(HistoryStore, anyhow::Result<Vec<HistorySummary>>)> {
     let path = store::data_dir()?.join("history.db");
     let store =
         HistoryStore::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
 
-    let cutoff = history::retention_cutoff(&Local::now());
-    if let Err(e) = store.prune(cutoff) {
-        tracing::warn!("failed to prune history: {e:#}");
-    }
-    let entries = store.since(cutoff).unwrap_or_else(|e| {
-        tracing::error!("failed to load history: {e:#}");
-        Vec::new()
-    });
+    let entries = store.prune_and_load(history::retention_cutoff(&Local::now()));
     Ok((store, entries))
 }
 

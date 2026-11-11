@@ -121,6 +121,15 @@ impl HistoryStore {
         Ok(self.conn.execute("DELETE FROM history", [])?)
     }
 
+    /// Drops entries older than `cutoff` and loads the rest. A failed prune is
+    /// only logged.
+    pub fn prune_and_load(&self, cutoff: DateTime<Utc>) -> anyhow::Result<Vec<HistorySummary>> {
+        if let Err(e) = self.prune(cutoff) {
+            tracing::warn!("failed to prune history: {e:#}");
+        }
+        self.since(cutoff)
+    }
+
     pub fn prune(&self, cutoff: DateTime<Utc>) -> anyhow::Result<usize> {
         Ok(self.conn.execute(
             "DELETE FROM history WHERE sent_at < ?1",
@@ -196,6 +205,7 @@ mod tests {
     use crate::domain::{
         history::retention_cutoff,
         request::{Auth, Body, KeyValue, RawKind},
+        store::test_support::TempDir,
     };
 
     fn record(sent_at: DateTime<Utc>, url: &str, outcome: Option<Outcome>) -> HistoryRecord {
@@ -346,6 +356,41 @@ mod tests {
         let entries = store.since(DateTime::UNIX_EPOCH).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url, "keep");
+    }
+
+    #[test]
+    fn prune_and_load_prunes_then_loads() {
+        let store = HistoryStore::open_in_memory().unwrap();
+        let now = at("2026-11-10T12:00:00Z");
+        store.insert(&ok(now - TimeDelta::days(1), "keep")).unwrap();
+        store
+            .insert(&ok(now - TimeDelta::days(15), "drop"))
+            .unwrap();
+
+        let entries = store.prune_and_load(retention_cutoff(&now)).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url, "keep");
+        assert_eq!(store.since(DateTime::UNIX_EPOCH).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn failed_load_is_reported_and_recording_still_works() {
+        let dir = TempDir::new();
+        let path = dir.path().join("history.db");
+        let now = at("2026-11-10T12:00:00Z");
+        HistoryStore::open(&path)
+            .unwrap()
+            .insert(&ok(now, "older"))
+            .unwrap();
+        // Loading selects `id`, recording doesn't.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE history RENAME COLUMN id TO entry_id")
+            .unwrap();
+
+        let store = HistoryStore::open(&path).unwrap();
+        assert!(store.prune_and_load(retention_cutoff(&now)).is_err());
+        store.insert(&ok(now, "new")).unwrap();
     }
 
     #[test]

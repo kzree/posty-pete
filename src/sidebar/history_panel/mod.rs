@@ -15,7 +15,7 @@ use gpui_component::{
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
-use super::panel_header;
+use super::{panel_header, placeholder};
 use crate::{
     actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
     domain::history::{HistorySummary, OpenMode},
@@ -70,10 +70,12 @@ impl HistoryPanel {
     pub fn set_entries(
         &mut self,
         entries: Vec<HistorySummary>,
+        load_failed: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.update_rows_and_deselect(window, cx, |delegate| {
+            delegate.load_failed = load_failed;
             delegate.set_entries(entries, today())
         });
     }
@@ -85,6 +87,7 @@ impl HistoryPanel {
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_rows_and_deselect(window, cx, |delegate| {
+            delegate.load_failed = false;
             delegate.set_entries(Vec::new(), today())
         });
     }
@@ -168,6 +171,15 @@ impl HistoryPanel {
         );
     }
 
+    fn render_load_failed(&self, cx: &App) -> Option<impl IntoElement> {
+        self.list.read(cx).delegate().load_failed.then(|| {
+            placeholder(
+                "Couldn't load earlier history. New requests are still saved.",
+                cx,
+            )
+        })
+    }
+
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.list.read(cx).delegate().entries.len();
         let clear_button = Button::new("clear-history")
@@ -194,6 +206,7 @@ impl Render for HistoryPanel {
             .on_action(cx.listener(|this, _: &SendHistoryEntryAgain, _, cx| this.send_selected(cx)))
             .size_full()
             .child(self.render_header(cx))
+            .children(self.render_load_failed(cx))
             .child(
                 div()
                     .id("history-list")

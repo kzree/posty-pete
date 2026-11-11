@@ -21,6 +21,8 @@ use crate::{
 #[derive(Default)]
 pub(super) struct HistoryDelegate {
     pub(super) entries: Vec<HistorySummary>,
+    /// The panel shows this instead of the empty state.
+    pub(super) load_failed: bool,
     days: Vec<(NaiveDate, Range<usize>)>,
     expanded: HashSet<NaiveDate>,
     rows: Vec<Row>,
@@ -179,7 +181,11 @@ impl ListDelegate for HistoryDelegate {
         _window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
-        placeholder("Requests you send show up here.", cx)
+        if self.load_failed {
+            div()
+        } else {
+            placeholder("Requests you send show up here.", cx)
+        }
     }
 
     fn set_selected_index(

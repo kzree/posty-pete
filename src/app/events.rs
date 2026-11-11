@@ -24,8 +24,11 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            HistoryEvent::Loaded(entries) => self.history_panel.update(cx, |panel, cx| {
-                panel.set_entries(entries.clone(), window, cx)
+            HistoryEvent::Loaded {
+                entries,
+                load_failed,
+            } => self.history_panel.update(cx, |panel, cx| {
+                panel.set_entries(entries.clone(), *load_failed, window, cx)
             }),
             HistoryEvent::Recorded(summary) => self
                 .history_panel
