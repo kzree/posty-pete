@@ -1,5 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 /// The app's accent colour.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Accent {
     /// The theme's own neutral primary.
     #[default]
@@ -78,5 +81,15 @@ mod tests {
                 Some(0xf97316),
             ]
         );
+    }
+
+    #[test]
+    fn serializes_lowercase() {
+        assert_eq!(
+            serde_json::to_string(&Accent::Purple).unwrap(),
+            r#""purple""#
+        );
+        let accent: Accent = serde_json::from_str(r#""monochrome""#).unwrap();
+        assert_eq!(accent, Accent::Monochrome);
     }
 }

@@ -133,7 +133,10 @@ mod tests {
 
     fn with_theme(theme: ThemePreference) -> Settings {
         Settings {
-            appearance: AppearanceSettings { theme },
+            appearance: AppearanceSettings {
+                theme,
+                ..AppearanceSettings::default()
+            },
         }
     }
 

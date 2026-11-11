@@ -10,8 +10,8 @@ use gpui_component::{
 
 use super::{group, number_state, page, switch};
 use crate::domain::{accent::Accent, settings::ThemePreference};
-use crate::settings::AppSettings;
 use crate::ui::{color_swatches::ColorSwatches, setting_row::SettingRow};
+use crate::{settings::AppSettings, theme};
 
 const THEMES: [ThemePreference; 3] = [
     ThemePreference::System,
@@ -28,7 +28,6 @@ fn theme_label(theme: ThemePreference) -> &'static str {
 }
 
 pub struct AppearancePage {
-    accent: Accent,
     ui_font_size: Entity<InputState>,
     editor_font_family: Entity<InputState>,
     editor_font_size: Entity<InputState>,
@@ -43,7 +42,6 @@ impl AppearancePage {
         let editor_font_size = theme.mono_font_size.as_f32() as u32;
         let editor_font_family = theme.mono_font_family.clone();
         Self {
-            accent: Accent::default(),
             ui_font_size: cx.new(|cx| number_state(ui_font_size, 10, 24, window, cx)),
             editor_font_family: cx
                 .new(|cx| InputState::new(window, cx).default_value(editor_font_family)),
@@ -64,8 +62,9 @@ impl AppearancePage {
             })
     }
 
-    fn render_accent(&self, cx: &mut Context<Self>) -> ColorSwatches {
-        let selected = Accent::ALL.iter().position(|a| *a == self.accent);
+    fn render_accent(&self, cx: &App) -> ColorSwatches {
+        let current = AppSettings::get(cx).appearance.accent;
+        let selected = Accent::ALL.iter().position(|a| *a == current);
         Accent::ALL
             .into_iter()
             .fold(
@@ -73,18 +72,18 @@ impl AppearancePage {
                 |swatches, accent| swatches.swatch(accent.name(), accent_color(accent, cx)),
             )
             .selected_index(selected)
-            .on_change(cx.listener(|this, index: &usize, _, cx| {
-                this.accent = Accent::ALL[*index];
-                cx.notify();
-            }))
+            .on_change(|index: &usize, _, cx| {
+                let accent = Accent::ALL[*index];
+                AppSettings::update(cx, |s| s.appearance.accent = accent);
+            })
     }
 }
 
-/// Monochrome follows the theme's primary, which is near-black in light mode and near-white in dark.
-fn accent_color(accent: Accent, cx: &Context<AppearancePage>) -> Hsla {
+/// Monochrome shows the theme's own primary, near-black in light mode and near-white in dark.
+fn accent_color(accent: Accent, cx: &App) -> Hsla {
     accent
         .hex()
-        .map_or(cx.theme().primary, |hex| rgb(hex).into())
+        .map_or_else(|| theme::neutral_primary(cx), |hex| rgb(hex).into())
 }
 
 impl Render for AppearancePage {
