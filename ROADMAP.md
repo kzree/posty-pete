@@ -10,6 +10,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Secrets at rest.** Once requests are persisted, don't store passwords and tokens in plain JSON. Use the OS keychain (`keyring` crate) or environment variables.
 - [ ] **Body: more modes.** `x-www-form-urlencoded`, file fields in form-data, more raw kinds (XML, HTML).
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
+- [ ] **Per-request timeout.** The global timeout is on Settings › Requests (task 82); let a request override it.
 
 ## Responses
 
