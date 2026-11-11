@@ -1,20 +1,28 @@
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder, px, relative,
+    App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    prelude::FluentBuilder, px, relative,
 };
 use gpui_component::{
-    ActiveTheme, IndexPath, Sizable, h_flex,
+    ActiveTheme, Icon, IconName, IndexPath, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
     input::{Editor, EditorState, InputEvent},
     scroll::ScrollableElement,
     searchable_list::SearchableListItem,
     select::{Select, SelectEvent, SelectState},
     tab::TabBar,
+    tooltip::Tooltip,
     v_flex,
 };
 
 use super::Edited;
 use crate::{
-    domain::request::{Body, RawKind},
+    actions::{BODY_EDITOR_CONTEXT, FormatJsonBody},
+    domain::{
+        json_body,
+        request::{Body, RawKind},
+    },
     ui::key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
 };
 
@@ -68,6 +76,8 @@ pub struct BodyEditor {
     raw_kind: Entity<SelectState<Vec<RawKindItem>>>,
     raw: Entity<EditorState>,
     form_data: Entity<KeyValueEditor>,
+    json_error: Option<SharedString>,
+    json_check_pending: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -81,19 +91,22 @@ impl BodyEditor {
             cx.new(|cx| EditorState::new(window, cx).language(editor_language(RawKind::default())));
         let form_data = cx.new(|cx| KeyValueEditor::new("field", window, cx));
 
-        let sub = cx.subscribe(
+        let sub = cx.subscribe_in(
             &raw_kind,
-            |this, _, event: &SelectEvent<Vec<RawKindItem>>, cx| {
+            window,
+            |this, _, event: &SelectEvent<Vec<RawKindItem>>, window, cx| {
                 if let SelectEvent::Confirm(Some(kind)) = event {
                     let language = editor_language(*kind);
                     this.raw
                         .update(cx, |raw, cx| raw.set_highlighter(language, cx));
+                    this.schedule_json_check(window, cx);
                     cx.emit(Edited);
                 }
             },
         );
-        let raw_sub = cx.subscribe(&raw, |_, _, event: &InputEvent, cx| {
+        let raw_sub = cx.subscribe_in(&raw, window, |this, _, event: &InputEvent, window, cx| {
             if let InputEvent::Change = event {
+                this.schedule_json_check(window, cx);
                 cx.emit(Edited);
             }
         });
@@ -106,7 +119,53 @@ impl BodyEditor {
             raw_kind,
             raw,
             form_data,
+            json_error: None,
+            json_check_pending: false,
             _subscriptions: vec![sub, raw_sub, form_sub],
+        }
+    }
+
+    fn is_json(&self, cx: &App) -> bool {
+        self.mode == BodyMode::Raw
+            && self.raw_kind.read(cx).selected_value() == Some(&RawKind::Json)
+    }
+
+    /// Checks the JSON once before the next frame, however many edits come first.
+    fn schedule_json_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.json_check_pending {
+            return;
+        }
+        self.json_check_pending = true;
+        cx.on_next_frame(window, |this, _, cx| this.check_json(cx));
+    }
+
+    fn check_json(&mut self, cx: &mut Context<Self>) {
+        self.json_check_pending = false;
+        let error = if self.is_json(cx) {
+            json_body::validate(&self.raw.read(cx).text().to_string())
+                .map(|error| format!("Invalid JSON: {error}").into())
+        } else {
+            None
+        };
+        if error != self.json_error {
+            self.json_error = error;
+            cx.notify();
+        }
+    }
+
+    fn format_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.is_json(cx) {
+            return;
+        }
+        let text = self.raw.read(cx).text().to_string();
+        match json_body::format(&text) {
+            Ok(formatted) => self.raw.update(cx, |raw, cx| {
+                if formatted != text {
+                    raw.replace_all(formatted, window, cx);
+                }
+                raw.focus(window, cx);
+            }),
+            Err(_) => self.check_json(cx),
         }
     }
 
@@ -129,6 +188,7 @@ impl BodyEditor {
             raw.set_highlighter(editor_language(kind), cx);
             raw.set_value(text.to_string(), window, cx);
         });
+        self.schedule_json_check(window, cx);
         cx.notify();
     }
 
@@ -151,6 +211,7 @@ impl BodyEditor {
 
 impl Render for BodyEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_json = self.is_json(cx);
         let toolbar = h_flex()
             .flex_none()
             .h_6()
@@ -161,8 +222,9 @@ impl Render for BodyEditor {
                         .segmented()
                         .small()
                         .selected_index(self.mode.index())
-                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                        .on_click(cx.listener(|this, ix: &usize, window, cx| {
                             this.mode = BodyMode::ALL[*ix];
+                            this.schedule_json_check(window, cx);
                             cx.emit(Edited);
                             cx.notify();
                         }))
@@ -171,6 +233,20 @@ impl Render for BodyEditor {
             )
             .when(self.mode == BodyMode::Raw, |this| {
                 this.child(div().w(px(100.)).child(Select::new(&self.raw_kind).small()))
+            })
+            .when(is_json, |this| {
+                this.child(div().flex_1()).child(
+                    Button::new("format-json")
+                        .ghost()
+                        .small()
+                        .label("Format")
+                        .tooltip_with_action(
+                            "Format JSON",
+                            &FormatJsonBody,
+                            Some(BODY_EDITOR_CONTEXT),
+                        )
+                        .on_click(cx.listener(|this, _, window, cx| this.format_json(window, cx))),
+                )
             });
 
         let content = match self.mode {
@@ -185,13 +261,52 @@ impl Render for BodyEditor {
                 .overflow_y_scrollbar()
                 .child(self.form_data.clone())
                 .into_any_element(),
-            BodyMode::Raw => div()
+            BodyMode::Raw => v_flex()
                 .flex_1()
                 .min_h_0()
-                .child(Editor::new(&self.raw).h(relative(1.)))
+                .gap_1()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(Editor::new(&self.raw).h(relative(1.))),
+                )
+                .when(is_json, |this| this.child(self.render_json_error(cx)))
                 .into_any_element(),
         };
 
-        v_flex().size_full().gap_2().child(toolbar).child(content)
+        v_flex()
+            .size_full()
+            .gap_2()
+            .key_context(BODY_EDITOR_CONTEXT)
+            .on_action(
+                cx.listener(|this, _: &FormatJsonBody, window, cx| this.format_json(window, cx)),
+            )
+            .child(toolbar)
+            .child(content)
+    }
+}
+
+impl BodyEditor {
+    /// Always takes its line, so the editor doesn't resize when the error comes and goes.
+    fn render_json_error(&self, cx: &Context<Self>) -> impl IntoElement {
+        let row = h_flex()
+            .id("json-error")
+            .flex_none()
+            .h_4()
+            .gap_1p5()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground);
+        let Some(error) = self.json_error.clone() else {
+            return row;
+        };
+        row.child(
+            Icon::new(IconName::CircleX)
+                .xsmall()
+                .flex_none()
+                .text_color(cx.theme().danger),
+        )
+        .child(div().min_w_0().truncate().child(error.clone()))
+        .tooltip(move |window, cx| Tooltip::new(error.clone()).build(window, cx))
     }
 }

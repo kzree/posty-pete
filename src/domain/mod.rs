@@ -8,6 +8,7 @@ pub mod environment_menu;
 pub mod environment_selection;
 pub mod history;
 pub mod http;
+pub mod json_body;
 pub mod mcp;
 pub mod navigation;
 pub mod palette;

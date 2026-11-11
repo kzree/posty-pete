@@ -589,6 +589,7 @@ pub enum Shortcut {
     Save,
     SaveAs,
     SendRequest,
+    FormatJsonBody,
     Back,
     Forward,
     CommandPalette,
@@ -608,11 +609,12 @@ pub enum Shortcut {
 
 impl Shortcut {
     /// In page order, including ones for other platforms.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::NewRequest,
         Self::Save,
         Self::SaveAs,
         Self::SendRequest,
+        Self::FormatJsonBody,
         Self::Back,
         Self::Forward,
         Self::CommandPalette,
@@ -645,6 +647,7 @@ impl Shortcut {
             Self::Save => "Save",
             Self::SaveAs => "Save as",
             Self::SendRequest => "Send request",
+            Self::FormatJsonBody => "Format JSON body",
             Self::Back => "Back",
             Self::Forward => "Forward",
             Self::CommandPalette => "Command palette",
@@ -669,6 +672,7 @@ impl Shortcut {
             Self::Save => "shortcuts.save",
             Self::SaveAs => "shortcuts.save-as",
             Self::SendRequest => "shortcuts.send-request",
+            Self::FormatJsonBody => "shortcuts.format-json-body",
             Self::Back => "shortcuts.back",
             Self::Forward => "shortcuts.forward",
             Self::CommandPalette => "shortcuts.command-palette",
@@ -690,9 +694,11 @@ impl Shortcut {
     pub fn group(self) -> SettingsGroup {
         use SettingsGroup as G;
         match self {
-            Self::NewRequest | Self::Save | Self::SaveAs | Self::SendRequest => {
-                G::ShortcutsRequests
-            }
+            Self::NewRequest
+            | Self::Save
+            | Self::SaveAs
+            | Self::SendRequest
+            | Self::FormatJsonBody => G::ShortcutsRequests,
             Self::Back
             | Self::Forward
             | Self::CommandPalette

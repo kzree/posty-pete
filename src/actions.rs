@@ -23,6 +23,7 @@ actions!(
         OpenCommandPalette,
         DeleteHistoryEntry,
         SendHistoryEntryAgain,
+        FormatJsonBody,
         Quit,
         Hide,
         HideOthers,
@@ -57,6 +58,7 @@ pub fn action(command: Command) -> Option<Box<dyn Action>> {
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 pub const HISTORY_PANEL_CONTEXT: &str = "HistoryPanel";
+pub const BODY_EDITOR_CONTEXT: &str = "BodyEditor";
 /// Outranks the list's own cmd-enter (`Confirm { secondary: true }`).
 const HISTORY_LIST_CONTEXT: &str = "HistoryPanel > List";
 const INPUT_CONTEXT: &str = "Input";
@@ -80,6 +82,7 @@ pub(crate) mod keys {
     pub const QUICK_OPEN: &str = "cmd-p";
     pub const OPEN_COMMAND_PALETTE: &str = "cmd-k";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["backspace", "delete"];
+    pub const FORMAT_JSON_BODY: &str = "alt-shift-f";
     pub const QUIT: &str = "cmd-q";
     pub const HIDE: &str = "cmd-h";
     pub const HIDE_OTHERS: &str = "alt-cmd-h";
@@ -103,6 +106,7 @@ pub(crate) mod keys {
     pub const QUICK_OPEN: &str = "ctrl-p";
     pub const OPEN_COMMAND_PALETTE: &str = "ctrl-k";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["delete"];
+    pub const FORMAT_JSON_BODY: &str = "alt-shift-f";
     pub const QUIT: &str = "ctrl-q";
 }
 
@@ -136,6 +140,11 @@ pub fn bind_keys(cx: &mut App) {
             keys::OPEN_COMMAND_PALETTE,
             OpenCommandPalette,
             Some(INPUT_CONTEXT),
+        ),
+        KeyBinding::new(
+            keys::FORMAT_JSON_BODY,
+            FormatJsonBody,
+            Some(BODY_EDITOR_CONTEXT),
         ),
         KeyBinding::new(keys::QUIT, Quit, None),
     ]);

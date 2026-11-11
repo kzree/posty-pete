@@ -16,6 +16,7 @@ fn bindings(shortcut: Shortcut) -> Vec<&'static str> {
         Shortcut::Save => vec![keys::SAVE],
         Shortcut::SaveAs => vec![keys::SAVE_AS],
         Shortcut::SendRequest | Shortcut::SendHistoryEntry => vec![keys::SEND],
+        Shortcut::FormatJsonBody => vec![keys::FORMAT_JSON_BODY],
         Shortcut::Back => keys::GO_BACK.to_vec(),
         Shortcut::Forward => keys::GO_FORWARD.to_vec(),
         Shortcut::CommandPalette => vec![keys::OPEN_COMMAND_PALETTE],
