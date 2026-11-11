@@ -78,6 +78,11 @@ impl HistoryPanel {
         });
     }
 
+    /// Newest first.
+    pub fn entries<'a>(&self, cx: &'a App) -> &'a [HistorySummary] {
+        &self.list.read(cx).delegate().entries
+    }
+
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_rows_and_deselect(window, cx, |delegate| {
             delegate.set_entries(Vec::new(), today())

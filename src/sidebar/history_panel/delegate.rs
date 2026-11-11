@@ -11,9 +11,9 @@ use gpui_component::{
     tooltip::Tooltip,
 };
 
-use super::format::{day_label, local_day, outcome_summary, outcome_tag, request_count, today};
+use super::format::{local_day, outcome_summary, outcome_tag, request_count, today};
 use crate::{
-    domain::history::{self, HistorySummary},
+    domain::history::{self, HistorySummary, day_label},
     sidebar::placeholder,
     ui::method_label::method_label,
 };

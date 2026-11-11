@@ -1,6 +1,6 @@
 use std::{ops::Range, time::Duration};
 
-use chrono::{DateTime, Days, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Days, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use super::request::{HttpMethod, Request};
 
@@ -70,6 +70,26 @@ pub fn group_by_day<Tz: TimeZone>(
         .collect()
 }
 
+/// "Today", "Yesterday", "Tue, 3 Nov", or with the year when it isn't this year's.
+pub fn day_label(day: NaiveDate, today: NaiveDate) -> String {
+    match (today - day).num_days() {
+        0 => "Today".into(),
+        1 => "Yesterday".into(),
+        _ if day.year() == today.year() => day.format("%a, %-d %b").to_string(),
+        _ => day.format("%a, %-d %b %Y").to_string(),
+    }
+}
+
+/// When a request was sent, relative to `now`'s day: "Today 14:32".
+pub fn sent_label<Tz: TimeZone>(sent_at: DateTime<Utc>, now: &DateTime<Tz>) -> String {
+    let local = sent_at.with_timezone(&now.timezone());
+    format!(
+        "{} {}",
+        day_label(local.date_naive(), now.date_naive()),
+        local.time().format("%H:%M")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::FixedOffset;
@@ -88,6 +108,38 @@ mod tests {
             url: String::new(),
             outcome: None,
         }
+    }
+
+    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn day_labels() {
+        let today = date(2026, 11, 10);
+        assert_eq!(day_label(today, today), "Today");
+        assert_eq!(day_label(date(2026, 11, 9), today), "Yesterday");
+        assert_eq!(day_label(date(2026, 11, 3), today), "Tue, 3 Nov");
+        assert_eq!(
+            day_label(date(2025, 12, 31), date(2026, 1, 5)),
+            "Wed, 31 Dec 2025"
+        );
+    }
+
+    #[test]
+    fn sent_labels_use_the_local_day_and_time() {
+        let tz = FixedOffset::east_opt(2 * 3600).unwrap();
+        let now = tz.with_ymd_and_hms(2026, 11, 10, 15, 30, 0).unwrap();
+        assert_eq!(sent_label(at("2026-11-10T12:05:00Z"), &now), "Today 14:05");
+        assert_eq!(sent_label(at("2026-11-09T22:30:00Z"), &now), "Today 00:30");
+        assert_eq!(
+            sent_label(at("2026-11-09T21:30:00Z"), &now),
+            "Yesterday 23:30"
+        );
+        assert_eq!(
+            sent_label(at("2026-11-03T08:00:00Z"), &now),
+            "Tue, 3 Nov 10:00"
+        );
     }
 
     #[test]

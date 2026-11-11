@@ -343,6 +343,10 @@ impl Workspace {
         entries.extend(domain::palette::command_entries(
             domain::command::available(&state),
         ));
+        entries.extend(domain::palette::history_entries(
+            self.history_panel.read(cx).entries(cx),
+            &chrono::Local::now(),
+        ));
         entries.extend(domain::palette::settings_entries());
         let focus = self.command_focus(window, cx);
         let palette = cx.new(|cx| CommandPalette::new(entries, scope, &focus, window, cx));

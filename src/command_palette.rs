@@ -69,8 +69,8 @@ fn shortcuts(entries: &[Entry], focus: &FocusHandle, window: &Window) -> HashMap
         .collect()
 }
 
-/// Searches saved requests, collections, folders, environments, commands and
-/// settings; shown in a dialog.
+/// Searches saved requests, collections, folders, environments, history,
+/// commands and settings; shown in a dialog.
 pub struct CommandPalette {
     list: Entity<ListState<PaletteDelegate>>,
     scope: Scope,
@@ -249,6 +249,8 @@ impl ListDelegate for PaletteDelegate {
         let index = self.entry_index(ix)?;
         let entry = &self.entries[index];
         let shortcut = self.shortcut(entry);
+        // A URL needs the room more than the time it was sent.
+        let is_history = entry.target.group() == Group::History;
         Some(
             ListItem::new(("palette-entry", index))
                 .accessibility_label(accessibility_label(entry))
@@ -261,15 +263,25 @@ impl ListDelegate for PaletteDelegate {
                         .child(leading(entry, cx))
                         .child(
                             div()
-                                .flex_none()
-                                .max_w_1_2()
+                                .map(|name| {
+                                    if is_history {
+                                        name.flex_1().min_w_0()
+                                    } else {
+                                        name.flex_none().max_w_1_2()
+                                    }
+                                })
                                 .truncate()
                                 .child(entry.name.clone()),
                         )
                         .child(
                             div()
-                                .flex_1()
-                                .min_w_0()
+                                .map(|location| {
+                                    if is_history {
+                                        location.flex_none()
+                                    } else {
+                                        location.flex_1().min_w_0()
+                                    }
+                                })
                                 .truncate()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
@@ -335,6 +347,10 @@ fn accessibility_label(entry: &Entry) -> String {
         Target::SharedEnvironment(_) | Target::CollectionEnvironment { .. } => {
             format!("{path}, environment")
         }
+        Target::History(_) => match entry.method {
+            Some(method) => format!("{} {path}, sent {}", method.as_str(), entry.location),
+            None => format!("{path}, sent {}", entry.location),
+        },
         Target::Command(_) => format!("{path}, command"),
         Target::SettingsSection(_) => format!("{path}, settings page"),
         Target::Setting(_) => format!("{path}, setting"),

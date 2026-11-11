@@ -368,6 +368,9 @@ impl Workspace {
                 collection_id,
                 environment_id,
             } => self.open_environments(collection_id, Some(environment_id), window, cx),
+            Target::History(id) => self
+                .history
+                .update(cx, |history, cx| history.open(id, OpenMode::Load, cx)),
             Target::Command(command) => self.run_command(command, window, cx),
             Target::SettingsSection(section) => {
                 self.navigate(AppRoute::Settings, window, cx);

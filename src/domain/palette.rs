@@ -1,13 +1,15 @@
 //! What the command palette searches, and how results are ranked and grouped.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
+use chrono::{DateTime, TimeZone};
 use uuid::Uuid;
 
 use super::{
     collection::{Collection, Item},
     command::Command,
     environment::Environment,
+    history::{self, HistorySummary},
     request::HttpMethod,
     settings_index::{Setting, SettingsSection},
 };
@@ -75,16 +77,18 @@ pub enum Group {
     Collections,
     Folders,
     Environments,
+    History,
     Commands,
     Settings,
 }
 
 impl Group {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Requests,
         Self::Collections,
         Self::Folders,
         Self::Environments,
+        Self::History,
         Self::Commands,
         Self::Settings,
     ];
@@ -95,6 +99,7 @@ impl Group {
             Self::Collections => "Collections",
             Self::Folders => "Folders",
             Self::Environments => "Environments",
+            Self::History => "History",
             Self::Commands => "Commands",
             Self::Settings => "Settings",
         }
@@ -126,6 +131,8 @@ pub enum Target {
         collection_id: Uuid,
         environment_id: Uuid,
     },
+    /// A history entry, by its id in the history database.
+    History(i64),
     Command(Command),
     SettingsSection(SettingsSection),
     Setting(Setting),
@@ -138,6 +145,7 @@ impl Target {
             Self::Collection(_) => Group::Collections,
             Self::Folder { .. } => Group::Folders,
             Self::SharedEnvironment(_) | Self::CollectionEnvironment { .. } => Group::Environments,
+            Self::History(_) => Group::History,
             Self::Command(_) => Group::Commands,
             Self::SettingsSection(_) | Self::Setting(_) => Group::Settings,
         }
@@ -152,7 +160,8 @@ pub struct Entry {
     pub name: String,
     /// The collection and folders holding a request or folder, the collection
     /// of a collection environment, [`SHARED_LOCATION`] for a shared one, the
-    /// page and group of a setting, and empty otherwise.
+    /// page and group of a setting, when a history entry was sent, and empty
+    /// otherwise.
     pub location: String,
     pub method: Option<HttpMethod>,
     name_lower: String,
@@ -172,13 +181,18 @@ impl Entry {
             keywords: &[],
         };
         entry.name_lower = entry.name.to_lowercase();
-        entry.path_lower = entry.path().to_lowercase();
+        entry.path_lower = match (target.group(), method) {
+            (Group::History, Some(method)) => format!("{} {}", method.as_str(), entry.name),
+            _ => entry.path(),
+        }
+        .to_lowercase();
         entry
     }
 
     /// "API / Users / Get user" or, for environments and settings, "API › Staging".
+    /// A history entry's is its URL.
     pub fn path(&self) -> String {
-        if self.location.is_empty() {
+        if self.location.is_empty() || self.target.group() == Group::History {
             return self.name.clone();
         }
         let separator = match self.target.group() {
@@ -240,6 +254,27 @@ pub fn command_entries(commands: impl IntoIterator<Item = Command>) -> Vec<Entry
                 command.title().to_string(),
                 String::new(),
                 None,
+            )
+        })
+        .collect()
+}
+
+/// `summaries` newest first, as the history panel holds them. Repeats of a
+/// method and URL keep only the newest.
+pub fn history_entries<Tz: TimeZone>(
+    summaries: &[HistorySummary],
+    now: &DateTime<Tz>,
+) -> Vec<Entry> {
+    let mut seen = HashSet::new();
+    summaries
+        .iter()
+        .filter(|summary| seen.insert((summary.method.as_str(), summary.url.as_str())))
+        .map(|summary| {
+            Entry::new(
+                Target::History(summary.id),
+                summary.url.clone(),
+                history::sent_label(summary.sent_at, now),
+                Some(summary.method),
             )
         })
         .collect()
@@ -398,6 +433,13 @@ fn rank(entry: &Entry, query: &str) -> Option<Rank> {
     let path = entry.path_lower.as_str();
     if path.contains(query) {
         return Some(Rank::PathContains);
+    }
+    if entry.target.group() == Group::History {
+        // Long URLs would fuzzy-match almost any query, so each word must appear.
+        return query
+            .split_whitespace()
+            .all(|word| path.contains(word))
+            .then_some(Rank::Fuzzy);
     }
     is_subsequence(query, path).then_some(Rank::Fuzzy)
 }
@@ -856,6 +898,140 @@ mod tests {
                 "Appearance › Editors › Font size"
             ]
         );
+    }
+
+    fn now() -> DateTime<chrono::FixedOffset> {
+        DateTime::parse_from_rfc3339("2026-11-10T15:30:00+02:00").unwrap()
+    }
+
+    fn sent(id: i64, method: HttpMethod, url: &str) -> HistorySummary {
+        HistorySummary {
+            id,
+            sent_at: DateTime::parse_from_rfc3339("2026-11-10T12:05:00Z")
+                .unwrap()
+                .to_utc(),
+            method,
+            url: url.to_string(),
+            outcome: None,
+        }
+    }
+
+    fn with_history(history: &[HistorySummary]) -> Vec<Entry> {
+        let mut entries = with_settings();
+        entries.extend(history_entries(history, &now()));
+        entries
+    }
+
+    #[test]
+    fn history_entries_show_the_url_and_when_it_was_sent() {
+        let entries = history_entries(
+            &[sent(7, HttpMethod::Post, "https://api.test/users")],
+            &now(),
+        );
+        assert_eq!(entries[0].target, Target::History(7));
+        assert_eq!(entries[0].name, "https://api.test/users");
+        assert_eq!(entries[0].location, "Today 14:05");
+        assert_eq!(entries[0].method, Some(HttpMethod::Post));
+        assert_eq!(entries[0].path(), "https://api.test/users");
+    }
+
+    #[test]
+    fn history_keeps_the_newest_of_repeated_requests() {
+        let entries = history_entries(
+            &[
+                sent(3, HttpMethod::Get, "https://api.test/a"),
+                sent(2, HttpMethod::Post, "https://api.test/a"),
+                sent(1, HttpMethod::Get, "https://api.test/a"),
+            ],
+            &now(),
+        );
+        let targets: Vec<Target> = entries.iter().map(|e| e.target).collect();
+        assert_eq!(targets, [Target::History(3), Target::History(2)]);
+    }
+
+    #[test]
+    fn history_matches_url_fragments_and_method() {
+        let entries = with_history(&[
+            sent(2, HttpMethod::Post, "https://api.test/orders"),
+            sent(1, HttpMethod::Get, "https://api.test/invoices/42"),
+        ]);
+        let found = |query| {
+            outline(&entries, query, Scope::All)
+                .into_iter()
+                .find(|(title, _)| *title == "History")
+                .map(|(_, urls)| urls)
+                .unwrap_or_default()
+        };
+        assert_eq!(found("invoices/4"), ["https://api.test/invoices/42"]);
+        assert_eq!(found("post"), ["https://api.test/orders"]);
+        assert_eq!(found("get invoices"), ["https://api.test/invoices/42"]);
+        assert!(found("delete").is_empty());
+        assert!(found("aio").is_empty(), "no fuzzy matches on URLs");
+    }
+
+    #[test]
+    fn history_comes_after_saved_items_even_when_it_matches_better() {
+        let entries = with_history(&[sent(1, HttpMethod::Get, "health")]);
+        assert_eq!(
+            outline(&entries, "health", Scope::All),
+            [
+                ("Requests", vec!["Health".to_string()]),
+                ("History", vec!["health".to_string()]),
+            ]
+        );
+        assert_eq!(
+            groups(&entries, "", Scope::All),
+            [
+                "Requests",
+                "Collections",
+                "Folders",
+                "Environments",
+                "History",
+                "Commands",
+                "Settings"
+            ]
+        );
+    }
+
+    #[test]
+    fn history_ties_keep_newest_first() {
+        let entries = with_history(&[
+            sent(2, HttpMethod::Get, "https://api.test/b"),
+            sent(1, HttpMethod::Get, "https://api.test/a"),
+        ]);
+        assert_eq!(
+            outline(&entries, "api.test", Scope::All),
+            [(
+                "History",
+                vec![
+                    "https://api.test/b".to_string(),
+                    "https://api.test/a".into()
+                ]
+            )]
+        );
+    }
+
+    #[test]
+    fn history_is_capped_like_other_groups() {
+        let history: Vec<HistorySummary> = (0..NARROW_LIMIT as i64 + 10)
+            .map(|n| sent(n, HttpMethod::Get, &format!("https://api.test/{n}")))
+            .collect();
+        let entries = history_entries(&history, &now());
+        assert_eq!(
+            search(&entries, "", Scope::All)[0].entries.len(),
+            BROAD_LIMIT
+        );
+        assert_eq!(
+            search(&entries, "api.test", Scope::All)[0].entries.len(),
+            NARROW_LIMIT
+        );
+    }
+
+    #[test]
+    fn history_is_left_out_of_the_items_scope_and_commands() {
+        let entries = with_history(&[sent(1, HttpMethod::Get, "https://api.test/new")]);
+        assert!(!groups(&entries, "", Scope::Items).contains(&"History"));
+        assert!(!groups(&entries, "> new", Scope::All).contains(&"History"));
     }
 
     #[test]

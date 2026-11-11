@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Local, NaiveDate};
 use gpui::ParentElement;
 use gpui_component::{Sizable, tag::Tag};
 
@@ -39,24 +39,11 @@ pub(super) fn outcome_summary(outcome: Option<Outcome>) -> String {
     }
 }
 
-pub(super) fn day_label(day: NaiveDate, today: NaiveDate) -> String {
-    match (today - day).num_days() {
-        0 => "Today".into(),
-        1 => "Yesterday".into(),
-        _ if day.year() == today.year() => day.format("%a, %-d %b").to_string(),
-        _ => day.format("%a, %-d %b %Y").to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
-
-    fn date(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
 
     #[test]
     fn request_counts() {
@@ -73,17 +60,5 @@ mod tests {
         };
         assert_eq!(outcome_summary(Some(outcome)), "404 · 42 ms");
         assert_eq!(outcome_summary(None), "Error");
-    }
-
-    #[test]
-    fn day_labels() {
-        let today = date(2026, 11, 10);
-        assert_eq!(day_label(today, today), "Today");
-        assert_eq!(day_label(date(2026, 11, 9), today), "Yesterday");
-        assert_eq!(day_label(date(2026, 11, 3), today), "Tue, 3 Nov");
-        assert_eq!(
-            day_label(date(2025, 12, 31), date(2026, 1, 5)),
-            "Wed, 31 Dec 2025"
-        );
     }
 }
