@@ -24,7 +24,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## Collections
 
-- [ ] **Environments in quick open.** List shared and collection environments in quick open to jump to their editor.
 - [ ] **Library keyboard navigation skips empty rows.** Up/Down stops on the "No collections yet" / "No environments yet" rows; gpui-component 0.9's List has no disabled-row skipping, so it needs our own SelectUp/SelectDown handling.
 - [ ] **Revisit library empty rows.** The muted "No collections yet" / "No environments yet" rows replaced "Your library is empty." Revisit the empty state later, e.g. make the rows actionable ("Create a collection") or bring back a first-run message.
 - [ ] **One save queue for stores.** `SharedEnvironments` copies the ordered save queue from `Collections`; extract a shared helper if a third store appears.
@@ -50,6 +49,9 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
 - [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
 - [ ] **Navigation: two-finger swipes.** Mouse side buttons and three-finger "swipe between pages" work; two-finger trackpad swipes arrive as plain scrolling and would need custom horizontal-scroll detection.
+- [ ] **Palette: match saved requests on URL and method.** Saved requests are matched on name and folder path only, so a URL fragment finds history entries but not the saved request.
+- [ ] **Palette recents: environments chosen inside the environment pages.** Selecting an environment on the shared environments page or a collection's Environments tab isn't recorded, because those views auto-select the first environment and would record ones you only glanced at. Record only deliberate selections.
+- [ ] **Palette recents: back/forward and in-editor opens.** Items reached with back/forward, and requests opened while the editor is already showing, aren't recorded as recents. Decide whether they should be.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
 ## Look and feel
