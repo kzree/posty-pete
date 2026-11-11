@@ -3,6 +3,7 @@ mod dirty;
 mod editor;
 mod environments;
 mod events;
+mod focus;
 mod menu_fallback;
 mod navigation;
 mod persisted_navigation;
@@ -187,6 +188,9 @@ impl Workspace {
             _subscriptions: Vec::new(),
         };
         workspace._subscriptions = workspace.subscribe(window, cx);
+        workspace
+            ._subscriptions
+            .extend(Self::keep_focus(window, cx));
         let handle = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             handle
@@ -195,6 +199,10 @@ impl Workspace {
         });
         Self::load_navigation(window, cx);
         workspace.sync_window_title(window, cx);
+        // Restoring a non-request route moves focus to the Workspace.
+        workspace
+            .request_editor
+            .update(cx, |editor, cx| editor.focus_url(window, cx));
         workspace
     }
 
