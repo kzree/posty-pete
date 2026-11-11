@@ -24,7 +24,8 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## Collections
 
-- [ ] **Global environments.** Environments shared by all collections, layered between a collection's environment and its variables (or replacing per-collection ones if that reads better).
+- [ ] **Environments in quick open.** List shared and collection environments in quick open to jump to their editor.
+- [ ] **One save queue for stores.** `SharedEnvironments` copies the ordered save queue from `Collections`; extract a shared helper if a third store appears.
 - [ ] **Environment colours.** Mark an environment (e.g. red for Prod) in the picker and title bar so sending to production is hard to miss.
 - [ ] **Duplicate environments.** Copy an environment with its variables, e.g. Staging → Prod.
 - [ ] **Truncate long names in the environment menu.** `PopupMenuItem` wraps long labels; needs a custom element item or an upstream change.
