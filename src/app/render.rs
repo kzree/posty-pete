@@ -137,6 +137,7 @@ impl Workspace {
                     this.navigate(AppRoute::Collection(id), window, cx)
                 }))
             })
+            .when_some(self.environment_picker(cx), WindowTitleBar::trailing)
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {

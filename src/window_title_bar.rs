@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, App, ClickEvent, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder, px,
+    Pixels, Rems, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder, px, rems,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Sizable, TITLE_BAR_HEIGHT, TitleBar,
@@ -11,6 +11,10 @@ use gpui_component::{
 use gpui_kit_assets::IconName as LucideIcon;
 
 use crate::actions::{GoBack, GoForward, NewRequest, WORKSPACE_CONTEXT};
+
+/// The widest the trailing control may be; the title keeps clear of it.
+pub const TRAILING_MAX_WIDTH: Rems = rems(11.);
+const TRAILING_PADDING: Rems = rems(0.5);
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -80,15 +84,16 @@ fn nav_width(rem_size: Pixels) -> Pixels {
 }
 
 /// Left and right padding, within the area between the title bar's insets, that
-/// centres the title in the window and keeps it `gap` clear of the nav buttons
-/// and the window controls.
+/// centres the title in the window and keeps it `gap` clear of the nav buttons,
+/// the trailing control and the window controls.
 fn title_padding(
     left_inset: Pixels,
     right_inset: Pixels,
     nav_width: Pixels,
+    trailing_width: Pixels,
     gap: Pixels,
 ) -> (Pixels, Pixels) {
-    let side = (left_inset + nav_width + gap).max(right_inset + gap);
+    let side = (left_inset + nav_width + gap).max(right_inset + trailing_width + gap);
     (side - left_inset, side - right_inset)
 }
 
@@ -102,6 +107,7 @@ pub struct WindowTitleBar {
     on_forward: Option<ClickHandler>,
     on_new_request: Option<ClickHandler>,
     on_context_click: Option<ClickHandler>,
+    trailing: Option<AnyElement>,
 }
 
 impl WindowTitleBar {
@@ -115,6 +121,7 @@ impl WindowTitleBar {
             on_forward: None,
             on_new_request: None,
             on_context_click: None,
+            trailing: None,
         }
     }
 
@@ -164,6 +171,12 @@ impl WindowTitleBar {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_context_click = Some(Box::new(handler));
+        self
+    }
+
+    /// A control on the right, at most `TRAILING_MAX_WIDTH` wide.
+    pub fn trailing(mut self, element: impl IntoElement) -> Self {
+        self.trailing = Some(element.into_any_element());
         self
     }
 }
@@ -223,10 +236,17 @@ fn with_click(button: Button, handler: Option<ClickHandler>) -> Button {
 impl RenderOnce for WindowTitleBar {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let rem_size = window.rem_size();
+        let trailing_width = match self.trailing {
+            Some(_) => {
+                TRAILING_MAX_WIDTH.to_pixels(rem_size) + TRAILING_PADDING.to_pixels(rem_size)
+            }
+            None => px(0.),
+        };
         let (title_left, title_right) = title_padding(
             title_bar_left_inset(window),
             title_bar_right_inset(window),
             nav_width(rem_size),
+            trailing_width,
             rem_size * 0.75,
         );
 
@@ -291,7 +311,18 @@ impl RenderOnce for WindowTitleBar {
                         .child(with_click(back, self.on_back))
                         .child(with_click(forward, self.on_forward))
                         .child(with_click(home, self.on_new_request)),
-                ),
+                )
+                .when_some(self.trailing, |this, trailing| {
+                    this.child(
+                        div()
+                            .id("title-bar-trailing")
+                            .flex_none()
+                            .ml_auto()
+                            .mr(TRAILING_PADDING)
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .child(trailing),
+                    )
+                }),
         )
     }
 }
@@ -302,7 +333,7 @@ mod tests {
 
     #[test]
     fn title_padding_centres_between_unequal_insets() {
-        let (left, right) = title_padding(px(80.), px(0.), px(80.), px(12.));
+        let (left, right) = title_padding(px(80.), px(0.), px(80.), px(0.), px(12.));
         assert_eq!((left, right), (px(92.), px(172.)));
         // Content edges are mirror images: 80 + 92 from the left, 0 + 172 from the right.
         assert_eq!(px(80.) + left, px(0.) + right);
@@ -310,10 +341,17 @@ mod tests {
 
     #[test]
     fn title_padding_clears_wide_window_controls() {
-        let (left, right) = title_padding(px(12.), px(102.), px(80.), px(12.));
+        let (left, right) = title_padding(px(12.), px(102.), px(80.), px(0.), px(12.));
         assert_eq!(px(12.) + left, px(102.) + right);
         assert!(left >= px(80.) + px(12.));
         assert_eq!(right, px(12.));
+    }
+
+    #[test]
+    fn title_padding_clears_the_trailing_control() {
+        let (left, right) = title_padding(px(80.), px(0.), px(80.), px(184.), px(12.));
+        assert_eq!(px(80.) + left, px(0.) + right);
+        assert_eq!(right, px(184.) + px(12.));
     }
 
     #[test]

@@ -1,7 +1,11 @@
-use gpui::{Context, Window};
+use gpui::{App, Context, Window};
 use uuid::Uuid;
 
 use super::{Workspace, routes::AppRoute};
+use crate::{
+    domain::environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
+    environment_picker::{EnvironmentPicker, EnvironmentPickerAction},
+};
 
 impl Workspace {
     /// `None` = no environment.
@@ -19,7 +23,6 @@ impl Workspace {
 
     /// Resolves drafts against `collection_id` (`None` = no variables), with
     /// `environment_id` as its active environment.
-    #[allow(dead_code)] // Until the environment picker (task 53).
     pub(super) fn set_draft_collection(
         &mut self,
         collection_id: Option<Uuid>,
@@ -105,6 +108,60 @@ impl Workspace {
     pub(super) fn refresh_collection_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.collection_view.read(cx).id() {
             self.show_collection(id, window, cx);
+        }
+    }
+
+    /// The title bar's picker; `None` where there's no request context.
+    pub(super) fn environment_picker(&self, cx: &mut Context<Self>) -> Option<EnvironmentPicker> {
+        let scope = match self.current_route() {
+            AppRoute::Request => MenuScope::Draft,
+            AppRoute::SavedRequest { collection_id, .. } => MenuScope::Collection(collection_id),
+            AppRoute::Collection(id) => MenuScope::Collection(id),
+            AppRoute::Settings => return None,
+        };
+        let menu = self.environment_menu(scope, cx)?;
+        Some(EnvironmentPicker::new(
+            menu,
+            cx.listener(move |this, action, window, cx| {
+                this.on_environment_picker_action(scope, *action, window, cx)
+            }),
+        ))
+    }
+
+    fn environment_menu(&self, scope: MenuScope, cx: &App) -> Option<EnvironmentMenu> {
+        EnvironmentMenu::new(scope, &self.environments, self.collections.read(cx).all())
+    }
+
+    fn on_environment_picker_action(
+        &mut self,
+        scope: MenuScope,
+        action: EnvironmentPickerAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let choice = match action {
+            EnvironmentPickerAction::Manage(id) => {
+                return self.open_environments(id, None, window, cx);
+            }
+            EnvironmentPickerAction::Choose(choice) => choice,
+        };
+        match (scope, choice) {
+            (MenuScope::Collection(id), EnvironmentChoice::None) => {
+                self.set_active_environment(id, None, window, cx)
+            }
+            (MenuScope::Collection(id), EnvironmentChoice::Environment { environment_id, .. }) => {
+                self.set_active_environment(id, Some(environment_id), window, cx)
+            }
+            (MenuScope::Draft, EnvironmentChoice::None) => {
+                self.set_draft_collection(None, None, window, cx)
+            }
+            (
+                MenuScope::Draft,
+                EnvironmentChoice::Environment {
+                    collection_id,
+                    environment_id,
+                },
+            ) => self.set_draft_collection(Some(collection_id), Some(environment_id), window, cx),
         }
     }
 

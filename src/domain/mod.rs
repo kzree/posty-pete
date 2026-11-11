@@ -1,6 +1,7 @@
 pub mod body_format;
 pub mod collection;
 pub mod curl;
+pub mod environment_menu;
 pub mod environment_selection;
 pub mod history;
 pub mod http;
