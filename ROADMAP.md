@@ -11,8 +11,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Body: more modes.** `x-www-form-urlencoded`, file fields in form-data, more raw kinds (XML, HTML).
 - [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
-- [ ] **Friendlier TLS errors.** When the error chain contains rustls `InvalidContentType` (server answered in plain HTTP), show a hint: "The server didn't respond with TLS. Did you mean http://?"
-- [ ] **Structured send errors.** Send failures travel as `Result<Response, String>` (`flatten_send_result` and `finish_request` in `app.rs`, `ResponseView::set_response`), so the error chain is flattened to text before the UI sees it. Keep an `anyhow::Error` (or a small `SendError { message, hint }` in `domain/`) so hints like the TLS one above can inspect the chain. Do it together with that item.
 - [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `app.rs`) is hard-coded; make it configurable on the Settings page and per request.
 - [ ] **Cancel in-flight requests.** Send is disabled while a request runs; a Cancel button could take its place. Dropping `pending` alone doesn't stop the request on tokio (abort the `JoinHandle`).
 
