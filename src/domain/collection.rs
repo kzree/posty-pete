@@ -227,11 +227,13 @@ fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone) -> 
 
 /// The name and location Save As starts with. A saved request (`linked`, as
 /// collection and request ids) goes next to itself, named `typed_name` or
-/// else its stored name; a draft goes to the first collection's root.
+/// else its stored name; a draft goes to the root of `draft_collection` if
+/// it exists, else of the first collection.
 pub fn save_as_defaults(
     collections: &[Arc<Collection>],
     linked: Option<(Uuid, Uuid)>,
     typed_name: Option<String>,
+    draft_collection: Option<Uuid>,
 ) -> (String, Location) {
     let (name, location) = match linked {
         Some((collection_id, request_id)) => {
@@ -254,7 +256,9 @@ pub fn save_as_defaults(
         }
         None => {
             let location = collections
-                .first()
+                .iter()
+                .find(|collection| Some(collection.id) == draft_collection)
+                .or(collections.first())
                 .map_or(Location::NewCollection, |collection| Location::Folder {
                     collection_id: collection.id,
                     folder_id: None,
@@ -285,7 +289,6 @@ impl Collection {
 
     /// The environment's variables in front of the collection's. An unknown
     /// id gives just the collection's.
-    #[allow(dead_code)] // Until resolving with the active environment (task 51).
     pub fn variables_with(&self, environment_id: Option<Uuid>) -> Variables {
         let environment = environment_id
             .and_then(|id| self.environment(id))
@@ -796,6 +799,7 @@ mod tests {
             &[Arc::new(f.collection)],
             Some((collection_id, f.deep_request)),
             None,
+            None,
         );
         assert_eq!(name, "Deep");
         assert_eq!(
@@ -815,12 +819,28 @@ mod tests {
             &[Arc::new(f.collection)],
             Some((collection_id, f.root_request)),
             Some("Edited".into()),
+            None,
         );
         assert_eq!(name, "Edited");
         assert_eq!(
             location,
             Location::Folder {
                 collection_id,
+                folder_id: None,
+            }
+        );
+    }
+
+    #[test]
+    fn save_as_defaults_put_a_draft_at_the_draft_collection_root() {
+        let first = Arc::new(Collection::new("First"));
+        let second = Arc::new(Collection::new("Second"));
+        let second_id = second.id;
+        let (_, location) = save_as_defaults(&[first, second], None, None, Some(second_id));
+        assert_eq!(
+            location,
+            Location::Folder {
+                collection_id: second_id,
                 folder_id: None,
             }
         );
@@ -835,6 +855,7 @@ mod tests {
             &[Arc::new(first), Arc::new(second)],
             None,
             Some("Ignored".into()),
+            Some(Uuid::new_v4()),
         );
         assert_eq!(name, NEW_REQUEST_NAME);
         assert_eq!(
@@ -848,7 +869,7 @@ mod tests {
 
     #[test]
     fn save_as_defaults_without_collections_offer_a_new_collection() {
-        let (name, location) = save_as_defaults(&[], None, None);
+        let (name, location) = save_as_defaults(&[], None, None, Some(Uuid::new_v4()));
         assert_eq!(name, NEW_REQUEST_NAME);
         assert_eq!(location, Location::NewCollection);
     }

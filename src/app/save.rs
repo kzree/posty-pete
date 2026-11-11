@@ -43,7 +43,11 @@ impl Workspace {
         };
         let typed_name = linked.and_then(|_| self.request_editor.read(cx).name(cx));
         let collections = self.collections.read(cx).all();
-        let (name, location) = save_as_defaults(collections, linked, typed_name);
+        let draft_collection = self
+            .environments
+            .draft_collection(collections)
+            .map(|c| c.id);
+        let (name, location) = save_as_defaults(collections, linked, typed_name, draft_collection);
         let locations = save_as_dialog::locations(collections);
         let this = cx.weak_entity();
         open_save_as_dialog(

@@ -14,6 +14,7 @@ use super::{
 use crate::{
     collections::LoadState,
     domain::{
+        environment_selection::EnvironmentSelection,
         navigation::{NavEntry, SavedNavigation},
         request::Request,
         store::{self, navigation::NavigationStore},
@@ -33,7 +34,7 @@ enum Phase {
     /// Waiting for the collections, so the current entry can be opened.
     Loaded {
         store: NavigationStore,
-        saved: Option<SavedNavigation>,
+        saved: Option<Box<SavedNavigation>>,
     },
     /// Saving starts only here, so a stored history is never overwritten before it was restored.
     Saving(Writer),
@@ -66,7 +67,7 @@ impl PersistedNavigation {
             return None;
         }
         self.phase = Phase::Saving(Writer::new(store));
-        saved
+        saved.map(|saved| *saved)
     }
 
     fn save_job(&mut self, saved: SavedNavigation) -> Option<impl FnOnce() + Send + 'static> {
@@ -168,7 +169,10 @@ impl Workspace {
             let opened = cx.background_spawn(async { open_and_load() }).await;
             this.update_in(cx, |this, window, cx| {
                 this.persisted_navigation.phase = match opened {
-                    Ok((store, saved)) => Phase::Loaded { store, saved },
+                    Ok((store, saved)) => Phase::Loaded {
+                        store,
+                        saved: saved.map(Box::new),
+                    },
                     Err(error) => {
                         tracing::warn!("navigation won't be kept: {error:#}");
                         Phase::Unavailable
@@ -181,7 +185,9 @@ impl Workspace {
         .detach();
     }
 
-    /// Restores the stored navigation if both it and the collections are loaded.
+    /// Restores the stored navigation and environment selection if both it and
+    /// the collections are loaded. The selection is restored even if the user
+    /// already moved on.
     pub(super) fn restore_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let collections = self.collections.read(cx).load_state();
         if collections == LoadState::Loading
@@ -189,13 +195,19 @@ impl Workspace {
         {
             return;
         }
-        match self.persisted_navigation.collections_loaded(collections) {
-            Some(saved) if self.navigation_untouched(cx) => {
-                self.apply_saved_navigation(saved, window, cx)
-            }
-            Some(_) => tracing::info!("not restoring navigation: the user already moved on"),
-            None => {}
+        let Some(mut saved) = self.persisted_navigation.collections_loaded(collections) else {
+            return;
+        };
+        self.environments = EnvironmentSelection::new(
+            mem::take(&mut saved.active_environments),
+            saved.draft_collection,
+        );
+        if self.navigation_untouched(cx) {
+            self.apply_saved_navigation(saved, window, cx);
+        } else {
+            tracing::info!("not restoring navigation: the user already moved on");
         }
+        self.refresh_dirty(window, cx);
     }
 
     fn navigation_untouched(&self, cx: &App) -> bool {
@@ -266,6 +278,8 @@ impl Workspace {
             EditorContent::Draft => Some(self.request_editor.read(cx).build_request(cx)),
             EditorContent::Saved { .. } => self.draft.clone(),
         };
+        let collections = self.collections.read(cx).all();
+        let (active_environments, draft_collection) = self.environments.pruned(collections);
         let saved = SavedNavigation {
             entries: self
                 .route_history
@@ -275,6 +289,8 @@ impl Workspace {
                 .collect(),
             index: self.route_history.index(),
             draft,
+            active_environments,
+            draft_collection,
         };
         self.persisted_navigation.save_job(saved)
     }
@@ -292,7 +308,7 @@ fn open_and_load() -> anyhow::Result<(NavigationStore, Option<SavedNavigation>)>
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{collections::HashMap, fs, path::Path};
 
     use uuid::Uuid;
 
@@ -304,6 +320,8 @@ mod tests {
             entries,
             index: 0,
             draft: None,
+            active_environments: HashMap::new(),
+            draft_collection: None,
         }
     }
 
@@ -314,7 +332,7 @@ mod tests {
         PersistedNavigation {
             phase: Phase::Loaded {
                 store,
-                saved: Some(stored.clone()),
+                saved: Some(Box::new(stored.clone())),
             },
             scheduled_save: None,
         }

@@ -1,13 +1,13 @@
 /// The line under the URL bar for `names`, the unresolved variables, or
-/// `None` if there are none. `linked` is whether the editor holds a saved
-/// request; otherwise no variables apply.
-pub fn unresolved_hint(names: &[String], linked: bool) -> Option<String> {
+/// `None` if there are none. `resolvable` is whether there's a collection
+/// to resolve against; otherwise no variables apply.
+pub fn unresolved_hint(names: &[String], resolvable: bool) -> Option<String> {
     if names.is_empty() {
         return None;
     }
     let list = names.join(", ");
-    Some(match (linked, names.len()) {
-        (false, _) => format!("Variables only work in saved requests: {list}"),
+    Some(match (resolvable, names.len()) {
+        (false, _) => format!("Choose an environment to use variables: {list}"),
         (true, 1) => format!("Unresolved variable: {list}"),
         (true, _) => format!("Unresolved variables: {list}"),
     })
@@ -28,7 +28,7 @@ mod tests {
     }
 
     #[test]
-    fn linked_lists_unresolved_names() {
+    fn resolvable_lists_unresolved_names() {
         assert_eq!(
             unresolved_hint(&names(&["base", "token"]), true).as_deref(),
             Some("Unresolved variables: base, token")
@@ -40,14 +40,14 @@ mod tests {
     }
 
     #[test]
-    fn unlinked_says_why() {
+    fn without_a_collection_asks_for_an_environment() {
         assert_eq!(
             unresolved_hint(&names(&["base"]), false).as_deref(),
-            Some("Variables only work in saved requests: base")
+            Some("Choose an environment to use variables: base")
         );
         assert_eq!(
             unresolved_hint(&names(&["base", "id"]), false).as_deref(),
-            Some("Variables only work in saved requests: base, id")
+            Some("Choose an environment to use variables: base, id")
         );
     }
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use gpui::{AppContext, Context, SharedString, Window};
+use gpui::{App, AppContext, Context, SharedString, Window};
 use tokio::task::JoinError;
 
 use super::{EditorContent, Workspace, show_error};
@@ -9,6 +9,7 @@ use crate::{
     domain::{
         collection::Collection,
         curl,
+        environment_selection::EnvironmentSelection,
         history::{HistoryRecord, Outcome},
         http,
         request::Request,
@@ -28,16 +29,29 @@ fn flatten_send_result(
     }
 }
 
-/// The variables that apply to what the editor holds: its collection's for a
-/// saved request, none for the draft.
-fn editor_variables(content: EditorContent, collections: &[Arc<Collection>]) -> Option<Variables> {
-    let EditorContent::Saved { collection_id, .. } = content else {
-        return None;
-    };
-    collections
-        .iter()
-        .find(|collection| collection.id == collection_id)
-        .map(|collection| Variables::from_rows(&collection.variables))
+/// The collection the editor's request resolves against: a saved request's
+/// own, the draft collection for the draft.
+fn editor_collection<'a>(
+    content: EditorContent,
+    selection: &EnvironmentSelection,
+    collections: &'a [Arc<Collection>],
+) -> Option<&'a Arc<Collection>> {
+    match content {
+        EditorContent::Saved { collection_id, .. } => collections
+            .iter()
+            .find(|collection| collection.id == collection_id),
+        EditorContent::Draft => selection.draft_collection(collections),
+    }
+}
+
+/// The variables that apply to what the editor holds: its collection's, with
+/// that collection's active environment. `None` without a collection.
+fn editor_variables(
+    content: EditorContent,
+    selection: &EnvironmentSelection,
+    collections: &[Arc<Collection>],
+) -> Option<Variables> {
+    editor_collection(content, selection, collections).map(|c| selection.variables(c))
 }
 
 fn resolve(request: Request, variables: Option<&Variables>) -> Request {
@@ -51,18 +65,23 @@ impl Workspace {
     /// The request the editor's `request` sends, with the variables as they are now.
     fn resolve_editor_request(&mut self, request: Request, cx: &mut Context<Self>) -> Request {
         self.flush_collection_variables(cx);
-        let variables = editor_variables(self.editor_content, self.collections.read(cx).all());
+        let variables = self.editor_variables(cx);
         resolve(request, variables.as_ref())
     }
 
+    fn editor_variables(&self, cx: &App) -> Option<Variables> {
+        let collections = self.collections.read(cx).all();
+        editor_variables(self.editor_content, &self.environments, collections)
+    }
+
     /// Hands the editor the variables `request` references but that don't
-    /// resolve. No variables apply to the draft, so there all of them are.
+    /// resolve. Without a collection to resolve against, all of them.
     pub(super) fn sync_unresolved_variables(&mut self, request: &Request, cx: &mut Context<Self>) {
-        let variables = editor_variables(self.editor_content, self.collections.read(cx).all());
+        let variables = self.editor_variables(cx);
+        let resolvable = variables.is_some();
         let names = request.unresolved_variables(&variables.unwrap_or_default());
-        let linked = matches!(self.editor_content, EditorContent::Saved { .. });
         self.request_editor.update(cx, |editor, cx| {
-            editor.set_unresolved_variables(&names, linked, cx)
+            editor.set_unresolved_variables(&names, resolvable, cx)
         });
     }
 
@@ -185,7 +204,10 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::request::KeyValue;
+    use crate::domain::{
+        collection::{add_environment, set_environment_variables},
+        request::KeyValue,
+    };
 
     fn row(enabled: bool, key: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -199,6 +221,24 @@ mod tests {
         let mut collection = Collection::new("API");
         collection.variables = variables;
         Arc::new(collection)
+    }
+
+    fn none() -> EnvironmentSelection {
+        EnvironmentSelection::default()
+    }
+
+    /// `collection` with an environment overriding `base`, and its id.
+    fn with_environment(collection: &Arc<Collection>) -> (Arc<Collection>, Uuid) {
+        let mut collections = [collection.clone()];
+        let id = add_environment(&mut collections, collection.id).unwrap();
+        assert!(set_environment_variables(
+            &mut collections,
+            collection.id,
+            id,
+            vec![row(true, "base", "https://staging")],
+        ));
+        let [collection] = collections;
+        (collection, id)
     }
 
     fn saved_in(collection_id: Uuid) -> EditorContent {
@@ -225,7 +265,7 @@ mod tests {
         ]);
         let collections = [other, own.clone()];
 
-        let variables = editor_variables(saved_in(own.id), &collections);
+        let variables = editor_variables(saved_in(own.id), &none(), &collections);
         let sent = resolve(templated(), variables.as_ref());
 
         assert_eq!(sent.url, "https://api/users/{{id}}");
@@ -235,7 +275,7 @@ mod tests {
     fn draft_and_missing_collection_are_sent_unchanged() {
         let collections = [collection(vec![row(true, "base", "https://api")])];
         for content in [EditorContent::Draft, saved_in(Uuid::new_v4())] {
-            let variables = editor_variables(content, &collections);
+            let variables = editor_variables(content, &none(), &collections);
             assert_eq!(variables, None);
             assert_eq!(resolve(templated(), variables.as_ref()), templated());
         }
@@ -244,10 +284,56 @@ mod tests {
     #[test]
     fn key_resolving_to_empty_is_dropped_when_sent() {
         let collections = [collection(vec![row(true, "k", "")])];
-        let variables = editor_variables(saved_in(collections[0].id), &collections);
+        let variables = editor_variables(saved_in(collections[0].id), &none(), &collections);
         let sent = resolve(templated(), variables.as_ref());
 
         assert_eq!(sent.headers, [row(true, "", "v")]);
         assert!(sent.resolve().headers.is_empty());
+    }
+
+    #[test]
+    fn saved_request_uses_its_collections_active_environment() {
+        let base = collection(vec![row(true, "base", "https://api")]);
+        let (own, staging) = with_environment(&base);
+        let collections = [own.clone()];
+        let mut selection = none();
+        selection.set_active_environment(own.id, Some(staging));
+
+        let variables = editor_variables(saved_in(own.id), &selection, &collections);
+        assert_eq!(variables.unwrap().get("base"), Some("https://staging"));
+
+        selection.set_active_environment(own.id, None);
+        let variables = editor_variables(saved_in(own.id), &selection, &collections);
+        assert_eq!(variables.unwrap().get("base"), Some("https://api"));
+    }
+
+    #[test]
+    fn draft_uses_the_draft_collection_and_its_environment() {
+        let base = collection(vec![row(true, "base", "https://api")]);
+        let (own, staging) = with_environment(&base);
+        let collections = [collection(Vec::new()), own.clone()];
+        let mut selection = none();
+        selection.set_draft_collection(Some(own.id), Some(staging));
+
+        let variables = editor_variables(EditorContent::Draft, &selection, &collections);
+        let sent = resolve(templated(), variables.as_ref());
+        assert_eq!(sent.url, "https://staging/users/{{id}}");
+
+        selection.set_draft_collection(None, None);
+        assert_eq!(
+            editor_variables(EditorContent::Draft, &selection, &collections),
+            None
+        );
+    }
+
+    #[test]
+    fn deleted_draft_collection_means_no_variables() {
+        let collections = [collection(vec![row(true, "base", "https://api")])];
+        let mut selection = none();
+        selection.set_draft_collection(Some(Uuid::new_v4()), None);
+        assert_eq!(
+            editor_variables(EditorContent::Draft, &selection, &collections),
+            None
+        );
     }
 }

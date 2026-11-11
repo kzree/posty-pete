@@ -53,6 +53,7 @@ pub struct Variables {
 }
 
 impl Variables {
+    #[cfg(test)]
     pub fn from_rows(rows: &[KeyValue]) -> Self {
         Self::layered([rows])
     }

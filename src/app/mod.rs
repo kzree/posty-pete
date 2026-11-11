@@ -1,5 +1,6 @@
 mod dirty;
 mod editor;
+mod environments;
 mod events;
 mod menu_fallback;
 mod navigation;
@@ -29,7 +30,7 @@ use self::{
 use crate::{
     collection_view::CollectionView,
     collections::Collections,
-    domain,
+    domain::{self, environment_selection::EnvironmentSelection},
     history::History,
     quick_open,
     request_editor::RequestEditor,
@@ -91,6 +92,7 @@ pub struct Workspace {
     editor_content: EditorContent,
     /// The draft, kept while the editor holds a saved request.
     draft: Option<domain::request::Request>,
+    environments: EnvironmentSelection,
     /// Set while the editor holds a saved request.
     baseline: Option<Baseline>,
     dirty: bool,
@@ -149,6 +151,7 @@ impl Workspace {
             route_history: RouteHistory::new(AppRoute::Request),
             editor_content: EditorContent::Draft,
             draft: None,
+            environments: EnvironmentSelection::default(),
             baseline: None,
             dirty: false,
             dirty_check: PendingCheck::default(),

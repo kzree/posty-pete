@@ -133,14 +133,14 @@ impl RequestEditor {
     }
 
     /// Shows the variables the request references but that don't resolve.
-    /// `linked` is whether the editor holds a saved request.
+    /// `resolvable` is whether there's a collection to resolve against.
     pub fn set_unresolved_variables(
         &mut self,
         names: &[String],
-        linked: bool,
+        resolvable: bool,
         cx: &mut Context<Self>,
     ) {
-        let hint = unresolved_hint(names, linked).map(SharedString::from);
+        let hint = unresolved_hint(names, resolvable).map(SharedString::from);
         if hint != self.unresolved_hint {
             self.unresolved_hint = hint;
             cx.notify();

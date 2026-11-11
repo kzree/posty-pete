@@ -43,6 +43,8 @@ impl NavigationStore {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use uuid::Uuid;
 
     use super::*;
@@ -75,6 +77,8 @@ mod tests {
                 url: "example.com/draft".into(),
                 ..Request::default()
             }),
+            active_environments: HashMap::from([(Uuid::new_v4(), Uuid::new_v4())]),
+            draft_collection: Some(Uuid::new_v4()),
         }
     }
 
@@ -128,14 +132,14 @@ mod tests {
             .save(&SavedNavigation {
                 entries: Vec::new(),
                 index: 0,
-                draft: None,
+                ..sample()
             })
             .unwrap();
         assert!(store.load().is_err());
     }
 
     #[test]
-    fn missing_draft_field_loads_as_none() {
+    fn missing_optional_fields_load_as_empty() {
         let (dir, store) = setup();
         fs::create_dir_all(dir.path()).unwrap();
         fs::write(
@@ -146,5 +150,7 @@ mod tests {
         let loaded = store.load().unwrap().unwrap();
         assert_eq!(loaded.entries, [NavEntry::Draft, NavEntry::Settings]);
         assert_eq!(loaded.draft, None);
+        assert!(loaded.active_environments.is_empty());
+        assert_eq!(loaded.draft_collection, None);
     }
 }

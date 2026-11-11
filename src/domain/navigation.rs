@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -26,6 +28,11 @@ pub struct SavedNavigation {
     pub index: usize,
     #[serde(default)]
     pub draft: Option<Request>,
+    /// Each collection's active environment, by collection id.
+    #[serde(default)]
+    pub active_environments: HashMap<Uuid, Uuid>,
+    #[serde(default)]
+    pub draft_collection: Option<Uuid>,
 }
 
 impl SavedNavigation {
