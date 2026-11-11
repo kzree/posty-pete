@@ -12,6 +12,7 @@ pub struct Response {
     pub elapsed: Duration,
     body_len: usize,
     binary: bool,
+    format: BodyFormat,
     /// `None` when the body is binary or can't be decoded faithfully.
     text: Option<String>,
 }
@@ -50,8 +51,10 @@ impl Response {
             elapsed,
             body_len: body.len(),
             binary: false,
+            format: BodyFormat::Text,
             text: None,
         };
+        response.format = BodyFormat::from_content_type(response.content_type());
         response.text = decode_body(&body, response.content_type());
         response.binary = response.text.is_none();
         response
@@ -79,8 +82,9 @@ impl Response {
             .map(|(_, value)| value.as_str())
     }
 
+    /// From `Content-Type`, or JSON once `take_display_body` has sniffed it.
     pub fn body_format(&self) -> BodyFormat {
-        BodyFormat::from_content_type(self.content_type())
+        self.format
     }
 
     /// Moves the body text out for display, so the response doesn't keep a
@@ -92,11 +96,34 @@ impl Response {
                 self.body_len
             );
         };
-        if self.body_format() != BodyFormat::Json {
+        let try_json = self.format == BodyFormat::Json
+            || (allows_json_sniffing(self.content_type()) && looks_like_json(&text));
+        if !try_json {
             return text;
         }
-        pretty_json(&text).unwrap_or(text)
+        match pretty_json(&text) {
+            Some(pretty) => {
+                self.format = BodyFormat::Json;
+                pretty
+            }
+            None => text,
+        }
     }
+}
+
+/// Missing or generic types that servers often send JSON under.
+fn allows_json_sniffing(content_type: Option<&str>) -> bool {
+    let Some(content_type) = content_type else {
+        return true;
+    };
+    content_type.parse::<Mime>().is_ok_and(|mime| {
+        mime.essence_str() == mime::TEXT_PLAIN.essence_str()
+            || mime.essence_str() == mime::APPLICATION_OCTET_STREAM.essence_str()
+    })
+}
+
+fn looks_like_json(text: &str) -> bool {
+    text.trim_start().starts_with(['{', '['])
 }
 
 /// Re-indents valid JSON without parsing values, so numbers and duplicate keys are kept as-is.
@@ -318,6 +345,72 @@ mod tests {
         assert_eq!(response.take_display_body(), "{\"a\": [1,");
         assert_eq!(response.text, None);
         assert!(!response.is_binary());
+    }
+
+    fn display(content_type: Option<&str>, body: &str) -> (String, BodyFormat) {
+        let headers = content_type
+            .map(|ct| vec![("Content-Type".into(), ct.into())])
+            .unwrap_or_default();
+        let mut response = Response::new(200, headers, body.as_bytes().to_vec(), Duration::ZERO);
+        let text = response.take_display_body();
+        (text, response.body_format())
+    }
+
+    #[test]
+    fn json_is_sniffed_under_missing_or_generic_types() {
+        for content_type in [
+            None,
+            Some("text/plain"),
+            Some("text/plain; charset=utf-8"),
+            Some("application/octet-stream"),
+        ] {
+            assert_eq!(
+                display(content_type, " \n{\"a\":[1]}"),
+                ("{\n  \"a\": [\n    1\n  ]\n}".into(), BodyFormat::Json),
+                "{content_type:?}"
+            );
+            assert_eq!(
+                display(content_type, "[]"),
+                ("[]".into(), BodyFormat::Json),
+                "{content_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn near_json_is_not_sniffed() {
+        for body in [
+            "{\"a\":1,}",
+            "[1, 2",
+            "{} trailing",
+            "\"string\"",
+            "42",
+            "null",
+            "",
+        ] {
+            assert_eq!(
+                display(Some("text/plain"), body),
+                (body.into(), BodyFormat::Text),
+                "{body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_types_are_not_overridden_by_sniffing() {
+        for (content_type, expected) in [
+            ("text/html", BodyFormat::Html),
+            ("application/xml", BodyFormat::Xml),
+            ("text/csv", BodyFormat::Text),
+            ("application/x-yaml", BodyFormat::Yaml),
+            ("not a mime", BodyFormat::Text),
+        ] {
+            assert_eq!(
+                display(Some(content_type), "{\"a\":1}"),
+                ("{\"a\":1}".into(), expected),
+                "{content_type}"
+            );
+        }
     }
 
     #[test]
