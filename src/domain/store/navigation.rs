@@ -33,11 +33,7 @@ impl NavigationStore {
         if let Some(dir) = self.path.parent() {
             fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
-        let tmp = self.path.with_extension("json.tmp");
-        let json = serde_json::to_vec_pretty(saved)?;
-        fs::write(&tmp, json).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &self.path)
-            .with_context(|| format!("renaming {} to {}", tmp.display(), self.path.display()))
+        super::write_json_atomically(&self.path, saved)
     }
 }
 

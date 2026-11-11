@@ -13,6 +13,7 @@ pub mod quick_open;
 pub mod request;
 pub mod resolved;
 pub mod response;
+pub mod settings;
 pub mod store;
 pub mod url_scheme;
 pub mod variables;

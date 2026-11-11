@@ -41,13 +41,7 @@ impl JsonDir {
     }
 
     pub fn save<T: Serialize>(&self, id: Uuid, value: &T) -> anyhow::Result<()> {
-        let path = self.path(id);
-        let tmp = path.with_extension("json.tmp");
-        let json = serde_json::to_vec_pretty(value)?;
-
-        fs::write(&tmp, json).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &path)
-            .with_context(|| format!("renaming {} to {}", tmp.display(), path.display()))
+        super::write_json_atomically(&self.path(id), value)
     }
 
     pub fn delete(&self, id: Uuid) -> anyhow::Result<()> {

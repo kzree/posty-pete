@@ -15,6 +15,7 @@ mod quick_open;
 mod request_editor;
 mod response_view;
 mod save_as_dialog;
+mod settings;
 mod settings_page;
 mod shared_environments;
 mod shared_environments_view;
@@ -38,6 +39,7 @@ fn run() {
         actions::bind_keys(cx);
         menus::init(WINDOW_TITLE, cx);
         app::init(cx);
+        settings::AppSettings::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
         Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
 

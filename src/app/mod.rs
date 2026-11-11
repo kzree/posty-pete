@@ -35,6 +35,7 @@ use crate::{
     quick_open,
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},
+    settings::{AppSettings, SettingsEvent},
     settings_page::SettingsPage,
     shared_environments::{SharedEnvironments, SharedEnvironmentsEvent},
     shared_environments_view::SharedEnvironmentsView,
@@ -212,6 +213,13 @@ impl Workspace {
                     SharedEnvironmentsEvent::Failed { title, error } => {
                         show_error(title, error, window, cx)
                     }
+                },
+            ),
+            cx.subscribe_in(
+                &AppSettings::saver(cx),
+                window,
+                |_, _, event, window, cx| match event {
+                    SettingsEvent::Failed { title, error } => show_error(title, error, window, cx),
                 },
             ),
             cx.subscribe_in(&self.library_panel, window, |this, _, event, window, cx| {
