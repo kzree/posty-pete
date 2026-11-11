@@ -16,7 +16,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## Responses
 
-- [ ] **Content sniffing fallback.** When `Content-Type` is wrong or missing, detect JSON from the body (starts with `{`/`[` and parses).
 - [ ] **XML highlighting.** gpui-component 0.9 has no XML grammar; XML is highlighted as HTML for now.
 - [ ] **Large responses.** Downloads are capped at 50 MB (`MAX_BODY_BYTES` in `domain/http.rs`; larger bodies fail with "response exceeds 50 MB"), but the editor handles only ~50K lines; add a display cutoff or a "response too large to display" message, and possibly make the download cap configurable. The download cap doesn't bound the work after it: pretty-printing can grow the text well past 50 MB with no limit on formatted size or line count, and `ResponseView::set_response` loads it into the editor on the UI thread (again when switching to a cached response). Limit formatted bytes/lines while formatting, and skip prettifying/highlighting above a threshold.
 
@@ -63,4 +62,3 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Large bodies while editing.** Every request edit, even to the name or URL, rebuilds the whole request once per frame: the raw body is copied out of the editor and scanned for variables (`refresh_dirty` in `app/editor.rs`), and the navigation save snapshots the draft about twice a second while typing. Measure with 1/10/50 MB raw bodies, then reuse the body snapshot until the body itself changes.
 - [ ] **Coalesce queued saves.** The collection and shared-environment save queues are unbounded and write every revision in full. Keep only the newest pending save per id (never let an old save recreate a deleted item), and copy less on `Arc::make_mut` if measurements show it matters. Coordinate with the save-failure handling from task 76.
 - [ ] **Palette and library at scale.** Opening the palette rebuilds every entry, each keystroke sorts all matches, and a collection change refreshes every projection (library rows twice, hidden pages, environment clones). Benchmark with thousands of requests/environments/history entries before adding caches or narrower change events.
-- [ ] **Unit tests for `BodyFormat::from_content_type`.** `application/json; charset=utf-8`, `application/problem+json`, `application/xml`, `text/html`, `application/x-yaml`, missing and invalid headers.
