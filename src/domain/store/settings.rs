@@ -83,19 +83,26 @@ pub struct SettingsWriter {
 
 struct Shared {
     store: SettingsStore,
-    /// The newest save written or skipped.
+    /// The newest save that ran, whether or not it succeeded.
+    attempted: u64,
+    /// The newest save that succeeded.
     written: u64,
 }
 
 impl SettingsWriter {
     pub fn new(store: SettingsStore) -> Self {
         Self {
-            shared: Arc::new(Mutex::new(Shared { store, written: 0 })),
+            shared: Arc::new(Mutex::new(Shared {
+                store,
+                attempted: 0,
+                written: 0,
+            })),
             next: 0,
         }
     }
 
-    /// A save of `settings`. It does nothing if a newer save already ran.
+    /// A save of `settings`. It does nothing if a newer save already ran,
+    /// even one that failed.
     pub fn job(
         &mut self,
         settings: Settings,
@@ -104,15 +111,17 @@ impl SettingsWriter {
         let (seq, shared) = (self.next, self.shared.clone());
         move || {
             let mut shared = shared.lock().unwrap_or_else(PoisonError::into_inner);
-            if shared.written >= seq {
+            if shared.attempted >= seq {
                 return Ok(());
             }
+            shared.attempted = seq;
+            shared.store.save(&settings)?;
             shared.written = seq;
-            shared.store.save(&settings)
+            Ok(())
         }
     }
 
-    /// Whether a save handed out hasn't run yet.
+    /// Whether the newest save handed out hasn't run yet or failed.
     pub fn has_pending(&self) -> bool {
         let shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
         shared.written < self.next
@@ -266,6 +275,55 @@ mod tests {
 
         writer.job(with_theme(ThemePreference::Dark))().unwrap();
         let (_, loaded) = SettingsStore::open(file(&dir));
+        assert_eq!(loaded, with_theme(ThemePreference::Dark));
+    }
+
+    /// A path whose parent is a file, so saving fails until `unblock`.
+    fn blocked_file(dir: &TempDir) -> PathBuf {
+        fs::create_dir_all(dir.path()).unwrap();
+        fs::write(dir.path().join("blocker"), "").unwrap();
+        dir.path().join("blocker").join("settings.json")
+    }
+
+    fn unblock(dir: &TempDir) {
+        fs::remove_file(dir.path().join("blocker")).unwrap();
+    }
+
+    #[test]
+    fn failed_save_stays_pending_until_a_later_save_lands() {
+        let dir = TempDir::new();
+        let path = blocked_file(&dir);
+        let (store, _) = SettingsStore::open(path.clone());
+        let mut writer = SettingsWriter::new(store);
+
+        assert!(writer.job(with_theme(ThemePreference::Light))().is_err());
+        assert!(writer.has_pending());
+
+        unblock(&dir);
+        writer.job(with_theme(ThemePreference::System))().unwrap();
+        assert!(!writer.has_pending());
+        let (_, loaded) = SettingsStore::open(path);
+        assert_eq!(loaded, with_theme(ThemePreference::System));
+    }
+
+    #[test]
+    fn older_save_skips_after_a_newer_one_failed() {
+        let dir = TempDir::new();
+        let path = blocked_file(&dir);
+        let (store, _) = SettingsStore::open(path.clone());
+        let mut writer = SettingsWriter::new(store);
+        let older = writer.job(with_theme(ThemePreference::Light));
+        let newer = writer.job(with_theme(ThemePreference::System));
+
+        assert!(newer().is_err());
+        unblock(&dir);
+        older().unwrap();
+        assert!(!path.exists());
+        assert!(writer.has_pending());
+
+        writer.job(with_theme(ThemePreference::Dark))().unwrap();
+        assert!(!writer.has_pending());
+        let (_, loaded) = SettingsStore::open(path);
         assert_eq!(loaded, with_theme(ThemePreference::Dark));
     }
 }

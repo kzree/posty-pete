@@ -109,7 +109,7 @@ impl SettingsSaver {
         .detach();
     }
 
-    /// Saves on this thread if a save is scheduled or still running.
+    /// Saves on this thread if a save is scheduled, still running or failed.
     fn save_now(&mut self, cx: &App) {
         let scheduled = self.scheduled_save.take().is_some();
         let running = self
