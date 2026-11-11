@@ -41,7 +41,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **About links.** Make the licence/project URLs on the About page open in the browser, and add repository/licence links once `Cargo.toml` declares them.
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
 - [ ] **Navigation: two-finger swipes.** Mouse side buttons and three-finger "swipe between pages" work; two-finger trackpad swipes arrive as plain scrolling and would need custom horizontal-scroll detection.
-- [ ] **Palette: match saved requests on URL and method.** Saved requests are matched on name and folder path only, so a URL fragment finds history entries but not the saved request.
 - [ ] **Palette recents: environments chosen inside the environment pages.** Selecting an environment on the shared environments page or a collection's Environments tab isn't recorded, because those views auto-select the first environment and would record ones you only glanced at. Record only deliberate selections.
 - [ ] **Palette recents: back/forward and in-editor opens.** Items reached with back/forward, and requests opened while the editor is already showing, aren't recorded as recents. Decide whether they should be.
 - [ ] **macOS system proxy.** Proxy "System" on Settings › Requests only reads the HTTP_PROXY/HTTPS_PROXY/NO_PROXY environment variables, which apps opened from Finder usually don't have. Reading the macOS network proxy settings needs reqwest's `system-proxy` feature.
