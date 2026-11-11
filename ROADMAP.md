@@ -11,7 +11,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Body: more modes.** `x-www-form-urlencoded`, file fields in form-data, more raw kinds (XML, HTML).
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `app.rs`) is hard-coded; make it configurable on the Settings page and per request.
-- [ ] **Cancel in-flight requests.** Send is disabled while a request runs; a Cancel button could take its place. Dropping `pending` alone doesn't stop the request on tokio (abort the `JoinHandle`).
 
 ## Responses
 
