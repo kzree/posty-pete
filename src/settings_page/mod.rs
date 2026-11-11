@@ -3,6 +3,7 @@ mod ai;
 mod appearance;
 mod general;
 mod history_and_data;
+mod mcp;
 mod requests;
 mod shortcuts;
 
@@ -72,7 +73,9 @@ impl SettingsSection {
             Self::Appearance => "Theme, fonts and how responses are displayed.",
             Self::Requests => "Defaults for sending requests: timeout, redirects, TLS and proxy.",
             Self::HistoryAndData => "How long history is kept and where your data is stored.",
-            Self::Ai => "Optional AI features and the provider they use.",
+            Self::Ai => {
+                "Optional AI features, their provider, and the MCP server for AI assistants."
+            }
             Self::Shortcuts => "Keyboard shortcuts for common actions.",
             Self::About => "Version, licences and links.",
         }

@@ -5,7 +5,7 @@ use gpui_component::{
     select::{Select, SelectState},
 };
 
-use super::{group, page, switch};
+use super::{group, mcp::McpSettings, page, switch};
 use crate::ui::setting_row::SettingRow;
 
 const PROVIDERS: [&str; 1] = ["Anthropic"];
@@ -21,6 +21,7 @@ pub struct AiPage {
     model: Entity<TextSelect>,
     explain_responses: bool,
     generate_requests: bool,
+    mcp: Entity<McpSettings>,
 }
 
 impl AiPage {
@@ -36,6 +37,7 @@ impl AiPage {
             model: cx.new(|cx| select_state(&MODELS, DEFAULT_MODEL, window, cx)),
             explain_responses: true,
             generate_requests: true,
+            mcp: cx.new(|cx| McpSettings::new(window, cx)),
         }
     }
 
@@ -133,5 +135,6 @@ impl Render for AiPage {
             .child(self.render_master(cx))
             .child(self.render_provider())
             .child(self.render_features(cx))
+            .child(self.mcp.clone())
     }
 }

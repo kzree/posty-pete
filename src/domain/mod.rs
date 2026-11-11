@@ -6,6 +6,7 @@ pub mod environment_menu;
 pub mod environment_selection;
 pub mod history;
 pub mod http;
+pub mod mcp;
 pub mod navigation;
 pub mod quick_open;
 pub mod request;
