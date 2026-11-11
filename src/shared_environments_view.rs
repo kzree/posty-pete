@@ -18,6 +18,7 @@ const OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOptions {
     usable: false,
     empty_text: "Shared environments hold values, such as a staging host, that environments in any collection can be based on.",
     hint: "Environments based on this one use these values unless they set their own. Changes save automatically.",
+    bases: None,
 };
 
 /// The `/environments` page: edits the shared environments.
@@ -48,7 +49,7 @@ impl SharedEnvironmentsView {
     ) {
         let environments = environments.iter().map(|env| (**env).clone()).collect();
         self.environments.update(cx, |editor, cx| {
-            editor.show(environments, None, linked, window, cx)
+            editor.show(environments, None, linked, Vec::new(), window, cx)
         });
     }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
     AnyElement, AppContext, Context, EventEmitter, IntoElement, ParentElement, Render, Styled,
@@ -9,14 +9,18 @@ use gpui_component::{
     button::{Button, ButtonVariants},
     h_flex,
     list::ListItem,
-    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
+    tooltip::Tooltip,
     v_flex,
 };
 use uuid::Uuid;
 
 use crate::{
-    domain::{environment::Environment, request::KeyValue},
+    domain::{
+        environment::{self, Environment, InheritedVariable},
+        request::KeyValue,
+    },
     ui::{
         auto_saved_variables::{AutoSavedVariables, SAVE_DELAY},
         confirm_dialog::open_confirm_dialog,
@@ -39,6 +43,13 @@ pub enum EnvironmentsEditorEvent {
         id: Uuid,
         variables: Vec<KeyValue>,
     },
+    /// `base: None` unlinks the environment.
+    BaseChanged {
+        id: Uuid,
+        base: Option<Uuid>,
+    },
+    /// Open the bases' editor, with `Uuid` selected if given.
+    ManageBases(Option<Uuid>),
 }
 
 /// What differs between the places environments are edited.
@@ -51,6 +62,17 @@ pub struct EnvironmentsEditorOptions {
     pub empty_text: &'static str,
     /// Shown above the selected environment's variables.
     pub hint: &'static str,
+    /// Whether environments can be based on others; `None` hides it.
+    pub bases: Option<BaseOptions>,
+}
+
+/// How environments based on others are labelled.
+#[derive(Clone, Copy)]
+pub struct BaseOptions {
+    /// What the bases are, as in "Shared › Staging".
+    pub group: &'static str,
+    /// The menu item emitting [`EnvironmentsEditorEvent::ManageBases`].
+    pub manage_label: &'static str,
 }
 
 /// A list of environments with the selected one's variables next to it.
@@ -61,6 +83,8 @@ pub struct EnvironmentsEditor {
     active: Option<Uuid>,
     /// How many environments are based on each one, by id.
     linked: HashMap<Uuid, usize>,
+    /// The environments others can be based on.
+    bases: Vec<Arc<Environment>>,
     selected: Option<Uuid>,
     variables: AutoSavedVariables<Uuid>,
     _subscription: Subscription,
@@ -84,6 +108,8 @@ impl EnvironmentsEditor {
                     this.update(cx, |this, cx| this.emit_pending(cx)).ok();
                 });
                 this.variables.schedule(save);
+                // The inherited list marks what the rows override.
+                cx.notify();
             }
         });
         Self {
@@ -91,6 +117,7 @@ impl EnvironmentsEditor {
             environments: Vec::new(),
             active: None,
             linked: HashMap::new(),
+            bases: Vec::new(),
             selected: None,
             variables: AutoSavedVariables::new(editor),
             _subscription: subscription,
@@ -99,18 +126,20 @@ impl EnvironmentsEditor {
 
     /// Shows `environments`, keeping the selection if it still exists.
     /// Variables being edited are kept; a pending edit of an environment no
-    /// longer shown is emitted.
+    /// longer shown is emitted. `bases` are what environments can be based on.
     pub fn show(
         &mut self,
         environments: Vec<Environment>,
         active: Option<Uuid>,
         linked: HashMap<Uuid, usize>,
+        bases: Vec<Arc<Environment>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.environments = environments;
         self.active = active;
         self.linked = linked;
+        self.bases = bases;
         self.sync_selection(window, cx);
         cx.notify();
     }
@@ -159,6 +188,13 @@ impl EnvironmentsEditor {
         let environment = id.and_then(|id| find(&self.environments, id));
         let stored = environment.map_or(&[][..], |env| env.variables.as_slice());
         self.variables.load(id, stored, window, cx);
+    }
+
+    /// The existing base of `environment`, when bases are shown.
+    fn base_of(&self, environment: &Environment) -> Option<(BaseOptions, &Environment)> {
+        let options = self.options.bases?;
+        let base = environment::find(&self.bases, environment.base?)?;
+        Some((options, base))
     }
 
     fn rename(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
@@ -263,11 +299,16 @@ impl EnvironmentsEditor {
         let usable = self.options.usable;
         let active = usable && self.active == Some(id);
         let name = environment.name.clone();
-        let label = if active {
-            format!("{name}, active")
-        } else {
-            name.clone()
-        };
+        let base = self
+            .base_of(environment)
+            .map(|(options, base)| format!("{} › {}", options.group, base.name));
+        let mut label = name.clone();
+        if active {
+            label.push_str(", active");
+        }
+        if let Some(base) = &base {
+            label.push_str(&format!(", based on {base}"));
+        }
         ListItem::new(id)
             .rounded(cx.theme().radius)
             .text_sm()
@@ -275,7 +316,7 @@ impl EnvironmentsEditor {
             .when(usable, |item| item.check_icon(IconName::Check))
             .confirmed(active)
             .accessibility_label(label)
-            .child(div().truncate().child(name))
+            .child(row_label(name, base, cx))
             .on_click(cx.listener(move |this, _, window, cx| this.select(id, window, cx)))
             .context_menu(move |menu, _, _| {
                 let menu = if usable {
@@ -289,6 +330,16 @@ impl EnvironmentsEditor {
     }
 
     fn render_variables(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.selected.and_then(|id| find(&self.environments, id));
+        let base_select = selected
+            .zip(self.options.bases)
+            .map(|(environment, options)| {
+                self.render_base_select(environment, options, cx)
+                    .into_any_element()
+            });
+        let inherited = selected
+            .and_then(|environment| self.base_of(environment))
+            .map(|(options, base)| self.render_inherited(options, base, cx).into_any_element());
         v_flex()
             .flex_1()
             .min_w_0()
@@ -300,13 +351,80 @@ impl EnvironmentsEditor {
                     .text_color(cx.theme().muted_foreground)
                     .child(self.options.hint),
             )
+            .children(base_select)
             .child(
-                div()
+                v_flex()
+                    .id("environment-variables")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scrollbar()
-                    .child(self.variables.editor().clone()),
+                    .child(self.variables.editor().clone())
+                    .children(inherited),
             )
+    }
+
+    fn render_base_select(
+        &self,
+        environment: &Environment,
+        options: BaseOptions,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = environment.id;
+        let base = self.base_of(environment).map(|(_, base)| base);
+        let label = base.map_or("None".to_string(), |base| base.name.clone());
+        let base = base.map(|base| base.id);
+        let choices: Vec<_> = self
+            .bases
+            .iter()
+            .map(|env| (env.id, env.name.clone()))
+            .collect();
+        let view = cx.weak_entity();
+        h_flex().gap_2().text_sm().child("Based on").child(
+            Button::new("environment-base")
+                .outline()
+                .small()
+                .label(label.clone())
+                .dropdown_caret(true)
+                .max_w(px(240.))
+                .accessibility_label(format!("Based on: {label}"))
+                .dropdown_menu(move |menu: PopupMenu, _, _| {
+                    base_items(&view, id, base, &choices, options, menu)
+                }),
+        )
+    }
+
+    fn render_inherited(
+        &self,
+        options: BaseOptions,
+        base: &Environment,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let own = self.variables.editor().read(cx).values(cx);
+        let rows = environment::inherited_variables(&base.variables, &own);
+        let muted = cx.theme().muted_foreground;
+        let body = if rows.is_empty() {
+            div().child("No variables.").into_any_element()
+        } else {
+            v_flex()
+                .gap_1()
+                .children(rows.into_iter().enumerate().map(inherited_row))
+                .into_any_element()
+        };
+        v_flex()
+            .id("environment-inherited")
+            .role(gpui::Role::Group)
+            .aria_label(format!("From {} › {}", options.group, base.name))
+            .pt_4()
+            .gap_2()
+            .text_sm()
+            .text_color(muted)
+            .child(
+                div()
+                    .text_xs()
+                    .truncate()
+                    .child(format!("From {} › {}", options.group, base.name)),
+            )
+            .child(body)
     }
 }
 
@@ -363,6 +481,89 @@ fn edit_items(view: &WeakEntity<EnvironmentsEditor>, id: Uuid, menu: PopupMenu) 
                 .ok();
         }),
     )
+}
+
+/// The list row's name, with what it's based on, if anything, below it.
+fn row_label(
+    name: String,
+    base: Option<String>,
+    cx: &mut Context<EnvironmentsEditor>,
+) -> impl IntoElement {
+    let base = base.map(|base| {
+        let tooltip = format!("Based on {base}");
+        div()
+            .id("environment-base-marker")
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .truncate()
+            .child(base)
+            .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+    });
+    v_flex()
+        .min_w_0()
+        .child(div().truncate().child(name))
+        .children(base)
+}
+
+fn base_items(
+    view: &WeakEntity<EnvironmentsEditor>,
+    id: Uuid,
+    current: Option<Uuid>,
+    choices: &[(Uuid, String)],
+    options: BaseOptions,
+    menu: PopupMenu,
+) -> PopupMenu {
+    let choose = |label: String, base: Option<Uuid>| {
+        let view = view.clone();
+        PopupMenuItem::new(label)
+            .checked(current == base)
+            .on_click(move |_, _, cx| {
+                view.update(cx, |_, cx| {
+                    cx.emit(EnvironmentsEditorEvent::BaseChanged { id, base })
+                })
+                .ok();
+            })
+    };
+    let menu = menu
+        .max_w(px(360.))
+        .scrollable(true)
+        .item(choose("None".to_string(), None));
+    let menu = choices.iter().fold(menu, |menu, (base, name)| {
+        menu.item(choose(name.clone(), Some(*base)))
+    });
+    let view = view.clone();
+    menu.separator().item(
+        PopupMenuItem::new(options.manage_label).on_click(move |_, _, cx| {
+            view.update(cx, |_, cx| {
+                cx.emit(EnvironmentsEditorEvent::ManageBases(current))
+            })
+            .ok();
+        }),
+    )
+}
+
+fn inherited_row((ix, row): (usize, InheritedVariable)) -> impl IntoElement {
+    let InheritedVariable {
+        name,
+        value,
+        overridden,
+    } = row;
+    let label = if overridden {
+        format!("{name}: {value}, overridden")
+    } else {
+        format!("{name}: {value}")
+    };
+    h_flex()
+        .id(("environment-inherited-row", ix))
+        .aria_label(label)
+        .gap_4()
+        .when(overridden, |row| {
+            row.line_through().tooltip(|window, cx| {
+                Tooltip::new("Overridden by this environment").build(window, cx)
+            })
+        })
+        .child(div().flex_1().min_w_0().truncate().child(name))
+        .child(div().flex_1().min_w_0().truncate().child(value))
 }
 
 fn find(environments: &[Environment], id: Uuid) -> Option<&Environment> {

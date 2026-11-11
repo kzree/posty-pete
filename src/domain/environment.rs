@@ -2,7 +2,7 @@
 //! its file; shared environments belong to no collection and are stored one
 //! per file.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -42,6 +42,33 @@ pub fn find(shared: &[Arc<Environment>], id: Uuid) -> Option<&Environment> {
 /// environment.
 pub fn shared_variables(shared: &[Arc<Environment>], id: Uuid) -> Option<Variables> {
     find(shared, id).map(|env| Variables::layered([env.variables.as_slice()]))
+}
+
+/// A base environment's variable as seen from an environment based on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InheritedVariable {
+    pub name: String,
+    pub value: String,
+    /// The environment sets its own value for `name`.
+    pub overridden: bool,
+}
+
+/// The base's enabled, named rows as they apply under `own`: once per
+/// trimmed name (the first wins), in order.
+pub fn inherited_variables(base: &[KeyValue], own: &[KeyValue]) -> Vec<InheritedVariable> {
+    let own = Variables::layered([own]);
+    let mut seen = HashSet::new();
+    base.iter()
+        .filter(|row| row.enabled)
+        .filter_map(|row| {
+            let name = row.key.trim();
+            (!name.is_empty() && seen.insert(name)).then(|| InheritedVariable {
+                name: name.to_string(),
+                value: row.value.clone(),
+                overridden: own.get(name).is_some(),
+            })
+        })
+        .collect()
 }
 
 /// Adds a shared environment named [`NEW_ENVIRONMENT_NAME`], numbered if
@@ -197,5 +224,36 @@ mod tests {
         assert_eq!(variables.get("host"), Some("staging"));
         assert_eq!(variables.get("token"), None);
         assert_eq!(shared_variables(&shared, Uuid::new_v4()), None);
+    }
+
+    #[test]
+    fn inherited_variables_mark_the_names_set_own() {
+        let mut disabled = variable("token", "base token");
+        disabled.enabled = false;
+        let base = [
+            variable(" host ", "staging"),
+            variable("port", "443"),
+            disabled.clone(),
+            variable("", "unnamed"),
+            variable("host", "duplicate"),
+        ];
+        let mut own_disabled = variable("port", "80");
+        own_disabled.enabled = false;
+        let own = [variable("host ", "local"), own_disabled];
+
+        let inherited = inherited_variables(&base, &own);
+        let expected = [("host", "staging", true), ("port", "443", false)];
+        assert_eq!(inherited.len(), expected.len());
+        for (row, (name, value, overridden)) in inherited.iter().zip(expected) {
+            assert_eq!(
+                (row.name.as_str(), row.value.as_str(), row.overridden),
+                (name, value, overridden)
+            );
+        }
+    }
+
+    #[test]
+    fn inherited_variables_of_an_empty_base_are_empty() {
+        assert!(inherited_variables(&[], &[variable("host", "local")]).is_empty());
     }
 }

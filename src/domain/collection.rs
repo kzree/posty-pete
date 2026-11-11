@@ -208,7 +208,6 @@ fn modify_environment(
 /// Bases the environment on shared environment `base`, or unlinks it for
 /// `None`. Returns `false`, changing (and copying) nothing, if there's no such
 /// environment or the base is the same.
-#[cfg_attr(not(test), expect(dead_code, reason = "used from task 57"))]
 pub fn set_environment_base(
     collections: &mut [Arc<Collection>],
     collection_id: Uuid,

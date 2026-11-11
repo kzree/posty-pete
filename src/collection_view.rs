@@ -18,11 +18,11 @@ use gpui_component::{
 use uuid::Uuid;
 
 use crate::{
-    domain::{collection::Collection, request::KeyValue},
+    domain::{collection::Collection, environment::Environment, request::KeyValue},
     ui::{
         auto_saved_variables::{AutoSavedVariables, SAVE_DELAY},
         environments_editor::{
-            EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
+            BaseOptions, EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
         },
         key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
     },
@@ -32,6 +32,10 @@ const ENVIRONMENTS_OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOption
     usable: true,
     empty_text: "Environments hold different values for the same variables, such as a host for staging and production.",
     hint: "While this environment is active, its values override the collection's variables. Changes save automatically.",
+    bases: Some(BaseOptions {
+        group: "Shared",
+        manage_label: "Manage shared environments…",
+    }),
 };
 
 /// The stored variables an editor edits.
@@ -70,6 +74,14 @@ pub enum CollectionViewEvent {
         collection_id: Uuid,
         environment_id: Option<Uuid>,
     },
+    /// `base: None` unlinks the environment.
+    SetEnvironmentBase {
+        collection_id: Uuid,
+        environment_id: Uuid,
+        base: Option<Uuid>,
+    },
+    /// Open the shared environments page, with `Uuid` selected if given.
+    ManageSharedEnvironments(Option<Uuid>),
     Back,
 }
 
@@ -146,14 +158,16 @@ impl CollectionView {
     }
 
     /// Shows `collection` (`None` if `id` doesn't exist) with
-    /// `active_environment` marked. For the collection already shown, an
-    /// unsaved edit of the name and variables being edited are kept.
+    /// `active_environment` marked; its environments can be based on `shared`.
+    /// For the collection already shown, an unsaved edit of the name and
+    /// variables being edited are kept.
     /// Switching collection emits pending variables edits first.
     pub fn show(
         &mut self,
         id: Uuid,
         collection: Option<Arc<Collection>>,
         active_environment: Option<Uuid>,
+        shared: Vec<Arc<Environment>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -189,7 +203,14 @@ impl CollectionView {
             .as_ref()
             .map_or_else(Vec::new, |c| c.environments.clone());
         self.environments.update(cx, |editor, cx| {
-            editor.show(environments, active_environment, HashMap::new(), window, cx)
+            editor.show(
+                environments,
+                active_environment,
+                HashMap::new(),
+                shared,
+                window,
+                cx,
+            )
         });
 
         self.id = Some(id);
@@ -272,6 +293,16 @@ impl CollectionView {
                     },
                     variables,
                 }
+            }
+            EnvironmentsEditorEvent::BaseChanged { id, base } => {
+                CollectionViewEvent::SetEnvironmentBase {
+                    collection_id,
+                    environment_id: id,
+                    base,
+                }
+            }
+            EnvironmentsEditorEvent::ManageBases(id) => {
+                CollectionViewEvent::ManageSharedEnvironments(id)
             }
         });
     }

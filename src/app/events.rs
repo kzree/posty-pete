@@ -204,6 +204,20 @@ impl Workspace {
                 collection_id,
                 environment_id,
             } => self.set_active_environment(*collection_id, *environment_id, window, cx),
+            CollectionViewEvent::SetEnvironmentBase {
+                collection_id,
+                environment_id,
+                base,
+            } => {
+                let (collection_id, environment_id, base) =
+                    (*collection_id, *environment_id, *base);
+                self.collections.update(cx, |collections, cx| {
+                    collections.set_environment_base(collection_id, environment_id, base, cx)
+                });
+            }
+            CollectionViewEvent::ManageSharedEnvironments(id) => {
+                self.open_shared_environments(*id, window, cx)
+            }
             CollectionViewEvent::Back => self.go_back_or_to_editor(window, cx),
         }
     }
@@ -258,8 +272,10 @@ impl Workspace {
                 .shared_environments
                 .update(cx, |environments, cx| environments.rename(id, name, cx)),
             EnvironmentsEditorEvent::Delete(id) => self.delete_shared_environment(id, cx),
-            // The page has no "Use environment".
-            EnvironmentsEditorEvent::Use(_) => {}
+            // The page has no "Use environment" and no bases.
+            EnvironmentsEditorEvent::Use(_)
+            | EnvironmentsEditorEvent::BaseChanged { .. }
+            | EnvironmentsEditorEvent::ManageBases(_) => {}
             EnvironmentsEditorEvent::VariablesChanged { id, variables } => {
                 self.shared_environments.update(cx, |environments, cx| {
                     environments.set_variables(id, variables, cx)

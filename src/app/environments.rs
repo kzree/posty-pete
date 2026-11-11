@@ -115,8 +115,10 @@ impl Workspace {
         let active = collection
             .as_deref()
             .and_then(|collection| self.environments.active_environment(collection));
-        self.collection_view
-            .update(cx, |view, cx| view.show(id, collection, active, window, cx));
+        let shared = self.shared_environments.read(cx).all().to_vec();
+        self.collection_view.update(cx, |view, cx| {
+            view.show(id, collection, active, shared, window, cx)
+        });
     }
 
     /// Brings the collection view in line with the stored collections.
@@ -240,7 +242,7 @@ impl Workspace {
             .update(cx, |view, cx| view.show(&environments, linked, window, cx));
     }
 
-    /// Shared environments loaded or changed: the page, the hint and the
+    /// Shared environments loaded or changed: the pages, the hint and the
     /// picker may read differently, and a deleted draft source is dropped on
     /// save.
     pub(super) fn shared_environments_changed(
@@ -249,6 +251,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.refresh_shared_environments_view(window, cx);
+        self.refresh_collection_view(window, cx);
         let request = self.request_editor.read(cx).build_request(cx);
         self.sync_unresolved_variables(&request, cx);
         self.schedule_navigation_save(cx);

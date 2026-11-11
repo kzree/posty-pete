@@ -259,6 +259,20 @@ impl Collections {
         }
     }
 
+    /// `base: None` unlinks the environment.
+    pub fn set_environment_base(
+        &mut self,
+        collection_id: Uuid,
+        environment_id: Uuid,
+        base: Option<Uuid>,
+        cx: &mut Context<Self>,
+    ) {
+        let collections = &mut self.collections;
+        if collection::set_environment_base(collections, collection_id, environment_id, base) {
+            self.changed(collection_id, cx);
+        }
+    }
+
     /// Unlinks every environment based on shared environment `base`.
     pub fn unlink_base(&mut self, base: Uuid, cx: &mut Context<Self>) {
         let changed = collection::unlink_base(&mut self.collections, base);
