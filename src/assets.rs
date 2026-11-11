@@ -10,9 +10,12 @@ gpui_kit_assets::icon_assets!(
         FlaskConical,
         FolderPlus,
         House,
+        Keyboard,
         LayersPlus,
         LibraryBig,
         RotateCcwClock,
+        Send,
+        Sparkles,
         Trash
     ]
 );

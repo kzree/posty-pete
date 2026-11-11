@@ -37,7 +37,7 @@ impl Render for Workspace {
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .child(self.render_body(cx)),
+                    .child(self.render_body()),
             )
             .child(self.status_bar.clone())
     }
@@ -143,8 +143,8 @@ impl Workspace {
             .when_some(self.environment_picker(cx), WindowTitleBar::trailing)
     }
 
-    fn render_body(&self, cx: &mut Context<Self>) -> AnyElement {
-        let main_content = self.routes(cx);
+    fn render_body(&self) -> AnyElement {
+        let main_content = self.routes();
         // A hidden panel would still leave its resize handle behind.
         if self.left_panel != LeftPanelState::Open {
             return main_content.into_any_element();

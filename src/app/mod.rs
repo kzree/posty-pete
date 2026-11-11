@@ -35,6 +35,7 @@ use crate::{
     quick_open,
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},
+    settings_page::SettingsPage,
     shared_environments::{SharedEnvironments, SharedEnvironmentsEvent},
     shared_environments_view::SharedEnvironmentsView,
     sidebar::{Sidebar, SidebarTab, history_panel::HistoryPanel, library_panel::LibraryPanel},
@@ -87,6 +88,7 @@ pub struct Workspace {
     library_panel: Entity<LibraryPanel>,
     collection_view: Entity<CollectionView>,
     shared_environments_view: Entity<SharedEnvironmentsView>,
+    settings_page: Entity<SettingsPage>,
     loading_bar: Entity<LoadingBar>,
     client: reqwest::Client,
     history: Entity<History>,
@@ -133,6 +135,7 @@ impl Workspace {
         let sidebar = cx.new(|_| Sidebar::new(library_panel.clone(), history_panel.clone()));
         let collection_view = cx.new(|cx| CollectionView::new(window, cx));
         let shared_environments_view = cx.new(|cx| SharedEnvironmentsView::new(window, cx));
+        let settings_page = cx.new(SettingsPage::new);
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
         let collections = cx.new(Collections::new);
@@ -147,6 +150,7 @@ impl Workspace {
             library_panel,
             collection_view,
             shared_environments_view,
+            settings_page,
             loading_bar,
             client: reqwest::Client::builder()
                 .timeout(REQUEST_TIMEOUT)

@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use gpui::{App, Context, Div, ParentElement, SharedString, Styled, Window, div};
 use gpui_component::{resizable_panel, v_resizable};
@@ -9,9 +9,7 @@ use super::{
     EditorContent, Workspace,
     navigation::{Direction, NavHistory},
 };
-use crate::{
-    domain::collection::Collection, settings_page::SettingsPage, window_title_bar::WindowTitle,
-};
+use crate::{domain::collection::Collection, window_title_bar::WindowTitle};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AppRoute {
@@ -302,11 +300,11 @@ impl Workspace {
         }
     }
 
-    pub(super) fn routes(&self, cx: &mut Context<Self>) -> Routes {
+    pub(super) fn routes(&self) -> Routes {
         Routes::new()
             .child(self.request_response_route())
             .child(self.saved_request_route())
-            .child(self.settings_route(cx))
+            .child(self.settings_route())
             .child(self.collection_route())
             .child(self.shared_environments_route())
     }
@@ -344,12 +342,11 @@ impl Workspace {
         }
     }
 
-    fn settings_route(&self, cx: &mut Context<Self>) -> Route {
-        let on_back =
-            Rc::new(cx.listener(|this, _, window, cx| this.go_back_or_to_editor(window, cx)));
+    fn settings_route(&self) -> Route {
+        let settings_page = self.settings_page.clone();
         Route::new()
             .path("settings")
-            .element(move |_, _| SettingsPage::new(on_back.clone()))
+            .element(move |_, _| settings_page.clone())
     }
 
     fn collection_route(&self) -> Route {
