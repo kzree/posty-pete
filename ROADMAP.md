@@ -35,13 +35,11 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## App
 
 - [ ] **In-window menu bar on Windows/Linux.** The native menu bar (`src/menus.rs`) only shows on macOS.
-- [ ] **Apply and save the remaining settings.** `settings.json` and the `AppSettings` global exist; theme and accent colour (tasks 65–67), the Requests page (task 82), the General page (task 83) and the Appearance fonts and wrap (task 84) are wired. The other Settings controls are still UI only; wire them one by one (notes in task 61).
+- [ ] **Apply and save the remaining settings.** `settings.json` and the `AppSettings` global exist; theme and accent colour (tasks 65–67), the Requests page (task 82), the General page (task 83), the Appearance fonts and wrap (task 84) and History & data (task 85) are wired. The other Settings controls are still UI only; wire them one by one (notes in task 61).
 - [ ] **MCP server.** A built-in MCP server so AI assistants (Claude Code, Claude Desktop, ...) can list collections and environments, send requests and read responses and history. Local only (127.0.0.1) with an access token, per-capability permissions and "ask before sending". Its settings UI is on Settings › AI (UI only so far). When wiring it: generate and keep a real token in the keychain, make Copy and Regenerate work, and decide whether the client snippet shows the real token.
 - [ ] **Customizable shortcuts.** Let users rebind the actions listed on the Shortcuts settings page.
 - [ ] **About links.** Make the licence/project URLs on the About page open in the browser, and add repository/licence links once `Cargo.toml` declares them.
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
-- [ ] **History retention setting.** 14 days is hard-coded (`RETENTION_DAYS` in `domain/history.rs`); make it configurable on the Settings page.
-- [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
 - [ ] **History: limit stored request body size.** Every sent request is saved with its full body, so large payloads sent repeatedly grow `history.db` quickly. Skip or truncate bodies over a cap (e.g. 1 MB), or dedupe identical bodies by hash.
 - [ ] **Navigation: two-finger swipes.** Mouse side buttons and three-finger "swipe between pages" work; two-finger trackpad swipes arrive as plain scrolling and would need custom horizontal-scroll detection.
 - [ ] **Palette: match saved requests on URL and method.** Saved requests are matched on name and folder path only, so a URL fragment finds history entries but not the saved request.
