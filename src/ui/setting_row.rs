@@ -9,6 +9,7 @@ use gpui_component::{ActiveTheme, h_flex, v_flex};
 pub struct SettingRow {
     label: SharedString,
     description: Option<SharedString>,
+    warning: Option<SharedString>,
     control: Option<AnyElement>,
 }
 
@@ -17,12 +18,19 @@ impl SettingRow {
         Self {
             label: label.into(),
             description: None,
+            warning: None,
             control: None,
         }
     }
 
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
         self.description = Some(description.into());
+        self
+    }
+
+    /// Shown under the description, in the warning color.
+    pub fn warning(mut self, warning: impl Into<SharedString>) -> Self {
+        self.warning = Some(warning.into());
         self
     }
 
@@ -45,6 +53,14 @@ impl RenderOnce for SettingRow {
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(description),
+                )
+            })
+            .when_some(self.warning, |this, warning| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().warning)
+                        .child(warning),
                 )
             });
         h_flex()

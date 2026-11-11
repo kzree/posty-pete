@@ -135,7 +135,7 @@ impl Workspace {
         let sidebar = cx.new(|_| Sidebar::new(library_panel.clone(), history_panel.clone()));
         let collection_view = cx.new(|cx| CollectionView::new(window, cx));
         let shared_environments_view = cx.new(|cx| SharedEnvironmentsView::new(window, cx));
-        let settings_page = cx.new(SettingsPage::new);
+        let settings_page = cx.new(|cx| SettingsPage::new(window, cx));
         let loading_bar = cx.new(|_| LoadingBar::default());
         let history = cx.new(History::new);
         let collections = cx.new(Collections::new);

@@ -1,15 +1,28 @@
+mod appearance;
+mod general;
+mod history_and_data;
+mod requests;
+
 use gpui::{
-    Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render,
-    Role, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Render, Role, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, Selectable, StyledExt,
     button::{Button, ButtonVariants},
+    group_box::{GroupBox, GroupBoxVariants},
     h_flex,
+    input::InputState,
     scroll::ScrollableElement,
+    switch::Switch,
     v_flex,
 };
 use gpui_kit_assets::IconName as LucideIcon;
+
+use appearance::AppearancePage;
+use general::GeneralPage;
+use history_and_data::HistoryAndDataPage;
+use requests::RequestsPage;
 
 /// A page of the settings, in menu order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,16 +105,24 @@ pub struct SettingsPage {
     section: SettingsSection,
     /// One per section, in [`SettingsSection::ALL`] order.
     menu_focus: Vec<FocusHandle>,
+    general: Entity<GeneralPage>,
+    appearance: Entity<AppearancePage>,
+    requests: Entity<RequestsPage>,
+    history_and_data: Entity<HistoryAndDataPage>,
 }
 
 impl SettingsPage {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             section: SettingsSection::default(),
             menu_focus: SettingsSection::ALL
                 .iter()
                 .map(|_| cx.focus_handle())
                 .collect(),
+            general: cx.new(|_| GeneralPage::new()),
+            appearance: cx.new(|cx| AppearancePage::new(window, cx)),
+            requests: cx.new(|cx| RequestsPage::new(window, cx)),
+            history_and_data: cx.new(|cx| HistoryAndDataPage::new(window, cx)),
         }
     }
 
@@ -202,15 +223,72 @@ impl SettingsPage {
                             .text_color(cx.theme().muted_foreground)
                             .child(section.description()),
                     )
-                    .child(
-                        div()
-                            .pt_4()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Nothing to configure here yet."),
-                    ),
+                    .child(div().pt_6().child(self.render_settings(cx))),
             )
     }
+
+    fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        match self.section {
+            SettingsSection::General => self.general.clone().into_any_element(),
+            SettingsSection::Appearance => self.appearance.clone().into_any_element(),
+            SettingsSection::Requests => self.requests.clone().into_any_element(),
+            SettingsSection::HistoryAndData => self.history_and_data.clone().into_any_element(),
+            SettingsSection::Ai | SettingsSection::Shortcuts | SettingsSection::About => div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Nothing to configure here yet.")
+                .into_any_element(),
+        }
+    }
+}
+
+/// The groups of a settings page, stacked.
+fn page() -> gpui::Div {
+    v_flex().gap_6()
+}
+
+/// A titled group of setting rows.
+fn group(id: &'static str, title: &'static str) -> GroupBox {
+    GroupBox::new()
+        .id(id)
+        .fill()
+        .title(div().text_sm().font_medium().child(title))
+}
+
+/// A switch for a boolean field of the page `T`, named after its row's `label`.
+fn switch<T: 'static>(
+    id: &'static str,
+    label: &'static str,
+    checked: bool,
+    set: fn(&mut T, bool),
+    cx: &mut Context<T>,
+) -> Switch {
+    Switch::new(id)
+        .checked(checked)
+        .accessibility_label(label)
+        .on_change(cx.listener(move |this, checked: &bool, _, cx| {
+            set(this, *checked);
+            cx.notify();
+        }))
+}
+
+/// State for a whole-number input stepping within `min..=max`.
+fn number_state(
+    value: u32,
+    min: u32,
+    max: u32,
+    window: &mut Window,
+    cx: &mut Context<InputState>,
+) -> InputState {
+    InputState::new(window, cx)
+        .default_value(value.to_string())
+        .min(min.into())
+        .max(max.into())
+        .validate(|text, _| is_digits(text))
+}
+
+fn is_digits(text: &str) -> bool {
+    text.chars().all(|c| c.is_ascii_digit())
 }
 
 impl Render for SettingsPage {
@@ -281,5 +359,14 @@ mod tests {
         assert_eq!(General.neighbor(true), Appearance);
         assert_eq!(About.neighbor(true), About);
         assert_eq!(About.neighbor(false), Shortcuts);
+    }
+
+    #[test]
+    fn number_inputs_accept_only_digits() {
+        assert!(is_digits(""));
+        assert!(is_digits("30"));
+        assert!(!is_digits("-1"));
+        assert!(!is_digits("1.5"));
+        assert!(!is_digits("10s"));
     }
 }
