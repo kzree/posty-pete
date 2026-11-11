@@ -14,7 +14,7 @@ mod routes;
 mod save;
 mod send;
 
-use std::{cell::Cell, time::Duration};
+use std::cell::Cell;
 
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, ParentElement, Styled, Subscription, Window, px,
@@ -54,8 +54,6 @@ pub fn init(cx: &mut App) {
     menu_fallback::init(cx);
     quit::init(cx);
 }
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Logs `error` and shows it as a toast.
 fn show_error(title: &str, error: &anyhow::Error, window: &mut Window, cx: &mut App) {
@@ -97,7 +95,7 @@ pub struct Workspace {
     shared_environments_view: Entity<SharedEnvironmentsView>,
     settings_page: Entity<SettingsPage>,
     loading_bar: Entity<LoadingBar>,
-    client: reqwest::Client,
+    client: domain::http::SettingsClient,
     history: Entity<History>,
     collections: Entity<Collections>,
     shared_environments: Entity<SharedEnvironments>,
@@ -161,7 +159,7 @@ impl Workspace {
             shared_environments_view,
             settings_page,
             loading_bar,
-            client: domain::http::client(REQUEST_TIMEOUT).expect("failed to build HTTP client"),
+            client: domain::http::SettingsClient::new(&AppSettings::get(cx).requests),
             history,
             collections,
             shared_environments,
@@ -227,6 +225,7 @@ impl Workspace {
                     SettingsEvent::Failed { title, error } => show_error(title, error, window, cx),
                 },
             ),
+            cx.observe_global::<AppSettings>(Self::request_settings_changed),
             cx.subscribe_in(&self.library_panel, window, |this, _, event, window, cx| {
                 this.on_library_panel_event(event, window, cx)
             }),

@@ -23,6 +23,7 @@ pub struct SettingRow {
     label: SharedString,
     description: Option<SharedString>,
     warning: Option<SharedString>,
+    error: Option<SharedString>,
     control: Option<AnyElement>,
     highlight: Option<usize>,
     focus: Option<FocusHandle>,
@@ -36,6 +37,7 @@ impl SettingRow {
             label: label.into(),
             description: None,
             warning: None,
+            error: None,
             control: None,
             highlight: None,
             focus: None,
@@ -56,6 +58,12 @@ impl SettingRow {
     /// Shown under the description, in the warning color.
     pub fn warning(mut self, warning: impl Into<SharedString>) -> Self {
         self.warning = Some(warning.into());
+        self
+    }
+
+    /// Shown under the description, in the danger color.
+    pub fn error(mut self, error: impl Into<SharedString>) -> Self {
+        self.error = Some(error.into());
         self
     }
 
@@ -135,6 +143,9 @@ impl RenderOnce for SettingRow {
                         .text_color(cx.theme().warning)
                         .child(warning),
                 )
+            })
+            .when_some(self.error, |this, error| {
+                this.child(div().text_sm().text_color(cx.theme().danger).child(error))
             });
         h_flex()
             .id(self.id.unwrap_or(ElementId::Name(self.label)))

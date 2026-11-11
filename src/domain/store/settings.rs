@@ -132,7 +132,7 @@ impl SettingsWriter {
 mod tests {
     use super::*;
     use crate::domain::{
-        settings::{AppearanceSettings, ThemePreference},
+        settings::{AppearanceSettings, ProxyMode, ThemePreference},
         store::test_support::{TempDir, file_names},
     };
 
@@ -146,6 +146,7 @@ mod tests {
                 theme,
                 ..AppearanceSettings::default()
             },
+            ..Settings::default()
         }
     }
 
@@ -163,6 +164,20 @@ mod tests {
         let (_, loaded) = SettingsStore::open(file(&dir));
         assert_eq!(loaded, with_theme(ThemePreference::Light));
         assert_eq!(file_names(dir.path()), ["settings.json"]);
+    }
+
+    #[test]
+    fn request_settings_survive_a_save() {
+        let dir = TempDir::new();
+        let (mut store, _) = SettingsStore::open(file(&dir));
+        let mut settings = Settings::default();
+        settings.requests.timeout_secs = 0;
+        settings.requests.proxy = ProxyMode::None;
+        settings.requests.user_agent = "posty-pete/1".into();
+        store.save(&settings).unwrap();
+
+        let (_, loaded) = SettingsStore::open(file(&dir));
+        assert_eq!(loaded, settings);
     }
 
     #[test]

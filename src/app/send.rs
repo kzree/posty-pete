@@ -18,6 +18,7 @@ use crate::{
         send_error::SendError,
         variables::Variables,
     },
+    settings::AppSettings,
     ui::clipboard::copy_with_notification,
 };
 
@@ -66,6 +67,11 @@ fn resolve(request: Request, variables: Option<&Variables>) -> Request {
 }
 
 impl Workspace {
+    /// Requests in flight keep the client they started with.
+    pub(super) fn request_settings_changed(&mut self, cx: &mut Context<Self>) {
+        self.client.apply(&AppSettings::get(cx).requests);
+    }
+
     /// The request the editor's `request` sends, with the variables as they are now.
     fn resolve_editor_request(&mut self, request: Request, cx: &mut Context<Self>) -> Request {
         self.flush_pending_variables(cx);
@@ -133,12 +139,16 @@ impl Workspace {
         if self.pending.is_some() {
             return;
         }
+        let client = match self.client.get() {
+            Ok(client) => client,
+            Err(error) => return show_error("Couldn't send the request", error, window, cx),
+        };
         let request = self.resolve_editor_request(request, cx);
         self.set_sending(true, cx);
 
         let content = self.editor_content;
         let sent_at = Utc::now();
-        let handle = http::spawn_send(self.client.clone(), request.clone());
+        let handle = http::spawn_send(client, request.clone());
         let abort = handle.abort_handle();
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = flatten_send_result(handle.await);
