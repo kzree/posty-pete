@@ -232,6 +232,10 @@ impl RequestEditor {
         cx.emit(RequestEditorEvent::SendRequested(req));
     }
 
+    pub fn has_url(&self, cx: &App) -> bool {
+        !self.input_is_empty(cx)
+    }
+
     fn input_is_empty(&self, cx: &App) -> bool {
         self.url.read(cx).value().to_string().is_empty()
     }

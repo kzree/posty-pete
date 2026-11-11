@@ -173,7 +173,7 @@ impl Workspace {
         }
     }
 
-    fn create_collection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn create_collection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let id = self.collections.update(cx, |collections, cx| {
             collections.create(NEW_COLLECTION_NAME, cx)
         });
@@ -348,6 +348,7 @@ impl Workspace {
         window.close_dialog(cx);
         match *event {
             CommandPaletteEvent::Open(target) => self.open_palette_target(target, window, cx),
+            CommandPaletteEvent::Run(command) => self.run_command(command, window, cx),
         }
     }
 
@@ -367,6 +368,7 @@ impl Workspace {
                 collection_id,
                 environment_id,
             } => self.open_environments(collection_id, Some(environment_id), window, cx),
+            Target::Command(command) => self.run_command(command, window, cx),
         }
     }
 }

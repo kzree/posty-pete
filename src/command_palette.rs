@@ -1,23 +1,75 @@
+use std::collections::HashMap;
+
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    Styled, Subscription, Task, Window, div, px,
+    Action, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, IntoElement,
+    ParentElement, Render, Styled, Subscription, Task, Window, div, prelude::FluentBuilder as _,
+    px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, IndexPath, Sizable, StyledExt, h_flex,
+    kbd::Kbd,
     list::{List, ListDelegate, ListEvent, ListItem, ListState},
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
 use crate::{
-    domain::palette::{self, Entry, Group, Scope, Section, Target},
+    actions,
+    domain::{
+        command::Command,
+        palette::{self, Entry, Group, Scope, Section, Target},
+    },
     ui::method_label::method_label,
 };
 
 pub enum CommandPaletteEvent {
     Open(Target),
+    Run(Command),
 }
 
-/// Searches saved requests, collections, folders and environments; shown in a dialog.
+/// The action a command dispatches, or `None` for one Workspace runs itself.
+pub fn action(command: Command) -> Option<Box<dyn Action>> {
+    let action: Box<dyn Action> = match command {
+        Command::NewRequest => Box::new(actions::NewRequest),
+        Command::Save => Box::new(actions::SaveRequest),
+        Command::SaveAs => Box::new(actions::SaveRequestAs),
+        Command::SendRequest => Box::new(actions::SendRequest),
+        Command::Revert => Box::new(actions::RevertRequest),
+        Command::Back => Box::new(actions::GoBack),
+        Command::Forward => Box::new(actions::GoForward),
+        Command::FocusUrl => Box::new(actions::FocusUrl),
+        Command::ToggleSidebar => Box::new(actions::ToggleSidebar),
+        Command::Library => Box::new(actions::OpenLibrary),
+        Command::History => Box::new(actions::OpenHistory),
+        Command::Tests => Box::new(actions::OpenTests),
+        Command::SharedEnvironments => Box::new(actions::OpenSharedEnvironments),
+        Command::Settings => Box::new(actions::OpenSettings),
+        Command::Quit => Box::new(actions::Quit),
+        Command::NewCollection | Command::NewEnvironment | Command::NewSharedEnvironment => {
+            return None;
+        }
+    };
+    Some(action)
+}
+
+/// The key binding that runs `command` where `focus` is, read from the keymap.
+fn shortcut(command: Command, focus: &FocusHandle, window: &Window) -> Option<Kbd> {
+    let action = action(command)?;
+    Kbd::binding_for_action_in(action.as_ref(), focus, window)
+        .or_else(|| Kbd::global_binding_for_action(action.as_ref(), window))
+}
+
+fn shortcuts(entries: &[Entry], focus: &FocusHandle, window: &Window) -> HashMap<Command, Kbd> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry.target {
+            Target::Command(command) => Some(command),
+            _ => None,
+        })
+        .filter_map(|command| Some((command, shortcut(command, focus, window)?)))
+        .collect()
+}
+
+/// Searches saved requests, collections, folders, environments and commands; shown in a dialog.
 pub struct CommandPalette {
     list: Entity<ListState<PaletteDelegate>>,
     scope: Scope,
@@ -27,14 +79,17 @@ pub struct CommandPalette {
 impl EventEmitter<CommandPaletteEvent> for CommandPalette {}
 
 impl CommandPalette {
-    /// `entries` come from `domain::palette::entries`.
+    /// `entries` come from `domain::palette`. Shortcuts are the ones that
+    /// apply where `focus` is, the element commands run on.
     pub fn new(
         entries: Vec<Entry>,
         scope: Scope,
+        focus: &FocusHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = PaletteDelegate::new(entries, scope);
+        let shortcuts = shortcuts(&entries, focus, window);
+        let delegate = PaletteDelegate::new(entries, shortcuts, scope);
         let has_results = !delegate.sections.is_empty();
         let list = cx.new(|cx| {
             let mut list = ListState::new(delegate, window, cx).searchable(true);
@@ -47,9 +102,13 @@ impl CommandPalette {
             let ListEvent::Confirm(ix) = event else {
                 return;
             };
-            if let Some(entry) = list.read(cx).delegate().entry_at(*ix) {
-                cx.emit(CommandPaletteEvent::Open(entry.target));
-            }
+            let Some(entry) = list.read(cx).delegate().entry_at(*ix) else {
+                return;
+            };
+            cx.emit(match entry.target {
+                Target::Command(command) => CommandPaletteEvent::Run(command),
+                target => CommandPaletteEvent::Open(target),
+            });
         });
         Self {
             list,
@@ -66,7 +125,7 @@ impl CommandPalette {
 
 fn placeholder(scope: Scope) -> &'static str {
     match scope {
-        Scope::All => "Search everything",
+        Scope::All => "Search or type > for commands",
         Scope::Items => "Search requests, collections and environments",
     }
 }
@@ -83,17 +142,21 @@ impl Render for CommandPalette {
 
 struct PaletteDelegate {
     entries: Vec<Entry>,
+    shortcuts: HashMap<Command, Kbd>,
     scope: Scope,
+    query: String,
     /// Only groups with matches, so list sections and these line up.
     sections: Vec<Section>,
 }
 
 impl PaletteDelegate {
-    fn new(entries: Vec<Entry>, scope: Scope) -> Self {
+    fn new(entries: Vec<Entry>, shortcuts: HashMap<Command, Kbd>, scope: Scope) -> Self {
         let sections = palette::search(&entries, "", scope);
         Self {
             entries,
+            shortcuts,
             scope,
+            query: String::new(),
             sections,
         }
     }
@@ -104,6 +167,23 @@ impl PaletteDelegate {
 
     fn entry_at(&self, ix: IndexPath) -> Option<&Entry> {
         self.entries.get(self.entry_index(ix)?)
+    }
+
+    fn shortcut(&self, entry: &Entry) -> Option<Kbd> {
+        match entry.target {
+            Target::Command(command) => self.shortcuts.get(&command).cloned(),
+            _ => None,
+        }
+    }
+
+    /// The items scope with nothing saved yet, and no commands asked for.
+    fn nothing_to_search(&self) -> bool {
+        self.scope == Scope::Items
+            && !palette::searches_commands_only(&self.query)
+            && self
+                .entries
+                .iter()
+                .all(|entry| entry.target.group() == Group::Commands)
     }
 }
 
@@ -117,6 +197,7 @@ impl ListDelegate for PaletteDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Task<()> {
         self.sections = palette::search(&self.entries, query, self.scope);
+        self.query = query.to_string();
         // The list only keeps a selection if the previous results weren't
         // empty; select the best match so Enter always opens it.
         cx.spawn_in(window, async move |list, cx| {
@@ -166,6 +247,7 @@ impl ListDelegate for PaletteDelegate {
     ) -> Option<ListItem> {
         let index = self.entry_index(ix)?;
         let entry = &self.entries[index];
+        let shortcut = self.shortcut(entry);
         Some(
             ListItem::new(("palette-entry", index))
                 .accessibility_label(accessibility_label(entry))
@@ -191,7 +273,8 @@ impl ListDelegate for PaletteDelegate {
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(entry.location.clone()),
-                        ),
+                        )
+                        .when_some(shortcut, |row, shortcut| row.child(shortcut)),
                 ),
         )
     }
@@ -201,7 +284,7 @@ impl ListDelegate for PaletteDelegate {
         _window: &mut Window,
         cx: &mut Context<ListState<Self>>,
     ) -> impl IntoElement {
-        let text = if self.entries.is_empty() {
+        let text = if self.nothing_to_search() {
             "No saved requests, collections or environments yet."
         } else {
             "No results"
@@ -229,6 +312,7 @@ fn leading(entry: &Entry, cx: &App) -> gpui::Div {
     }
     let icon = match entry.target.group() {
         Group::Environments => Icon::new(LucideIcon::Layers),
+        Group::Commands => Icon::new(IconName::ChevronRight),
         _ => Icon::new(IconName::Folder),
     };
     div()
@@ -249,5 +333,35 @@ fn accessibility_label(entry: &Entry) -> String {
         Target::SharedEnvironment(_) | Target::CollectionEnvironment { .. } => {
             format!("{path}, environment")
         }
+        Target::Command(_) => format!("{path}, command"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_action_backed_command_has_an_action() {
+        for command in Command::ALL {
+            assert_eq!(
+                action(command).is_some(),
+                command.has_action(),
+                "{command:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn commands_dispatch_distinct_actions() {
+        let mut names: Vec<&str> = Command::ALL
+            .into_iter()
+            .filter_map(action)
+            .map(|action| action.name())
+            .collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count);
     }
 }

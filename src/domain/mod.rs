@@ -1,6 +1,7 @@
 pub mod accent;
 pub mod body_format;
 pub mod collection;
+pub mod command;
 pub mod curl;
 pub mod environment;
 pub mod environment_menu;

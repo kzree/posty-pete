@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use super::{
     collection::{Collection, Item},
+    command::Command,
     environment::Environment,
     request::HttpMethod,
 };
@@ -28,6 +29,44 @@ impl Scope {
     }
 }
 
+/// Typed first, limits the results to commands in either scope.
+pub const COMMAND_PREFIX: char = '>';
+
+pub fn searches_commands_only(query: &str) -> bool {
+    Query::parse(query).commands_only
+}
+
+/// What a typed query searches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Query<'a> {
+    text: &'a str,
+    commands_only: bool,
+}
+
+impl<'a> Query<'a> {
+    fn parse(input: &'a str) -> Self {
+        let input = input.trim_start();
+        match input.strip_prefix(COMMAND_PREFIX) {
+            Some(rest) => Self {
+                text: rest,
+                commands_only: true,
+            },
+            None => Self {
+                text: input,
+                commands_only: false,
+            },
+        }
+    }
+
+    fn includes(self, group: Group, scope: Scope) -> bool {
+        if self.commands_only {
+            group == Group::Commands
+        } else {
+            scope.includes(group)
+        }
+    }
+}
+
 /// A section of results, in display order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
@@ -35,14 +74,16 @@ pub enum Group {
     Collections,
     Folders,
     Environments,
+    Commands,
 }
 
 impl Group {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Requests,
         Self::Collections,
         Self::Folders,
         Self::Environments,
+        Self::Commands,
     ];
 
     pub fn title(self) -> &'static str {
@@ -51,6 +92,7 @@ impl Group {
             Self::Collections => "Collections",
             Self::Folders => "Folders",
             Self::Environments => "Environments",
+            Self::Commands => "Commands",
         }
     }
 
@@ -79,6 +121,7 @@ pub enum Target {
         collection_id: Uuid,
         environment_id: Uuid,
     },
+    Command(Command),
 }
 
 impl Target {
@@ -88,6 +131,7 @@ impl Target {
             Self::Collection(_) => Group::Collections,
             Self::Folder { .. } => Group::Folders,
             Self::SharedEnvironment(_) | Self::CollectionEnvironment { .. } => Group::Environments,
+            Self::Command(_) => Group::Commands,
         }
     }
 }
@@ -100,11 +144,12 @@ pub struct Entry {
     pub name: String,
     /// The collection and folders holding a request or folder, the collection
     /// of a collection environment, [`SHARED_LOCATION`] for a shared one, and
-    /// empty for a collection.
+    /// empty for a collection or command.
     pub location: String,
     pub method: Option<HttpMethod>,
     name_lower: String,
     path_lower: String,
+    keywords: &'static [&'static str],
 }
 
 impl Entry {
@@ -116,6 +161,7 @@ impl Entry {
             method,
             name_lower: String::new(),
             path_lower: String::new(),
+            keywords: &[],
         };
         entry.name_lower = entry.name.to_lowercase();
         entry.path_lower = entry.path().to_lowercase();
@@ -175,6 +221,22 @@ pub fn entries(collections: &[Arc<Collection>], shared: &[Arc<Environment>]) -> 
     entries
 }
 
+/// Entries for `commands`, in the order given.
+pub fn command_entries(commands: impl IntoIterator<Item = Command>) -> Vec<Entry> {
+    commands
+        .into_iter()
+        .map(|command| Entry {
+            keywords: command.keywords(),
+            ..Entry::new(
+                Target::Command(command),
+                command.title().to_string(),
+                String::new(),
+                None,
+            )
+        })
+        .collect()
+}
+
 fn push_items(collection_id: Uuid, items: &[Item], location: &str, entries: &mut Vec<Entry>) {
     for item in items {
         match item {
@@ -225,17 +287,24 @@ const NARROW_QUERY_LEN: usize = 3;
 
 /// The groups with matches for `query`, in [`Group::ALL`] order. Within a
 /// group the best match comes first; ties keep tree order. An empty query
-/// matches everything.
+/// matches everything; one starting with [`COMMAND_PREFIX`] searches only
+/// commands, in either scope.
 pub fn search(entries: &[Entry], query: &str, scope: Scope) -> Vec<Section> {
-    let query = query.trim().to_lowercase();
+    let query = Query::parse(query);
+    let text = query.text.trim().to_lowercase();
     let mut ranked: Vec<(Group, Rank, usize)> = entries
         .iter()
         .enumerate()
-        .filter(|(_, entry)| scope.includes(entry.target.group()))
-        .filter_map(|(ix, entry)| rank(entry, &query).map(|rank| (entry.target.group(), rank, ix)))
+        .filter(|(_, entry)| query.includes(entry.target.group(), scope))
+        .filter_map(|(ix, entry)| rank(entry, &text).map(|rank| (entry.target.group(), rank, ix)))
         .collect();
     ranked.sort();
-    let limit = limit_for(&query);
+    // A single group has room for all of it.
+    let limit = if query.commands_only {
+        NARROW_LIMIT
+    } else {
+        limit_for(&text)
+    };
     Group::ALL
         .into_iter()
         .filter_map(|group| {
@@ -264,6 +333,7 @@ enum Rank {
     ExactName,
     NamePrefix,
     NameWordPrefix,
+    KeywordPrefix,
     NameContains,
     PathContains,
     Fuzzy,
@@ -283,6 +353,13 @@ fn rank(entry: &Entry, query: &str) -> Option<Rank> {
         .any(|(ix, _)| starts_word(name, ix))
     {
         return Some(Rank::NameWordPrefix);
+    }
+    if entry
+        .keywords
+        .iter()
+        .any(|keyword| keyword.starts_with(query))
+    {
+        return Some(Rank::KeywordPrefix);
     }
     if name.contains(query) {
         return Some(Rank::NameContains);
@@ -591,5 +668,93 @@ mod tests {
     fn no_match_returns_no_sections() {
         let entries = sample_entries();
         assert!(search(&entries, "xyz", Scope::All).is_empty());
+    }
+
+    fn with_commands(commands: &[Command]) -> Vec<Entry> {
+        let mut entries = sample_entries();
+        entries.extend(command_entries(commands.iter().copied()));
+        entries
+    }
+
+    fn groups(entries: &[Entry], query: &str, scope: Scope) -> Vec<&'static str> {
+        outline(entries, query, scope)
+            .into_iter()
+            .map(|(title, _)| title)
+            .collect()
+    }
+
+    #[test]
+    fn commands_come_last_in_the_full_scope() {
+        let entries = with_commands(&[Command::NewRequest, Command::Quit]);
+        assert_eq!(
+            outline(&entries, "", Scope::All).last(),
+            Some(&("Commands", vec!["New request".to_string(), "Quit".into()]))
+        );
+    }
+
+    #[test]
+    fn items_scope_leaves_out_commands() {
+        let entries = with_commands(&[Command::NewRequest]);
+        assert_eq!(
+            groups(&entries, "", Scope::Items),
+            ["Requests", "Collections", "Folders", "Environments"]
+        );
+        assert!(search(&entries, "new", Scope::Items).is_empty());
+    }
+
+    #[test]
+    fn the_prefix_searches_only_commands_in_either_scope() {
+        let entries = with_commands(&[Command::NewRequest, Command::Save]);
+        for scope in [Scope::All, Scope::Items] {
+            assert_eq!(
+                outline(&entries, ">", scope),
+                outline(&entries, "> ", scope)
+            );
+            assert_eq!(groups(&entries, ">", scope), ["Commands"]);
+            assert_eq!(
+                outline(&entries, " >req", scope),
+                [("Commands", vec!["New request".to_string(), "Save".into()])]
+            );
+        }
+        assert!(search(&entries, "> health", Scope::All).is_empty());
+    }
+
+    #[test]
+    fn the_prefix_alone_lists_every_command() {
+        let entries = command_entries(Command::ALL);
+        let sections = search(&entries, ">", Scope::Items);
+        assert_eq!(sections[0].entries.len(), Command::ALL.len());
+    }
+
+    #[test]
+    fn a_prefix_inside_the_query_is_searched_for() {
+        let entries = with_commands(&[Command::NewRequest]);
+        assert!(search(&entries, "new >", Scope::All).is_empty());
+    }
+
+    #[test]
+    fn commands_match_their_keywords() {
+        let entries = with_commands(&Command::ALL);
+        assert_eq!(names(&entries, "panel"), ["Toggle sidebar"]);
+        assert_eq!(names(&entries, "> exit"), ["Quit"]);
+    }
+
+    #[test]
+    fn keyword_matches_rank_between_word_prefix_and_substring_matches() {
+        let entries = command_entries([
+            Command::SharedEnvironments,
+            Command::History,
+            Command::SendRequest,
+            Command::Revert,
+        ]);
+        assert_eq!(
+            names(&entries, "re"),
+            [
+                "Revert changes",
+                "Send request",
+                "History",
+                "Shared environments"
+            ]
+        );
     }
 }

@@ -1,3 +1,4 @@
+mod commands;
 mod dirty;
 mod editor;
 mod environments;
@@ -334,11 +335,16 @@ impl Workspace {
         if window.has_active_dialog(cx) {
             return;
         }
-        let entries = domain::palette::entries(
+        let mut entries = domain::palette::entries(
             self.collections.read(cx).all(),
             self.shared_environments.read(cx).all(),
         );
-        let palette = cx.new(|cx| CommandPalette::new(entries, scope, window, cx));
+        let state = self.command_state(window, cx);
+        entries.extend(domain::palette::command_entries(
+            domain::command::available(&state),
+        ));
+        let focus = self.command_focus(window, cx);
+        let palette = cx.new(|cx| CommandPalette::new(entries, scope, &focus, window, cx));
         self.command_palette_subscription = Some(cx.subscribe_in(
             &palette,
             window,
