@@ -39,7 +39,6 @@ impl Workspace {
     }
 
     /// Resolves drafts against shared environment `id` alone.
-    #[expect(dead_code, reason = "used by the picker's Shared group, task 58")]
     pub(super) fn set_draft_shared_environment(
         &mut self,
         id: Uuid,
@@ -165,6 +164,9 @@ impl Workspace {
             EnvironmentPickerAction::Manage(id) => {
                 return self.open_environments(id, None, window, cx);
             }
+            EnvironmentPickerAction::ManageShared(id) => {
+                return self.open_shared_environments(id, window, cx);
+            }
             EnvironmentPickerAction::Choose(choice) => choice,
         };
         match (scope, choice) {
@@ -184,6 +186,10 @@ impl Workspace {
                     environment_id,
                 },
             ) => self.set_draft_collection(Some(collection_id), Some(environment_id), window, cx),
+            (MenuScope::Draft, EnvironmentChoice::Shared(id)) => {
+                self.set_draft_shared_environment(id, window, cx)
+            }
+            (MenuScope::Collection(_), EnvironmentChoice::Shared(_)) => {}
         }
     }
 

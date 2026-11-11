@@ -18,6 +18,8 @@ pub enum EnvironmentPickerAction {
     Choose(EnvironmentChoice),
     /// Open collection `Uuid`'s environments.
     Manage(Uuid),
+    /// Open the shared environments, with this one selected if given.
+    ManageShared(Option<Uuid>),
 }
 
 type ActionHandler = Rc<dyn Fn(&EnvironmentPickerAction, &mut Window, &mut App)>;
@@ -56,6 +58,10 @@ fn menu_item(item: &EnvironmentMenuItem, on_action: &ActionHandler) -> PopupMenu
         EnvironmentMenuItem::Manage(id) => (
             PopupMenuItem::new("Manage environments…"),
             EnvironmentPickerAction::Manage(*id),
+        ),
+        EnvironmentMenuItem::ManageShared(id) => (
+            PopupMenuItem::new("Manage shared environments…"),
+            EnvironmentPickerAction::ManageShared(*id),
         ),
     };
     let on_action = on_action.clone();

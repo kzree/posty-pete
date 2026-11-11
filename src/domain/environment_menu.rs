@@ -3,10 +3,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::{
-    collection::Collection, environment::Environment, environment_selection::EnvironmentSelection,
+    collection::Collection,
+    environment::{self, Environment},
+    environment_selection::EnvironmentSelection,
 };
 
 pub const NO_ENVIRONMENT: &str = "No environment";
+pub const SHARED_HEADING: &str = "Shared";
 
 /// Whose environments the picker offers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,6 +27,8 @@ pub enum EnvironmentChoice {
         collection_id: Uuid,
         environment_id: Uuid,
     },
+    /// A shared environment, for the draft.
+    Shared(Uuid),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +43,8 @@ pub enum EnvironmentMenuItem {
     Separator,
     /// Opens collection `Uuid`'s environments.
     Manage(Uuid),
+    /// Opens the shared environments, with this one selected if given.
+    ManageShared(Option<Uuid>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,10 +84,17 @@ impl EnvironmentMenu {
             (None, Some(_)) => format!("Shared › {label}"),
             (None, None) => "Environment".to_string(),
         };
-        let items = match (scope, collection) {
+        let mut items = match (scope, collection) {
             (MenuScope::Collection(_), Some(collection)) => collection_items(collection, selection),
-            _ => draft_items(collection, draft_shared.is_some(), selection, collections),
+            _ => draft_items(collection, draft_shared, selection, collections, shared),
         };
+        items.push(EnvironmentMenuItem::ManageShared(manage_shared_selection(
+            scope,
+            collection,
+            draft_shared,
+            selection,
+            shared,
+        )));
         Some(Self {
             scope,
             label,
@@ -96,6 +110,26 @@ fn active_name<'a>(
 ) -> Option<&'a str> {
     let id = selection.active_environment(collection)?;
     Some(collection.environment(id)?.name.as_str())
+}
+
+/// The shared environment "Manage shared environments…" selects: the draft's,
+/// or the base of the collection's active environment.
+fn manage_shared_selection(
+    scope: MenuScope,
+    collection: Option<&Arc<Collection>>,
+    draft_shared: Option<&Environment>,
+    selection: &EnvironmentSelection,
+    shared: &[Arc<Environment>],
+) -> Option<Uuid> {
+    match scope {
+        MenuScope::Draft => draft_shared.map(|environment| environment.id),
+        MenuScope::Collection(_) => {
+            let collection = collection?;
+            let active = collection.environment(selection.active_environment(collection)?)?;
+            let base = environment::find(shared, active.base?)?;
+            Some(base.id)
+        }
+    }
 }
 
 fn no_environment(checked: bool) -> EnvironmentMenuItem {
@@ -136,24 +170,52 @@ fn collection_items(
     items
 }
 
-/// Every collection with environments, under its name; only the draft
-/// collection's active environment is checked. With `uses_shared`, none is.
+/// The shared environments under "Shared", `active` checked; nothing when
+/// there are none.
+fn shared_group(
+    shared: &[Arc<Environment>],
+    active: Option<Uuid>,
+) -> impl Iterator<Item = EnvironmentMenuItem> + '_ {
+    let heading = (!shared.is_empty()).then(|| {
+        [
+            EnvironmentMenuItem::Separator,
+            EnvironmentMenuItem::Heading(SHARED_HEADING.to_string()),
+        ]
+    });
+    let choices = shared
+        .iter()
+        .map(move |environment| EnvironmentMenuItem::Choice {
+            choice: EnvironmentChoice::Shared(environment.id),
+            name: environment.name.clone(),
+            checked: active == Some(environment.id),
+        });
+    heading.into_iter().flatten().chain(choices)
+}
+
+/// "Shared", then every collection with environments under its name. Only
+/// the draft source is checked: its shared environment, or the draft
+/// collection's active environment.
 fn draft_items(
     draft: Option<&Arc<Collection>>,
-    uses_shared: bool,
+    draft_shared: Option<&Environment>,
     selection: &EnvironmentSelection,
     collections: &[Arc<Collection>],
+    shared: &[Arc<Environment>],
 ) -> Vec<EnvironmentMenuItem> {
     let draft_active = draft.and_then(|c| selection.active_environment(c));
-    let mut items = vec![no_environment(draft_active.is_none() && !uses_shared)];
+    let shared_active = draft_shared.map(|environment| environment.id);
+    let mut items = vec![no_environment(
+        draft_active.is_none() && shared_active.is_none(),
+    )];
+    items.extend(shared_group(shared, shared_active));
     for collection in collections.iter().filter(|c| !c.environments.is_empty()) {
         let is_draft = draft.is_some_and(|draft| draft.id == collection.id);
         items.push(EnvironmentMenuItem::Separator);
         items.push(EnvironmentMenuItem::Heading(collection.name.clone()));
         items.extend(choices(collection, draft_active.filter(|_| is_draft)));
     }
+    items.push(EnvironmentMenuItem::Separator);
     if let Some(draft) = draft {
-        items.push(EnvironmentMenuItem::Separator);
         items.push(EnvironmentMenuItem::Manage(draft.id));
     }
     items
@@ -172,6 +234,18 @@ mod tests {
         let mut collection = Collection::new(name);
         collection.environments = environments.iter().map(|name| environment(name)).collect();
         Arc::new(collection)
+    }
+
+    fn shared_env(name: &str) -> Arc<Environment> {
+        Arc::new(environment(name))
+    }
+
+    fn shared_choice(environment: &Environment, checked: bool) -> EnvironmentMenuItem {
+        EnvironmentMenuItem::Choice {
+            choice: EnvironmentChoice::Shared(environment.id),
+            name: environment.name.clone(),
+            checked,
+        }
     }
 
     fn env_id(collection: &Collection, ix: usize) -> Uuid {
@@ -211,6 +285,7 @@ mod tests {
                 choice(&api, 1, true),
                 EnvironmentMenuItem::Separator,
                 EnvironmentMenuItem::Manage(api.id),
+                EnvironmentMenuItem::ManageShared(None),
             ]
         );
     }
@@ -235,6 +310,7 @@ mod tests {
                 no_environment(true),
                 EnvironmentMenuItem::Separator,
                 EnvironmentMenuItem::Manage(api.id),
+                EnvironmentMenuItem::ManageShared(None),
             ]
         );
     }
@@ -275,6 +351,8 @@ mod tests {
                 EnvironmentMenuItem::Heading("Payments".into()),
                 choice(&payments, 0, false),
                 choice(&payments, 1, false),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::ManageShared(None),
             ]
         );
     }
@@ -305,6 +383,7 @@ mod tests {
                 choice(&payments, 1, true),
                 EnvironmentMenuItem::Separator,
                 EnvironmentMenuItem::Manage(payments.id),
+                EnvironmentMenuItem::ManageShared(None),
             ]
         );
     }
@@ -325,32 +404,121 @@ mod tests {
                 no_environment(true),
                 EnvironmentMenuItem::Separator,
                 EnvironmentMenuItem::Manage(empty.id),
+                EnvironmentMenuItem::ManageShared(None),
             ]
         );
     }
 
     #[test]
-    fn draft_using_a_shared_environment_checks_no_collection_item() {
+    fn draft_using_a_shared_environment_checks_only_it() {
         let api = collection("API", &["Local"]);
         let collections = [api.clone()];
-        let dev = Arc::new(environment("Dev"));
+        let shared = [shared_env("Dev"), shared_env("Prod")];
         let mut selection = EnvironmentSelection::default();
         selection.set_draft_collection(Some(api.id), Some(env_id(&api, 0)));
-        selection.set_draft_shared_environment(dev.id);
+        selection.set_draft_shared_environment(shared[1].id);
 
         let menu =
-            EnvironmentMenu::new(MenuScope::Draft, &selection, &collections, &[dev]).unwrap();
+            EnvironmentMenu::new(MenuScope::Draft, &selection, &collections, &shared).unwrap();
 
-        assert_eq!(menu.label, "Dev");
-        assert_eq!(menu.tooltip, "Shared › Dev");
+        assert_eq!(menu.label, "Prod");
+        assert_eq!(menu.tooltip, "Shared › Prod");
         assert_eq!(
             menu.items,
             vec![
                 no_environment(false),
                 EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::Heading(SHARED_HEADING.into()),
+                shared_choice(&shared[0], false),
+                shared_choice(&shared[1], true),
+                EnvironmentMenuItem::Separator,
                 EnvironmentMenuItem::Heading("API".into()),
                 choice(&api, 0, false),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::ManageShared(Some(shared[1].id)),
             ]
+        );
+    }
+
+    #[test]
+    fn draft_on_a_collection_lists_shared_environments_unchecked() {
+        let api = collection("API", &["Local"]);
+        let collections = [api.clone()];
+        let shared = [shared_env("Dev")];
+        let mut selection = EnvironmentSelection::default();
+        selection.set_draft_collection(Some(api.id), Some(env_id(&api, 0)));
+
+        let menu =
+            EnvironmentMenu::new(MenuScope::Draft, &selection, &collections, &shared).unwrap();
+
+        assert_eq!(
+            menu.items,
+            vec![
+                no_environment(false),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::Heading(SHARED_HEADING.into()),
+                shared_choice(&shared[0], false),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::Heading("API".into()),
+                choice(&api, 0, true),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::Manage(api.id),
+                EnvironmentMenuItem::ManageShared(None),
+            ]
+        );
+    }
+
+    #[test]
+    fn collection_scope_has_no_shared_group_and_manages_the_active_base() {
+        let dev = shared_env("Dev");
+        let mut api = Collection::new("API");
+        let mut local = environment("Local");
+        local.base = Some(dev.id);
+        api.environments = vec![local];
+        let api = Arc::new(api);
+        let collections = [api.clone()];
+        let mut selection = EnvironmentSelection::default();
+        selection.set_active_environment(api.id, Some(env_id(&api, 0)));
+
+        let menu = EnvironmentMenu::new(
+            MenuScope::Collection(api.id),
+            &selection,
+            &collections,
+            std::slice::from_ref(&dev),
+        )
+        .unwrap();
+
+        assert_eq!(menu.tooltip, "API › Local");
+        assert_eq!(
+            menu.items,
+            vec![
+                no_environment(false),
+                choice(&api, 0, true),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::Manage(api.id),
+                EnvironmentMenuItem::ManageShared(Some(dev.id)),
+            ]
+        );
+    }
+
+    #[test]
+    fn collection_scope_ignores_a_deleted_base() {
+        let mut api = Collection::new("API");
+        let mut local = environment("Local");
+        local.base = Some(Uuid::new_v4());
+        api.environments = vec![local];
+        let api = Arc::new(api);
+        let collections = [api.clone()];
+        let mut selection = EnvironmentSelection::default();
+        selection.set_active_environment(api.id, Some(env_id(&api, 0)));
+
+        let menu =
+            EnvironmentMenu::new(MenuScope::Collection(api.id), &selection, &collections, &[])
+                .unwrap();
+
+        assert_eq!(
+            menu.items.last(),
+            Some(&EnvironmentMenuItem::ManageShared(None))
         );
     }
 
@@ -363,6 +531,13 @@ mod tests {
 
         assert_eq!(menu.label, NO_ENVIRONMENT);
         assert_eq!(menu.tooltip, "Environment");
-        assert_eq!(menu.items, vec![no_environment(true)]);
+        assert_eq!(
+            menu.items,
+            vec![
+                no_environment(true),
+                EnvironmentMenuItem::Separator,
+                EnvironmentMenuItem::ManageShared(None),
+            ]
+        );
     }
 }
