@@ -1,13 +1,11 @@
-use std::{collections::HashSet, rc::Rc, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use gpui::{
     App, Context, ElementId, ParentElement, Pixels, SharedString, Styled, Window, div,
     prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
-    ActiveTheme, Icon, IconName, IndexPath, Sizable, Size, StyledExt,
-    button::{Button, ButtonVariants},
-    h_flex,
+    ActiveTheme, Icon, IconName, IndexPath, Sizable, StyledExt, h_flex,
     list::{ListDelegate, ListItem, ListState},
 };
 use uuid::Uuid;
@@ -21,8 +19,6 @@ use crate::{
     ui::method_label::method_label,
 };
 
-type AddEnvironment = Rc<dyn Fn(&mut Window, &mut App)>;
-
 #[derive(Default)]
 pub(super) struct LibraryDelegate {
     collections: Vec<Arc<Collection>>,
@@ -33,18 +29,9 @@ pub(super) struct LibraryDelegate {
     expanded: HashSet<Uuid>,
     pub(super) selected: Option<Uuid>,
     rows: Vec<Row>,
-    /// Run by the Environments header's + button.
-    on_add_environment: Option<AddEnvironment>,
 }
 
 impl LibraryDelegate {
-    pub(super) fn new(on_add_environment: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        Self {
-            on_add_environment: Some(Rc::new(on_add_environment)),
-            ..Default::default()
-        }
-    }
-
     pub(super) fn set_collections(&mut self, collections: Vec<Arc<Collection>>) {
         let existing = container_ids(&collections);
         self.expanded.retain(|id| existing.contains(id));
@@ -203,9 +190,7 @@ impl ListDelegate for LibraryDelegate {
         cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         Some(match self.rows.get(ix.row)? {
-            Row::Section { section, expanded } => {
-                render_section(*section, *expanded, self.on_add_environment.clone(), cx)
-            }
+            Row::Section { section, expanded } => render_section(*section, *expanded, cx),
             Row::Empty(section) => render_empty_section(*section, cx),
             Row::Node(node) => render_node(node, cx),
             Row::Environment { id, name } => render_environment(*id, name.clone(), cx),
@@ -252,16 +237,11 @@ fn section_label(section: Section) -> &'static str {
     }
 }
 
-fn render_section(
-    section: Section,
-    expanded: bool,
-    on_add_environment: Option<AddEnvironment>,
-    cx: &App,
-) -> ListItem {
+fn render_section(section: Section, expanded: bool, cx: &App) -> ListItem {
     let label = section_label(section);
-    let (id, add) = match section {
-        Section::Collections => ("library-collections", None),
-        Section::Environments => ("library-environments", on_add_environment),
+    let id = match section {
+        Section::Collections => "library-collections",
+        Section::Environments => "library-environments",
     };
     row_item(id)
         .accessibility_label(format!("{label}, {}", expansion_state(expanded)))
@@ -274,24 +254,6 @@ fn render_section(
                 .child(chevron(expanded))
                 .child(label),
         )
-        .when_some(add, |item, add| {
-            item.suffix(move |_, _| add_environment_button(add.clone()))
-        })
-}
-
-/// Sized to fit the row height every row shares.
-fn add_environment_button(add: AddEnvironment) -> Button {
-    Button::new("library-new-environment")
-        .ghost()
-        .with_size(Size::Size(px(16.)))
-        .icon(IconName::Plus)
-        .tooltip("New environment")
-        .accessibility_label("New environment")
-        .on_click(move |_, window, cx| {
-            // Keep the click from toggling the section.
-            cx.stop_propagation();
-            add(window, cx);
-        })
 }
 
 /// Indent of a top-level row's name: the row inset plus the chevron slot.

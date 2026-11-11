@@ -79,12 +79,7 @@ impl EventEmitter<LibraryPanelEvent> for LibraryPanel {}
 
 impl LibraryPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let panel = cx.weak_entity();
-        let delegate = LibraryDelegate::new(move |_, cx| {
-            panel
-                .update(cx, |panel, cx| panel.create_shared_environment(cx))
-                .ok();
-        });
+        let delegate = LibraryDelegate::default();
         let list = cx.new(|cx| ListState::new(delegate, window, cx));
         let list_sub = cx.subscribe_in(&list, window, |this, _, event, window, cx| {
             if let ListEvent::Confirm(ix) = event {
