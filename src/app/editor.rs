@@ -135,8 +135,12 @@ impl Workspace {
             _ => self.draft.take(),
         };
         self.editor_content = content;
-        self.request_editor
-            .update(cx, |editor, cx| editor.load_request(request, window, cx));
+        let name = self
+            .editor_saved_request(cx)
+            .map(|saved| saved.name.clone());
+        self.request_editor.update(cx, |editor, cx| {
+            editor.load_request(request, name, window, cx)
+        });
         self.baseline = match content {
             EditorContent::Saved { .. } => Some(Baseline::new(
                 request.clone(),
@@ -144,7 +148,6 @@ impl Workspace {
             )),
             EditorContent::Draft => None,
         };
-        self.sync_editor_name(window, cx);
         self.refresh_dirty(window, cx);
         self.schedule_navigation_save(cx);
     }
@@ -330,12 +333,13 @@ impl Workspace {
             .update(cx, |panel, cx| panel.set_selected(selected, window, cx));
     }
 
-    /// Hands the editor the stored name of the saved request it holds.
+    /// Hands the editor the current stored name of the saved request it holds,
+    /// after a rename or delete.
     pub(super) fn sync_editor_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self
             .editor_saved_request(cx)
             .map(|saved| saved.name.clone());
         self.request_editor
-            .update(cx, |editor, cx| editor.set_saved_name(name, window, cx));
+            .update(cx, |editor, cx| editor.update_saved_name(name, window, cx));
     }
 }

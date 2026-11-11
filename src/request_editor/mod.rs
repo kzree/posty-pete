@@ -149,9 +149,9 @@ impl RequestEditor {
         }
     }
 
-    /// Links the editor to a saved request with this stored name (`None` unlinks).
+    /// Follows a rename (or unlink) of the linked saved request without reloading it.
     /// When only the stored name changes, an unsaved edit of the name field is kept.
-    pub fn set_saved_name(
+    pub fn update_saved_name(
         &mut self,
         saved_name: Option<String>,
         window: &mut Window,
@@ -205,9 +205,16 @@ impl RequestEditor {
         });
     }
 
-    /// Loads `request` unlinked; call `set_saved_name` afterwards to link it.
-    pub fn load_request(&mut self, request: &Request, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_saved_name(None, window, cx);
+    /// Loads `request`, linked to the saved request stored as `saved_name` (`None` for the draft).
+    pub fn load_request(
+        &mut self,
+        request: &Request,
+        saved_name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_name_value(saved_name.clone().unwrap_or_default(), window, cx);
+        self.saved_name = saved_name;
         self.method.update(cx, |method, cx| {
             method.set_selected_value(&request.method, window, cx)
         });
