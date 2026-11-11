@@ -181,6 +181,19 @@ mod tests {
     }
 
     #[test]
+    fn general_settings_survive_a_save() {
+        let dir = TempDir::new();
+        let (mut store, _) = SettingsStore::open(file(&dir));
+        let mut settings = Settings::default();
+        settings.general.restore_last_session = false;
+        settings.general.ask_before_discarding = false;
+        store.save(&settings).unwrap();
+
+        let (_, loaded) = SettingsStore::open(file(&dir));
+        assert_eq!(loaded, settings);
+    }
+
+    #[test]
     fn theme_is_stored_lowercase() {
         let dir = TempDir::new();
         let (mut store, _) = SettingsStore::open(file(&dir));

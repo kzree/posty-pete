@@ -9,8 +9,26 @@ use super::accent::Accent;
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    pub general: GeneralSettings,
     pub appearance: AppearanceSettings,
     pub requests: RequestSettings,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeneralSettings {
+    /// Read at startup only.
+    pub restore_last_session: bool,
+    pub ask_before_discarding: bool,
+}
+
+impl Default for GeneralSettings {
+    fn default() -> Self {
+        Self {
+            restore_last_session: true,
+            ask_before_discarding: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +114,42 @@ mod tests {
             serde_json::from_str(r#"{"appearance":{"theme":"light"}}"#).unwrap();
         assert_eq!(settings.appearance.theme, ThemePreference::Light);
         assert_eq!(settings.appearance.accent, Accent::Monochrome);
+    }
+
+    #[test]
+    fn missing_general_loads_as_defaults() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"appearance":{"theme":"light"}}"#).unwrap();
+        assert!(settings.general.restore_last_session);
+        assert!(settings.general.ask_before_discarding);
+    }
+
+    #[test]
+    fn missing_general_fields_load_as_defaults() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"general":{"restore_last_session":false,"future":1}}"#)
+                .unwrap();
+        assert_eq!(
+            settings.general,
+            GeneralSettings {
+                restore_last_session: false,
+                ask_before_discarding: true,
+            }
+        );
+    }
+
+    #[test]
+    fn general_round_trips() {
+        let settings = Settings {
+            general: GeneralSettings {
+                restore_last_session: false,
+                ask_before_discarding: false,
+            },
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains(r#""ask_before_discarding":false"#), "{json}");
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
     }
 
     #[test]

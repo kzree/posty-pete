@@ -75,7 +75,7 @@ impl SettingsPage {
                 .map(|_| cx.focus_handle())
                 .collect(),
             scroll,
-            general: cx.new(|_| GeneralPage::new(reveal.clone())),
+            general: cx.new(|cx| GeneralPage::new(reveal.clone(), cx)),
             appearance: cx.new(|cx| AppearancePage::new(reveal.clone(), window, cx)),
             requests: cx.new(|cx| RequestsPage::new(reveal.clone(), window, cx)),
             history_and_data: cx.new(|cx| HistoryAndDataPage::new(reveal.clone(), window, cx)),

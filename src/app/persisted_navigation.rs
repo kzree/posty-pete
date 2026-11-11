@@ -15,10 +15,11 @@ use crate::{
     collections::LoadState,
     domain::{
         environment_selection::EnvironmentSelection,
-        navigation::{NavEntry, SavedNavigation},
+        navigation::{KeptSession, NavEntry, SavedNavigation, Startup},
         request::Request,
         store::{self, navigation::NavigationStore},
     },
+    settings::AppSettings,
 };
 
 const SAVE_DELAY: Duration = Duration::from_millis(500);
@@ -56,8 +57,13 @@ impl PersistedNavigation {
     }
 
     /// Ends the wait for the collections. Starts saving and returns the stored
-    /// navigation to restore if they loaded; otherwise never saves.
-    fn collections_loaded(&mut self, collections: LoadState) -> Option<SavedNavigation> {
+    /// navigation to restore if they loaded; otherwise never saves. Without
+    /// `restore_session`, only its environment selection and recents are restored.
+    fn collections_loaded(
+        &mut self,
+        collections: LoadState,
+        restore_session: bool,
+    ) -> Option<SavedNavigation> {
         let Phase::Loaded { store, saved } = mem::replace(&mut self.phase, Phase::Unavailable)
         else {
             return None;
@@ -66,8 +72,9 @@ impl PersistedNavigation {
             tracing::warn!("collections failed to load: not restoring or saving navigation");
             return None;
         }
-        self.phase = Phase::Saving(Writer::new(store));
-        saved.map(|saved| *saved)
+        let startup = Startup::new(saved.map(|saved| *saved), restore_session);
+        self.phase = Phase::Saving(Writer::new(store, startup.kept));
+        startup.restore
     }
 
     fn save_job(&mut self, saved: SavedNavigation) -> Option<impl FnOnce() + Send + 'static> {
@@ -87,18 +94,21 @@ struct Writer {
     /// The newest state written, so a slow write can't land over a newer one.
     written: Arc<Mutex<u64>>,
     next: u64,
+    kept: KeptSession,
 }
 
 impl Writer {
-    fn new(store: NavigationStore) -> Self {
+    fn new(store: NavigationStore, kept: KeptSession) -> Self {
         Self {
             store: Arc::new(store),
             written: Arc::default(),
             next: 0,
+            kept,
         }
     }
 
     fn job(&mut self, saved: SavedNavigation) -> impl FnOnce() + Send + 'static {
+        let saved = self.kept.apply(saved);
         self.next += 1;
         let (seq, store, written) = (self.next, self.store.clone(), self.written.clone());
         move || {
@@ -189,7 +199,8 @@ impl Workspace {
 
     /// Restores the stored navigation, environment selection and recents if
     /// both it and the collections are loaded. The selection and recents are
-    /// restored even if the user already moved on.
+    /// restored even if the user already moved on or turned off restoring the
+    /// last session.
     pub(super) fn restore_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let collections = self.collections.read(cx).load_state();
         if collections == LoadState::Loading
@@ -197,7 +208,11 @@ impl Workspace {
         {
             return;
         }
-        let Some(mut saved) = self.persisted_navigation.collections_loaded(collections) else {
+        let restore_session = AppSettings::get(cx).general.restore_last_session;
+        let Some(mut saved) = self
+            .persisted_navigation
+            .collections_loaded(collections, restore_session)
+        else {
             return;
         };
         self.environments = EnvironmentSelection::new(
@@ -353,7 +368,11 @@ mod tests {
         let mut persisted = loaded(&file, &stored);
         let before = fs::read(&file).unwrap();
 
-        assert!(persisted.collections_loaded(LoadState::Failed).is_none());
+        assert!(
+            persisted
+                .collections_loaded(LoadState::Failed, true)
+                .is_none()
+        );
         assert!(!persisted.is_saving());
         assert!(
             persisted
@@ -371,7 +390,7 @@ mod tests {
         let mut persisted = loaded(&file, &stored);
 
         assert_eq!(
-            persisted.collections_loaded(LoadState::Loaded),
+            persisted.collections_loaded(LoadState::Loaded, true),
             Some(stored)
         );
         let job = persisted
@@ -383,6 +402,33 @@ mod tests {
             store.load().unwrap(),
             Some(navigation(vec![NavEntry::Draft]))
         );
+    }
+
+    #[test]
+    fn unrestored_session_stays_on_disk_until_the_user_moves_on() {
+        let dir = TempDir::new();
+        let file = dir.path().join("navigation.json");
+        let mut stored = navigation(vec![NavEntry::Draft, NavEntry::Settings]);
+        stored.index = 1;
+        let mut persisted = loaded(&file, &stored);
+
+        let restore = persisted
+            .collections_loaded(LoadState::Loaded, false)
+            .unwrap();
+        assert!(restore.has_blank_session());
+        assert!(persisted.is_saving());
+
+        let blank_start = SavedNavigation {
+            draft: Some(Request::default()),
+            ..navigation(vec![NavEntry::Draft])
+        };
+        persisted.save_job(blank_start).unwrap()();
+        let store = NavigationStore::new(file.clone());
+        assert_eq!(store.load().unwrap(), Some(stored));
+
+        let moved_on = navigation(vec![NavEntry::Draft, NavEntry::SharedEnvironments]);
+        persisted.save_job(moved_on.clone()).unwrap()();
+        assert_eq!(store.load().unwrap(), Some(moved_on));
     }
 
     #[test]

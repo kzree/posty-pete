@@ -79,6 +79,78 @@ impl SavedNavigation {
     pub fn is_valid(&self) -> bool {
         self.index < self.entries.len()
     }
+
+    /// Whether the session part (route, back/forward history and draft) is
+    /// what a fresh start has: the draft page with an empty draft.
+    pub fn has_blank_session(&self) -> bool {
+        self.entries == [NavEntry::Draft]
+            && self.index == 0
+            && self
+                .draft
+                .as_ref()
+                .is_none_or(|draft| *draft == Request::default())
+    }
+
+    /// `self` with the route, back/forward history and draft of `session`.
+    fn with_session_of(self, session: &SavedNavigation) -> Self {
+        Self {
+            entries: session.entries.clone(),
+            index: session.index,
+            draft: session.draft.clone(),
+            ..self
+        }
+    }
+
+    fn without_session(self) -> Self {
+        Self {
+            entries: vec![NavEntry::Draft],
+            index: 0,
+            draft: None,
+            ..self
+        }
+    }
+}
+
+/// What startup does with the stored navigation.
+#[derive(Debug, PartialEq)]
+pub struct Startup {
+    /// What to restore. The environment selection and recents are kept as
+    /// preferences; the session part is blank when it isn't restored.
+    pub restore: Option<SavedNavigation>,
+    pub kept: KeptSession,
+}
+
+impl Startup {
+    pub fn new(stored: Option<SavedNavigation>, restore_session: bool) -> Self {
+        match stored {
+            Some(stored) if !restore_session && !stored.has_blank_session() => Self {
+                restore: Some(stored.clone().without_session()),
+                kept: KeptSession(Some(Box::new(stored))),
+            },
+            restore => Self {
+                restore,
+                kept: KeptSession(None),
+            },
+        }
+    }
+}
+
+/// A stored session that wasn't restored. It stays on disk until the user
+/// leaves the blank start, so turning restoring back on still finds it.
+#[derive(Debug, Default, PartialEq)]
+pub struct KeptSession(Option<Box<SavedNavigation>>);
+
+impl KeptSession {
+    /// What to write instead of `current`.
+    pub fn apply(&mut self, current: SavedNavigation) -> SavedNavigation {
+        match &self.0 {
+            Some(kept) if current.has_blank_session() => current.with_session_of(kept),
+            _ => {
+                self.0 = None;
+                current
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -88,6 +160,117 @@ mod tests {
 
     fn load(json: &str) -> SavedNavigation {
         serde_json::from_str(json).unwrap()
+    }
+
+    fn session(entries: Vec<NavEntry>, draft: Option<Request>) -> SavedNavigation {
+        SavedNavigation {
+            index: entries.len() - 1,
+            entries,
+            draft,
+            active_environments: HashMap::new(),
+            draft_source: DraftSource::None,
+            recents: Recents::default(),
+        }
+    }
+
+    fn blank() -> SavedNavigation {
+        session(vec![NavEntry::Draft], Some(Request::default()))
+    }
+
+    fn edited_draft() -> Request {
+        Request {
+            url: "https://example.com".into(),
+            ..Request::default()
+        }
+    }
+
+    fn with_preferences(mut saved: SavedNavigation) -> SavedNavigation {
+        saved
+            .active_environments
+            .insert(Uuid::new_v4(), Uuid::new_v4());
+        saved.draft_source = DraftSource::Shared(Uuid::new_v4());
+        saved
+            .recents
+            .record(Recent::Collection { id: Uuid::new_v4() });
+        saved
+    }
+
+    #[test]
+    fn blank_session_ignores_preferences() {
+        assert!(blank().has_blank_session());
+        assert!(session(vec![NavEntry::Draft], None).has_blank_session());
+        assert!(with_preferences(blank()).has_blank_session());
+        assert!(!session(vec![NavEntry::Draft], Some(edited_draft())).has_blank_session());
+        assert!(!session(vec![NavEntry::Draft, NavEntry::Settings], None).has_blank_session());
+        let mut back = session(vec![NavEntry::Draft, NavEntry::Draft], None);
+        back.index = 0;
+        assert!(!back.has_blank_session());
+    }
+
+    #[test]
+    fn startup_restores_everything_when_restoring_sessions() {
+        let stored = with_preferences(session(
+            vec![NavEntry::Draft, NavEntry::Settings],
+            Some(edited_draft()),
+        ));
+        let startup = Startup::new(Some(stored.clone()), true);
+        assert_eq!(startup.restore, Some(stored));
+        assert_eq!(startup.kept, KeptSession(None));
+    }
+
+    #[test]
+    fn startup_without_restoring_keeps_only_the_preferences() {
+        let stored = with_preferences(session(
+            vec![NavEntry::Draft, NavEntry::Settings],
+            Some(edited_draft()),
+        ));
+        let startup = Startup::new(Some(stored.clone()), false);
+        let restore = startup.restore.unwrap();
+        assert!(restore.has_blank_session());
+        assert_eq!(restore.draft, None);
+        assert_eq!(restore.active_environments, stored.active_environments);
+        assert_eq!(restore.draft_source, stored.draft_source);
+        assert_eq!(restore.recents, stored.recents);
+        assert_eq!(startup.kept, KeptSession(Some(Box::new(stored))));
+    }
+
+    #[test]
+    fn startup_without_a_stored_session_keeps_nothing() {
+        assert_eq!(
+            Startup::new(None, false),
+            Startup {
+                restore: None,
+                kept: KeptSession(None),
+            }
+        );
+        let stored = with_preferences(blank());
+        let startup = Startup::new(Some(stored.clone()), false);
+        assert_eq!(startup.restore, Some(stored));
+        assert_eq!(startup.kept, KeptSession(None));
+    }
+
+    #[test]
+    fn kept_session_is_written_until_the_user_leaves_the_blank_start() {
+        let stored = session(
+            vec![NavEntry::Draft, NavEntry::Settings],
+            Some(edited_draft()),
+        );
+        let mut kept = Startup::new(Some(stored.clone()), false).kept;
+
+        let current = with_preferences(blank());
+        let written = kept.apply(current.clone());
+        assert_eq!(written.entries, stored.entries);
+        assert_eq!(written.index, stored.index);
+        assert_eq!(written.draft, stored.draft);
+        assert_eq!(written.active_environments, current.active_environments);
+        assert_eq!(written.recents, current.recents);
+
+        let moved_on = session(
+            vec![NavEntry::Draft, NavEntry::Collection { id: Uuid::new_v4() }],
+            None,
+        );
+        assert_eq!(kept.apply(moved_on.clone()), moved_on);
+        assert_eq!(kept.apply(blank()), blank());
     }
 
     #[test]

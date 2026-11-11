@@ -5,6 +5,7 @@ use uuid::Uuid;
 use super::{EditorContent, Workspace, dirty::Baseline, routes::AppRoute, show_error};
 use crate::{
     domain::{self, collection::SavedRequest},
+    settings::AppSettings,
     ui::{
         confirm_dialog::open_confirm_dialog,
         save_changes_dialog::{SaveChoice, open_save_changes_dialog},
@@ -13,8 +14,9 @@ use crate::{
 
 impl Workspace {
     /// Runs `then` if the editor has no unsaved changes; otherwise asks to save
-    /// or discard them first, and drops `then` if the user cancels. Everything
-    /// that replaces the editor's content goes through here.
+    /// or discard them first, and drops `then` if the user cancels. Without
+    /// asking turned on, discards them. Everything that replaces the editor's
+    /// content goes through here.
     pub(super) fn confirm_discard(
         &mut self,
         then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
@@ -23,6 +25,10 @@ impl Workspace {
     ) {
         if self.discard_confirmed || !self.is_dirty_now(window, cx) {
             then(self, window, cx);
+            return;
+        }
+        if !AppSettings::get(cx).general.ask_before_discarding && self.discard_prompt.is_none() {
+            self.with_discard_confirmed(|this| then(this, window, cx));
             return;
         }
         let name = self.editor_saved_request(cx).map(|saved| {
