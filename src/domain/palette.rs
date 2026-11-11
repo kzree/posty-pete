@@ -216,6 +216,8 @@ pub struct Entry {
     pub method: Option<HttpMethod>,
     name_lower: String,
     path_lower: String,
+    /// A saved request's "method url", searched like a history entry's.
+    url_lower: String,
     keywords: &'static [&'static str],
 }
 
@@ -229,6 +231,7 @@ impl Entry {
             method,
             name_lower: String::new(),
             path_lower: String::new(),
+            url_lower: String::new(),
             keywords: &[],
         };
         entry.name_lower = entry.name.to_lowercase();
@@ -379,15 +382,19 @@ pub fn settings_entries() -> Vec<Entry> {
 fn push_items(collection_id: Uuid, items: &[Item], location: &str, entries: &mut Vec<Entry>) {
     for item in items {
         match item {
-            Item::Request(saved) => entries.push(Entry::new(
-                Target::Request {
-                    collection_id,
-                    request_id: saved.id,
-                },
-                saved.name.clone(),
-                location.to_string(),
-                Some(saved.request.method),
-            )),
+            Item::Request(saved) => entries.push(Entry {
+                url_lower: format!("{} {}", saved.request.method.as_str(), saved.request.url)
+                    .to_lowercase(),
+                ..Entry::new(
+                    Target::Request {
+                        collection_id,
+                        request_id: saved.id,
+                    },
+                    saved.name.clone(),
+                    location.to_string(),
+                    Some(saved.request.method),
+                )
+            }),
             Item::Folder(folder) => {
                 entries.push(Entry::new(
                     Target::Folder {
@@ -482,6 +489,7 @@ enum Rank {
     KeywordPrefix,
     NameContains,
     PathContains,
+    Url,
     Fuzzy,
 }
 
@@ -515,13 +523,17 @@ fn rank(entry: &Entry, query: &str) -> Option<Rank> {
         return Some(Rank::PathContains);
     }
     if entry.target.group() == Group::History {
-        // Long URLs would fuzzy-match almost any query, so each word must appear.
-        return query
-            .split_whitespace()
-            .all(|word| path.contains(word))
-            .then_some(Rank::Fuzzy);
+        return contains_every_word(path, query).then_some(Rank::Fuzzy);
+    }
+    if !entry.url_lower.is_empty() && contains_every_word(&entry.url_lower, query) {
+        return Some(Rank::Url);
     }
     is_subsequence(query, path).then_some(Rank::Fuzzy)
+}
+
+/// Long URLs would fuzzy-match almost any query, so each word must appear.
+fn contains_every_word(text: &str, query: &str) -> bool {
+    query.split_whitespace().all(|word| text.contains(word))
 }
 
 fn starts_word(text: &str, ix: usize) -> bool {
@@ -1047,6 +1059,67 @@ mod tests {
         assert_eq!(found("get invoices"), ["https://api.test/invoices/42"]);
         assert!(found("delete").is_empty());
         assert!(found("aio").is_empty(), "no fuzzy matches on URLs");
+    }
+
+    fn request_at(name: &str, method: HttpMethod, url: &str) -> Item {
+        Item::Request(SavedRequest::new(
+            name,
+            Request {
+                method,
+                url: url.to_string(),
+                ..Request::default()
+            },
+        ))
+    }
+
+    fn with_urls() -> Vec<Entry> {
+        let mut collection = Collection::new("C");
+        collection.items = vec![
+            request_at("Create order", HttpMethod::Post, "https://api.test/orders"),
+            request_at("Invoice", HttpMethod::Get, "https://api.test/invoices/42"),
+        ];
+        entries(&[Arc::new(collection)], &[])
+    }
+
+    #[test]
+    fn saved_requests_match_url_fragments_and_method() {
+        let entries = with_urls();
+        assert_eq!(names(&entries, "invoices/4"), ["Invoice"]);
+        assert_eq!(names(&entries, "api.test/orders"), ["Create order"]);
+        assert_eq!(names(&entries, "get invoices"), ["Invoice"]);
+        assert_eq!(names(&entries, "POST orders"), ["Create order"]);
+        assert!(names(&entries, "delete orders").is_empty());
+        assert!(
+            names(&entries, "aio").is_empty(),
+            "no fuzzy matches on URLs"
+        );
+    }
+
+    #[test]
+    fn name_matches_rank_above_url_matches() {
+        let mut collection = Collection::new("C");
+        collection.items = vec![
+            request_at("List", HttpMethod::Get, "https://api.test/orders"),
+            request_at("Orders report", HttpMethod::Get, "https://api.test/report"),
+        ];
+        let entries = entries(&[Arc::new(collection)], &[]);
+        assert_eq!(names(&entries, "orders"), ["Orders report", "List"]);
+    }
+
+    #[test]
+    fn saved_requests_matched_by_url_stay_above_history() {
+        let mut entries = with_urls();
+        entries.extend(history_entries(
+            &[sent(1, HttpMethod::Get, "https://api.test/invoices/42")],
+            &now(),
+        ));
+        assert_eq!(
+            outline(&entries, "invoices/42", Scope::All),
+            [
+                ("Requests", vec!["Invoice".to_string()]),
+                ("History", vec!["https://api.test/invoices/42".to_string()]),
+            ]
+        );
     }
 
     #[test]
