@@ -253,11 +253,7 @@ impl Workspace {
             AppRoute::Request | AppRoute::SavedRequest { .. } => {
                 self.load_route_into_editor(route, window, cx)
             }
-            AppRoute::Collection(id) => {
-                let collection = self.collections.read(cx).shared(id);
-                self.collection_view
-                    .update(cx, |view, cx| view.show(id, collection, window, cx));
-            }
+            AppRoute::Collection(id) => self.show_collection(id, window, cx),
             AppRoute::Settings => {}
         }
         self.sync_library_selection(window, cx);

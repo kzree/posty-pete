@@ -1,10 +1,9 @@
 use gpui::{Context, Window};
 use gpui_component::WindowExt;
-use uuid::Uuid;
 
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
-    collection_view::CollectionViewEvent,
+    collection_view::{CollectionViewEvent, VariableSet},
     collections::CollectionsEvent,
     domain::{collection::NEW_COLLECTION_NAME, history::OpenMode, request::KeyValue},
     history::HistoryEvent,
@@ -82,11 +81,7 @@ impl Workspace {
         } else {
             self.sync_editor_name(window, cx);
         }
-        if let Some(id) = self.collection_view.read(cx).id() {
-            let collection = self.collections.read(cx).shared(id);
-            self.collection_view
-                .update(cx, |view, cx| view.show(id, collection, window, cx));
-        }
+        self.refresh_collection_view(window, cx);
         self.refresh_dirty(window, cx);
         self.sync_window_title(window, cx);
         self.schedule_navigation_save(cx);
@@ -182,35 +177,63 @@ impl Workspace {
                 self.collections
                     .update(cx, |collections, cx| collections.rename(id, id, name, cx));
             }
-            CollectionViewEvent::VariablesChanged { id, variables } => {
-                self.save_collection_variables(*id, variables.clone(), cx)
+            CollectionViewEvent::VariablesChanged { set, variables } => {
+                self.save_variables(*set, variables.clone(), cx)
             }
+            CollectionViewEvent::AddEnvironment { collection_id } => {
+                self.add_environment(*collection_id, window, cx)
+            }
+            CollectionViewEvent::RenameEnvironment {
+                collection_id,
+                environment_id,
+                name,
+            } => {
+                let (collection_id, environment_id, name) =
+                    (*collection_id, *environment_id, name.clone());
+                self.collections.update(cx, |collections, cx| {
+                    collections.rename_environment(collection_id, environment_id, name, cx)
+                });
+            }
+            CollectionViewEvent::DeleteEnvironment {
+                collection_id,
+                environment_id,
+            } => self.delete_environment(*collection_id, *environment_id, window, cx),
+            CollectionViewEvent::UseEnvironment {
+                collection_id,
+                environment_id,
+            } => self.set_active_environment(*collection_id, *environment_id, window, cx),
             CollectionViewEvent::Back => self.go_back_or_to_editor(window, cx),
         }
     }
 
-    fn save_collection_variables(
+    fn save_variables(
         &mut self,
-        id: Uuid,
+        set: VariableSet,
         variables: Vec<KeyValue>,
         cx: &mut Context<Self>,
     ) {
-        self.collections.update(cx, |collections, cx| {
-            collections.set_variables(id, variables, cx)
+        self.collections.update(cx, |collections, cx| match set {
+            VariableSet::Collection(id) => collections.set_variables(id, variables, cx),
+            VariableSet::Environment {
+                collection_id,
+                environment_id,
+            } => {
+                collections.set_environment_variables(collection_id, environment_id, variables, cx)
+            }
         });
     }
 
-    /// Saves a variables edit still waiting for its save delay. Returns
-    /// whether there was one.
+    /// Saves the variables edits still waiting for their save delay. Returns
+    /// whether there were any.
     pub(super) fn flush_collection_variables(&mut self, cx: &mut Context<Self>) -> bool {
         let pending = self
             .collection_view
             .update(cx, |view, cx| view.take_pending_variables(cx));
-        let Some((id, variables)) = pending else {
-            return false;
-        };
-        self.save_collection_variables(id, variables, cx);
-        true
+        let flushed = !pending.is_empty();
+        for (set, variables) in pending {
+            self.save_variables(set, variables, cx);
+        }
+        flushed
     }
 
     pub(super) fn on_history_panel_event(

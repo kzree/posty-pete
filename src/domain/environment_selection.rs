@@ -28,6 +28,11 @@ impl EnvironmentSelection {
             .filter(|id| collection.environment(*id).is_some())
     }
 
+    /// The stored id, whether or not the environment still exists.
+    pub fn active_environment_id(&self, collection_id: Uuid) -> Option<Uuid> {
+        self.active.get(&collection_id).copied()
+    }
+
     /// `None` clears it.
     pub fn set_active_environment(&mut self, collection_id: Uuid, environment_id: Option<Uuid>) {
         match environment_id {
@@ -109,6 +114,21 @@ mod tests {
             .unwrap();
         environment.variables = vec![variable("host", "staging")];
         (collection, environment_id)
+    }
+
+    #[test]
+    fn active_environment_id_keeps_stale_ids() {
+        let (collection, staging) = collection();
+        let mut selection = EnvironmentSelection::default();
+        assert_eq!(selection.active_environment_id(collection.id), None);
+        let gone = Uuid::new_v4();
+        selection.set_active_environment(collection.id, Some(gone));
+        assert_eq!(selection.active_environment_id(collection.id), Some(gone));
+        selection.set_active_environment(collection.id, Some(staging));
+        assert_eq!(
+            selection.active_environment_id(collection.id),
+            Some(staging)
+        );
     }
 
     #[test]

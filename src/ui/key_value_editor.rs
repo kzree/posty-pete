@@ -94,6 +94,12 @@ impl KeyValueEditor {
         self.add_row(window, cx);
     }
 
+    pub fn focus_first_key(&self, window: &mut Window, cx: &mut App) {
+        if let Some(row) = self.rows.first() {
+            row.key.update(cx, |input, cx| input.focus(window, cx));
+        }
+    }
+
     fn add_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.push_row(true, String::new(), String::new(), window, cx);
     }

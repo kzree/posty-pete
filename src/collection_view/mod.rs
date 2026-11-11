@@ -1,3 +1,6 @@
+mod auto_save;
+mod environments;
+
 use std::{sync::Arc, time::Duration};
 
 use gpui::{
@@ -17,6 +20,8 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
+use self::auto_save::AutoSavedVariables;
+pub use self::auto_save::VariableSet;
 use crate::{
     domain::{collection::Collection, request::KeyValue},
     ui::key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
@@ -25,8 +30,31 @@ use crate::{
 const VARIABLES_SAVE_DELAY: Duration = Duration::from_millis(500);
 
 pub enum CollectionViewEvent {
-    Rename { id: Uuid, name: String },
-    VariablesChanged { id: Uuid, variables: Vec<KeyValue> },
+    Rename {
+        id: Uuid,
+        name: String,
+    },
+    VariablesChanged {
+        set: VariableSet,
+        variables: Vec<KeyValue>,
+    },
+    AddEnvironment {
+        collection_id: Uuid,
+    },
+    RenameEnvironment {
+        collection_id: Uuid,
+        environment_id: Uuid,
+        name: String,
+    },
+    DeleteEnvironment {
+        collection_id: Uuid,
+        environment_id: Uuid,
+    },
+    /// `environment_id: None` = no environment.
+    UseEnvironment {
+        collection_id: Uuid,
+        environment_id: Option<Uuid>,
+    },
     Back,
 }
 
@@ -34,15 +62,17 @@ pub enum CollectionViewEvent {
 enum CollectionTab {
     Settings,
     Variables,
+    Environments,
 }
 
 impl CollectionTab {
-    const ALL: [CollectionTab; 2] = [Self::Settings, Self::Variables];
+    const ALL: [CollectionTab; 3] = [Self::Settings, Self::Variables, Self::Environments];
 
     fn label(self) -> &'static str {
         match self {
             Self::Settings => "Settings",
             Self::Variables => "Variables",
+            Self::Environments => "Environments",
         }
     }
 
@@ -57,11 +87,12 @@ pub struct CollectionView {
     collection: Option<Arc<Collection>>,
     active_tab: CollectionTab,
     name: Entity<InputState>,
-    variables: Entity<KeyValueEditor>,
-    /// The stored variables the editor was loaded with or last emitted.
-    synced_variables: Vec<KeyValue>,
-    /// Set from a variables edit until it's emitted.
-    variables_save: Option<Task<()>>,
+    variables: AutoSavedVariables,
+    /// The collection's active environment, as last passed to `show`.
+    active_environment: Option<Uuid>,
+    /// The environment shown in the Environments tab.
+    selected_environment: Option<Uuid>,
+    environment_variables: AutoSavedVariables,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -75,21 +106,31 @@ impl CollectionView {
             InputEvent::Change => cx.notify(),
             _ => {}
         });
-        let variables = cx.new(|cx| {
-            KeyValueEditor::with_column_labels("variable", "Variable", "Value", window, cx)
-        });
+        let variables = variables_editor(window, cx);
         let variables_sub = cx.subscribe(&variables, |this, _, event, cx| match event {
-            KeyValueEditorEvent::Changed => this.schedule_variables_save(cx),
+            KeyValueEditorEvent::Changed => {
+                let save = this.save_after_delay(cx);
+                this.variables.schedule(save);
+            }
         });
+        let environment_variables = variables_editor(window, cx);
+        let environment_sub =
+            cx.subscribe(&environment_variables, |this, _, event, cx| match event {
+                KeyValueEditorEvent::Changed => {
+                    let save = this.save_after_delay(cx);
+                    this.environment_variables.schedule(save);
+                }
+            });
         Self {
             id: None,
             collection: None,
             active_tab: CollectionTab::Settings,
             name,
-            variables,
-            synced_variables: Vec::new(),
-            variables_save: None,
-            _subscriptions: vec![name_sub, variables_sub],
+            variables: AutoSavedVariables::new(variables),
+            active_environment: None,
+            selected_environment: None,
+            environment_variables: AutoSavedVariables::new(environment_variables),
+            _subscriptions: vec![name_sub, variables_sub, environment_sub],
         }
     }
 
@@ -97,13 +138,15 @@ impl CollectionView {
         self.id
     }
 
-    /// Shows `collection` (`None` if `id` doesn't exist). For the collection
-    /// already shown, an unsaved edit of the name and variables being edited
-    /// are kept. Switching collection emits a pending variables edit first.
+    /// Shows `collection` (`None` if `id` doesn't exist) with
+    /// `active_environment` marked. For the collection already shown, an
+    /// unsaved edit of the name and variables being edited are kept.
+    /// Switching collection emits pending variables edits first.
     pub fn show(
         &mut self,
         id: Uuid,
         collection: Option<Arc<Collection>>,
+        active_environment: Option<Uuid>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -118,9 +161,9 @@ impl CollectionView {
             None => true,
             Some(shown) => new_name.as_ref() != Some(shown) && self.name_value(cx) == *shown,
         };
-        let same_collection = self.id == Some(id);
-        if !same_collection {
+        if self.id != Some(id) {
             self.active_tab = CollectionTab::Settings;
+            self.selected_environment = None;
             self.emit_pending_variables(cx);
         }
         if replace_input {
@@ -131,19 +174,13 @@ impl CollectionView {
         let stored = collection
             .as_ref()
             .map_or(&[][..], |c| c.variables.as_slice());
-        if reload_variables(
-            same_collection,
-            self.variables_save.is_some(),
-            stored,
-            &self.synced_variables,
-        ) {
-            self.variables
-                .update(cx, |editor, cx| editor.set_values(stored, window, cx));
-            self.synced_variables = stored.to_vec();
-        }
+        self.variables
+            .load(Some(VariableSet::Collection(id)), stored, window, cx);
 
         self.id = Some(id);
         self.collection = collection;
+        self.active_environment = active_environment;
+        self.sync_environment_selection(window, cx);
         cx.notify();
     }
 
@@ -156,31 +193,33 @@ impl CollectionView {
         cx.notify();
     }
 
-    /// Takes the variables edit waiting for its save delay, with the id of
-    /// the collection it belongs to. `None` if nothing changed.
-    pub fn take_pending_variables(&mut self, cx: &App) -> Option<(Uuid, Vec<KeyValue>)> {
-        drop(self.variables_save.take()?);
-        let id = self.id?;
-        let variables = self.variables.read(cx).values(cx);
-        if variables == self.synced_variables {
-            return None;
-        }
-        self.synced_variables = variables.clone();
-        Some((id, variables))
+    /// Takes the variables edits waiting for their save delay.
+    pub fn take_pending_variables(&mut self, cx: &App) -> Vec<(VariableSet, Vec<KeyValue>)> {
+        [&mut self.variables, &mut self.environment_variables]
+            .into_iter()
+            .filter_map(|variables| variables.take_pending(cx))
+            .collect()
     }
 
-    fn schedule_variables_save(&mut self, cx: &mut Context<Self>) {
-        self.variables_save = Some(cx.spawn(async move |this, cx| {
+    /// The timer of a variables edit. Saves every pending edit when it fires.
+    fn save_after_delay(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
             cx.background_executor().timer(VARIABLES_SAVE_DELAY).await;
             this.update(cx, |this, cx| this.emit_pending_variables(cx))
                 .ok();
-        }));
+        })
     }
 
     fn emit_pending_variables(&mut self, cx: &mut Context<Self>) {
-        if let Some((id, variables)) = self.take_pending_variables(cx) {
-            cx.emit(CollectionViewEvent::VariablesChanged { id, variables });
+        for (set, variables) in self.take_pending_variables(cx) {
+            cx.emit(CollectionViewEvent::VariablesChanged { set, variables });
         }
+    }
+
+    fn select_tab(&mut self, tab: CollectionTab, cx: &mut Context<Self>) {
+        self.emit_pending_variables(cx);
+        self.active_tab = tab;
+        cx.notify();
     }
 
     fn render_variables(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -188,17 +227,18 @@ impl CollectionView {
             .size_full()
             .gap_2()
             .child(
-                div()
+                v_flex()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child("Use variables as {{name}} in this collection's requests. Changes save automatically."),
+                    .child("Use variables as {{name}} in this collection's requests. Changes save automatically.")
+                    .child("The active environment's values override these."),
             )
             .child(
                 div()
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scrollbar()
-                    .child(self.variables.clone()),
+                    .child(self.variables.editor().clone()),
             )
     }
 
@@ -284,16 +324,16 @@ impl Render for CollectionView {
         let tabs = TabBar::new("collection-tabs")
             .underline()
             .selected_index(self.active_tab.index())
-            .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                this.active_tab = CollectionTab::ALL[*ix];
-                cx.notify();
-            }))
+            .on_click(
+                cx.listener(|this, ix: &usize, _, cx| this.select_tab(CollectionTab::ALL[*ix], cx)),
+            )
             .children(CollectionTab::ALL.map(CollectionTab::label));
 
         let content = div().flex_1().min_h_0().p_4();
         let content = match self.active_tab {
             CollectionTab::Settings => content.child(self.render_settings(cx)),
             CollectionTab::Variables => content.child(self.render_variables(cx)),
+            CollectionTab::Environments => content.child(self.render_environments(cx)),
         };
 
         v_flex()
@@ -320,54 +360,9 @@ impl Render for CollectionView {
     }
 }
 
-/// Whether `show` should load the stored variables into the editor. While the
-/// same collection is being edited, the editor wins; its next save catches up.
-fn reload_variables(
-    same_collection: bool,
-    editing: bool,
-    stored: &[KeyValue],
-    synced: &[KeyValue],
-) -> bool {
-    !same_collection || (!editing && stored != synced)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn variable(key: &str, value: &str) -> KeyValue {
-        KeyValue {
-            enabled: true,
-            key: key.into(),
-            value: value.into(),
-        }
-    }
-
-    #[test]
-    fn reloads_for_another_collection() {
-        let vars = [variable("host", "a")];
-        assert!(reload_variables(false, false, &vars, &vars));
-        assert!(reload_variables(false, true, &vars, &vars));
-    }
-
-    #[test]
-    fn keeps_the_editor_when_the_stored_variables_are_what_it_saved() {
-        let vars = [variable("host", "a")];
-        assert!(!reload_variables(true, false, &vars, &vars));
-        assert!(!reload_variables(true, true, &vars, &vars));
-    }
-
-    #[test]
-    fn keeps_the_editor_while_editing_even_if_the_stored_variables_differ() {
-        let stored = [variable("host", "a")];
-        let synced = [variable("host", "b")];
-        assert!(!reload_variables(true, true, &stored, &synced));
-    }
-
-    #[test]
-    fn reloads_when_the_stored_variables_changed_elsewhere() {
-        let stored = [variable("host", "a")];
-        let synced = [variable("host", "b")];
-        assert!(reload_variables(true, false, &stored, &synced));
-    }
+fn variables_editor(
+    window: &mut Window,
+    cx: &mut Context<CollectionView>,
+) -> Entity<KeyValueEditor> {
+    cx.new(|cx| KeyValueEditor::with_column_labels("variable", "Variable", "Value", window, cx))
 }

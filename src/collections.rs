@@ -210,14 +210,12 @@ impl Collections {
         }
     }
 
-    #[allow(dead_code)] // Until the Environments tab (task 52).
     pub fn add_environment(&mut self, collection_id: Uuid, cx: &mut Context<Self>) -> Option<Uuid> {
         let id = collection::add_environment(&mut self.collections, collection_id)?;
         self.changed(collection_id, cx);
         Some(id)
     }
 
-    #[allow(dead_code)] // Until the Environments tab (task 52).
     pub fn rename_environment(
         &mut self,
         collection_id: Uuid,
@@ -231,7 +229,6 @@ impl Collections {
         }
     }
 
-    #[allow(dead_code)] // Until the Environments tab (task 52).
     pub fn delete_environment(
         &mut self,
         collection_id: Uuid,
@@ -244,7 +241,6 @@ impl Collections {
     }
 
     /// Saves only if `variables` differ from the stored ones.
-    #[allow(dead_code)] // Until the Environments tab (task 52).
     pub fn set_environment_variables(
         &mut self,
         collection_id: Uuid,
