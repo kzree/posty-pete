@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Window, div, relative,
+    SharedString, Styled, Subscription, Window, div, relative,
 };
 use gpui_component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable,
@@ -14,6 +14,7 @@ use gpui_component::{
 
 use crate::{
     domain::{body_format::BodyFormat, response::Response, send_error::SendError},
+    settings::AppSettings,
     ui::{clipboard::copy_with_notification, status_tag::status_tag},
 };
 use gpui_kit_assets::IconName as LucideIcon;
@@ -58,18 +59,36 @@ pub struct ResponseView {
     cancelled: bool,
     active_tab: ResponseTab,
     body: Entity<EditorState>,
+    wrap: bool,
+    _settings: Subscription,
 }
 
 impl EventEmitter<ResponseViewEvent> for ResponseView {}
 
 impl ResponseView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let body = cx.new(|cx| EditorState::new(window, cx).language("json"));
+        let wrap = AppSettings::get(cx).appearance.wrap_responses;
+        let body = cx.new(|cx| {
+            EditorState::new(window, cx)
+                .language("json")
+                .soft_wrap(wrap)
+        });
         Self {
             response: None,
             cancelled: false,
             active_tab: ResponseTab::Body,
             body,
+            wrap,
+            _settings: cx.observe_global_in::<AppSettings>(window, Self::settings_changed),
+        }
+    }
+
+    fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let wrap = AppSettings::get(cx).appearance.wrap_responses;
+        if wrap != self.wrap {
+            self.wrap = wrap;
+            self.body
+                .update(cx, |state, cx| state.set_soft_wrap(wrap, window, cx));
         }
     }
 

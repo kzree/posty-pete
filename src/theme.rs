@@ -1,8 +1,15 @@
-use gpui::{App, Global, Hsla, Rgba, Subscription, Window, WindowAppearance, rgb};
-use gpui_component::{ActiveTheme as _, Theme, ThemeColor, ThemeMode};
+use std::sync::OnceLock;
+
+use gpui::{
+    App, Global, Hsla, Pixels, Rgba, SharedString, Subscription, Window, WindowAppearance, px, rgb,
+};
+use gpui_component::{ActiveTheme as _, Theme, ThemeColor, ThemeMode, TypographyTokens};
 
 use crate::{
-    domain::{accent::Accent, settings::ThemePreference},
+    domain::{
+        accent::Accent,
+        settings::{AppearanceSettings, ThemePreference},
+    },
     settings::AppSettings,
 };
 
@@ -10,7 +17,7 @@ use crate::{
 const SHADE_STEP: f32 = 0.06;
 const NEAR_BLACK: u32 = 0x0a0a0a;
 
-/// Applies the saved theme and accent now and again whenever the settings
+/// Applies the saved theme, accent and fonts now and again whenever the settings
 /// change. Call it after [`AppSettings::init`] and before opening a window.
 pub fn init(cx: &mut App) {
     apply_settings(cx);
@@ -32,6 +39,20 @@ pub fn neutral_primary(cx: &App) -> Hsla {
     cx.global::<AppliedTheme>().neutral_primary
 }
 
+/// The platform's default monospace font, used when none is chosen.
+pub fn default_mono_font_family() -> SharedString {
+    TypographyTokens::default().mono
+}
+
+/// Whether the system has a font family named `family`.
+pub fn is_font_installed(family: &str, cx: &App) -> bool {
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    NAMES
+        .get_or_init(|| cx.text_system().all_font_names())
+        .iter()
+        .any(|name| name == family)
+}
+
 /// What [`apply`] last put on screen.
 struct AppliedTheme {
     mode: ThemeMode,
@@ -46,10 +67,11 @@ fn apply_settings(cx: &mut App) {
     let (preference, accent) = (appearance.theme, appearance.accent);
     cx.set_window_appearance(forced_appearance(preference));
     apply(theme_mode(preference, cx.window_appearance()), accent, cx);
+    apply_fonts(false, cx);
 }
 
-/// Reloads the mode's theme, which also puts back its own colours, then
-/// paints the accent over it.
+/// Reloads the mode's theme, which also puts back its own colours and fonts,
+/// then paints the accent and the chosen fonts over it.
 fn apply(mode: ThemeMode, accent: Accent, cx: &mut App) {
     if cx
         .try_global::<AppliedTheme>()
@@ -67,6 +89,44 @@ fn apply(mode: ThemeMode, accent: Accent, cx: &mut App) {
         accent,
         neutral_primary,
     });
+    apply_fonts(true, cx);
+}
+
+/// The fonts [`apply_fonts`] last put on screen.
+#[derive(Clone, PartialEq)]
+struct AppliedFonts {
+    size: Pixels,
+    mono_size: Pixels,
+    mono_family: SharedString,
+}
+
+impl Global for AppliedFonts {}
+
+/// Puts the chosen fonts on the theme, unless they are already there and
+/// `force` is false. A font that isn't installed falls back to the default.
+fn apply_fonts(force: bool, cx: &mut App) {
+    let fonts = fonts(&AppSettings::get(cx).appearance, cx);
+    if !force && cx.try_global::<AppliedFonts>() == Some(&fonts) {
+        return;
+    }
+    Theme::update(cx, |theme| {
+        theme.font_size = fonts.size;
+        theme.mono_font_size = fonts.mono_size;
+        theme.mono_font_family = fonts.mono_family.clone();
+    });
+    cx.set_global(fonts);
+}
+
+fn fonts(appearance: &AppearanceSettings, cx: &App) -> AppliedFonts {
+    let mono_family = appearance
+        .editor_font_family()
+        .filter(|family| is_font_installed(family, cx))
+        .map_or_else(default_mono_font_family, |family| family.to_owned().into());
+    AppliedFonts {
+        size: px(appearance.ui_font_size() as f32),
+        mono_size: px(appearance.editor_font_size() as f32),
+        mono_family,
+    }
 }
 
 fn paint_accent(colors: &mut ThemeColor, accent: Rgba, mode: ThemeMode) {

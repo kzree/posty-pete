@@ -31,11 +31,54 @@ impl Default for GeneralSettings {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppearanceSettings {
     pub theme: ThemePreference,
     pub accent: Accent,
+    pub ui_font_size: u32,
+    /// Empty means the platform's default monospace font.
+    pub editor_font_family: String,
+    pub editor_font_size: u32,
+    pub wrap_responses: bool,
+}
+
+impl AppearanceSettings {
+    pub const DEFAULT_UI_FONT_SIZE: u32 = 16;
+    pub const UI_FONT_SIZE: RangeInclusive<u32> = 10..=24;
+    pub const DEFAULT_EDITOR_FONT_SIZE: u32 = 13;
+    pub const EDITOR_FONT_SIZE: RangeInclusive<u32> = 8..=32;
+
+    /// The interface font size, in range even if the file says otherwise.
+    pub fn ui_font_size(&self) -> u32 {
+        clamp(self.ui_font_size, &Self::UI_FONT_SIZE)
+    }
+
+    pub fn editor_font_size(&self) -> u32 {
+        clamp(self.editor_font_size, &Self::EDITOR_FONT_SIZE)
+    }
+
+    /// The chosen editor font, or `None` for the default.
+    pub fn editor_font_family(&self) -> Option<&str> {
+        Some(self.editor_font_family.trim()).filter(|family| !family.is_empty())
+    }
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            theme: ThemePreference::default(),
+            accent: Accent::default(),
+            ui_font_size: Self::DEFAULT_UI_FONT_SIZE,
+            editor_font_family: String::new(),
+            editor_font_size: Self::DEFAULT_EDITOR_FONT_SIZE,
+            wrap_responses: true,
+        }
+    }
+}
+
+fn clamp(value: u32, range: &RangeInclusive<u32>) -> u32 {
+    value.clamp(*range.start(), *range.end())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,5 +246,60 @@ mod tests {
         let defaults = RequestSettings::default();
         assert!(RequestSettings::TIMEOUT_SECS.contains(&defaults.timeout_secs));
         assert!(RequestSettings::MAX_REDIRECTS.contains(&defaults.max_redirects));
+    }
+
+    #[test]
+    fn missing_font_fields_load_as_defaults() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"appearance":{"theme":"light","accent":"red"}}"#).unwrap();
+        let appearance = settings.appearance;
+        assert_eq!(appearance.ui_font_size, 16);
+        assert_eq!(appearance.editor_font_family, "");
+        assert_eq!(appearance.editor_font_size, 13);
+        assert!(appearance.wrap_responses);
+        assert_eq!(appearance.editor_font_family(), None);
+    }
+
+    #[test]
+    fn fonts_round_trip() {
+        let settings = Settings {
+            appearance: AppearanceSettings {
+                ui_font_size: 14,
+                editor_font_family: "Monaco".into(),
+                editor_font_size: 15,
+                wrap_responses: false,
+                ..AppearanceSettings::default()
+            },
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains(r#""editor_font_family":"Monaco""#), "{json}");
+        assert!(json.contains(r#""wrap_responses":false"#), "{json}");
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
+    }
+
+    #[test]
+    fn font_sizes_from_the_file_are_clamped() {
+        let appearance = AppearanceSettings {
+            ui_font_size: 2,
+            editor_font_size: 400,
+            ..AppearanceSettings::default()
+        };
+        assert_eq!(appearance.ui_font_size(), 10);
+        assert_eq!(appearance.editor_font_size(), 32);
+        let defaults = AppearanceSettings::default();
+        assert_eq!(defaults.ui_font_size(), defaults.ui_font_size);
+        assert_eq!(defaults.editor_font_size(), defaults.editor_font_size);
+    }
+
+    #[test]
+    fn blank_editor_font_means_the_default() {
+        let mut appearance = AppearanceSettings {
+            editor_font_family: "   ".into(),
+            ..AppearanceSettings::default()
+        };
+        assert_eq!(appearance.editor_font_family(), None);
+        appearance.editor_font_family = " Fira Code ".into();
+        assert_eq!(appearance.editor_font_family(), Some("Fira Code"));
     }
 }
