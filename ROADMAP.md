@@ -41,7 +41,9 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## App
 
 - [ ] **In-window menu bar on Windows/Linux.** The native menu bar (`src/menus.rs`) only shows on macOS.
-- [ ] **Settings page.** Settings moved out of the sidebar; the status bar button and cmd+, only log for now (`OpenSettings` in `app.rs`). Needs a router to show it as its own page (theme, request timeout, history retention, ...).
+- [ ] **Apply and save settings.** The Settings page (General, Appearance, Requests, History & data, AI, Shortcuts, About) is UI only: controls keep local state and change nothing. Persist them (e.g. `settings.json`) and apply them; wiring notes are in task 61.
+- [ ] **Customizable shortcuts.** Let users rebind the actions listed on the Shortcuts settings page.
+- [ ] **About links.** Make the licence/project URLs on the About page open in the browser, and add repository/licence links once `Cargo.toml` declares them.
 - [ ] **History: store responses.** History saves only request + status/timing for now; optionally keep (capped) response bodies.
 - [ ] **History retention setting.** 14 days is hard-coded (`RETENTION_DAYS` in `domain/history.rs`); make it configurable on the Settings page.
 - [ ] **History: prune while running.** Pruning only happens at startup (`History::new`), so an app left open for days keeps entries older than 14 days in the panel and the database, and "Today"/"Yesterday" labels don't roll over at midnight. Prune on a daily timer or on each record.
