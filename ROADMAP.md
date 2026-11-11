@@ -24,7 +24,10 @@ Functionality that's planned but not built yet. Add items here when they come up
 
 ## Collections
 
-- [ ] **Environments.** Named sets of variables to switch between, layered in front of collection variables (environment wins; `Variables::layered` in `domain/variables.rs` already takes sources in priority order). Needs a picker, an editor, and storage.
+- [ ] **Global environments.** Environments shared by all collections, layered between a collection's environment and its variables (or replacing per-collection ones if that reads better).
+- [ ] **Environment colours.** Mark an environment (e.g. red for Prod) in the picker and title bar so sending to production is hard to miss.
+- [ ] **Duplicate environments.** Copy an environment with its variables, e.g. Staging → Prod.
+- [ ] **Truncate long names in the environment menu.** `PopupMenuItem` wraps long labels; needs a custom element item or an upstream change.
 - [ ] **Variable autocomplete and highlighting.** Suggest names after typing `{{` and highlight references (resolved vs unresolved) in the URL, key/value and body inputs. `domain::variables::references` returns byte ranges for this.
 - [ ] **Folder-level variables.** Variables on folders, overriding the collection's for requests inside them.
 - [ ] **Manage requests in collections.** Duplicate and move requests (and move folders) in the library tree, including drag and drop.
