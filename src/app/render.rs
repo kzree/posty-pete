@@ -8,10 +8,11 @@ use gpui_component::{ActiveTheme, h_resizable, input::Escape, resizable_panel};
 use super::{LeftPanelState, Workspace, navigation::Direction, routes::AppRoute};
 use crate::{
     actions::{
-        FocusUrl, GoBack, GoForward, NewRequest, OpenHistory, OpenLibrary, OpenSettings,
-        OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest, SaveRequest, SaveRequestAs,
-        SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
+        FocusUrl, GoBack, GoForward, NewRequest, OpenCommandPalette, OpenHistory, OpenLibrary,
+        OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest, SaveRequest,
+        SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
+    domain::palette::Scope,
     sidebar::SidebarTab,
     window_title_bar::WindowTitleBar,
 };
@@ -104,8 +105,11 @@ impl Workspace {
         .on_action(cx.listener(|this, _: &OpenSharedEnvironments, window, cx| {
             this.open_shared_environments(None, window, cx);
         }))
+        .on_action(cx.listener(|this, _: &OpenCommandPalette, window, cx| {
+            this.open_command_palette(Scope::All, window, cx);
+        }))
         .on_action(cx.listener(|this, _: &QuickOpen, window, cx| {
-            this.open_quick_open(window, cx);
+            this.open_command_palette(Scope::Items, window, cx);
         }))
         .on_action(cx.listener(|this, _: &Escape, window, cx| {
             window.focus(&this.focus_handle, cx);

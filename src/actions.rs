@@ -18,6 +18,7 @@ actions!(
         OpenSharedEnvironments,
         FocusUrl,
         QuickOpen,
+        OpenCommandPalette,
         DeleteHistoryEntry,
         SendHistoryEntryAgain,
         Quit,
@@ -50,6 +51,7 @@ pub(crate) mod keys {
     pub const SETTINGS: &str = "cmd-,";
     pub const FOCUS_URL: &str = "cmd-l";
     pub const QUICK_OPEN: &str = "cmd-p";
+    pub const OPEN_COMMAND_PALETTE: &str = "cmd-k";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["backspace", "delete"];
     pub const QUIT: &str = "cmd-q";
     pub const HIDE: &str = "cmd-h";
@@ -72,6 +74,7 @@ pub(crate) mod keys {
     pub const SETTINGS: &str = "ctrl-,";
     pub const FOCUS_URL: &str = "ctrl-l";
     pub const QUICK_OPEN: &str = "ctrl-p";
+    pub const OPEN_COMMAND_PALETTE: &str = "ctrl-k";
     pub const DELETE_HISTORY_ENTRY: &[&str] = &["delete"];
     pub const QUIT: &str = "ctrl-q";
 }
@@ -97,6 +100,16 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new(keys::FOCUS_URL, FocusUrl, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::QUICK_OPEN, QuickOpen, Some(WORKSPACE_CONTEXT)),
         KeyBinding::new(keys::QUICK_OPEN, QuickOpen, Some(INPUT_CONTEXT)),
+        KeyBinding::new(
+            keys::OPEN_COMMAND_PALETTE,
+            OpenCommandPalette,
+            Some(WORKSPACE_CONTEXT),
+        ),
+        KeyBinding::new(
+            keys::OPEN_COMMAND_PALETTE,
+            OpenCommandPalette,
+            Some(INPUT_CONTEXT),
+        ),
         KeyBinding::new(keys::QUIT, Quit, None),
     ]);
     #[cfg(target_os = "macos")]

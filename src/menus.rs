@@ -2,8 +2,8 @@ use gpui::{App, Menu, MenuItem, OsAction};
 use gpui_component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 
 use crate::actions::{
-    FocusUrl, GoBack, GoForward, Hide, HideOthers, NewRequest, OpenHistory, OpenLibrary,
-    OpenSettings, OpenSharedEnvironments, QuickOpen, Quit, RevertRequest, SaveRequest,
+    FocusUrl, GoBack, GoForward, Hide, HideOthers, NewRequest, OpenCommandPalette, OpenHistory,
+    OpenLibrary, OpenSettings, OpenSharedEnvironments, QuickOpen, Quit, RevertRequest, SaveRequest,
     SaveRequestAs, SendRequest, ShowAll, ToggleSidebar,
 };
 
@@ -42,6 +42,7 @@ pub fn init(app_name: &str, cx: &mut App) {
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),
             MenuItem::separator(),
+            MenuItem::action("Command Palette…", OpenCommandPalette),
             MenuItem::action("Quick Open…", QuickOpen),
             MenuItem::action("Focus URL", FocusUrl),
             MenuItem::separator(),

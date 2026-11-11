@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
     Anchor, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, Subscription, Window, div,
+    ParentElement, Render, ScrollStrategy, Styled, Subscription, Window, div,
 };
 use gpui_component::{
     Icon, IconName, IndexPath, Sizable,
@@ -72,6 +72,8 @@ pub struct LibraryPanel {
     dirty_request: Option<Uuid>,
     /// How many environments are based on each shared environment.
     environment_links: HashMap<Uuid, usize>,
+    /// The row `select_row` scrolls to and focuses once the panel has rendered.
+    pending_reveal: Option<Uuid>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -112,6 +114,7 @@ impl LibraryPanel {
             list,
             dirty_request: None,
             environment_links: HashMap::new(),
+            pending_reveal: None,
             _subscriptions: vec![list_sub],
         }
     }
@@ -160,6 +163,38 @@ impl LibraryPanel {
             for id in ids {
                 delegate.expand(id);
             }
+        });
+    }
+
+    /// Expands `expand`, then moves the list's keyboard selection to `id`'s
+    /// row; scrolling to it and focusing the list wait until the panel has
+    /// rendered, since it may have been hidden. The main pane's row is
+    /// selected again on the next refresh.
+    pub fn select_row(
+        &mut self,
+        id: Uuid,
+        expand: impl IntoIterator<Item = Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.reveal(expand, cx);
+        self.list.update(cx, |list, cx| {
+            let Some(row) = list.delegate().row_of(id) else {
+                return;
+            };
+            let ix = IndexPath::new(row);
+            list.set_selected_index(Some(ix), window, cx);
+        });
+        self.pending_reveal = Some(id);
+        cx.notify();
+    }
+
+    fn finish_reveal(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        self.list.update(cx, |list, cx| {
+            if let Some(row) = list.delegate().row_of(id) {
+                list.scroll_to_item(IndexPath::new(row), ScrollStrategy::Center, window, cx);
+            }
+            list.focus(window, cx);
         });
     }
 
@@ -235,7 +270,12 @@ impl LibraryPanel {
 }
 
 impl Render for LibraryPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(id) = self.pending_reveal.take() {
+            cx.on_next_frame(window, move |this, window, cx| {
+                this.finish_reveal(id, window, cx)
+            });
+        }
         let panel = cx.weak_entity();
         let list = self.list.downgrade();
         v_flex().size_full().child(self.render_header(cx)).child(

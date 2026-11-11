@@ -9,7 +9,7 @@ pub mod history;
 pub mod http;
 pub mod mcp;
 pub mod navigation;
-pub mod quick_open;
+pub mod palette;
 pub mod request;
 pub mod resolved;
 pub mod response;

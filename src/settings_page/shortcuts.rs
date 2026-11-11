@@ -41,6 +41,7 @@ fn shortcut_groups() -> Vec<ShortcutGroup> {
             shortcuts: vec![
                 shortcut("Back", keys::GO_BACK.iter().copied()),
                 shortcut("Forward", keys::GO_FORWARD.iter().copied()),
+                shortcut("Command palette", [keys::OPEN_COMMAND_PALETTE]),
                 shortcut("Quick open", [keys::QUICK_OPEN]),
                 shortcut("Focus URL", [keys::FOCUS_URL]),
             ],
@@ -195,6 +196,8 @@ mod tests {
         assert_eq!(shown("Send request"), ["⌘⏎"]);
         assert_eq!(shown("Hide others"), ["⌥⌘H"]);
         assert_eq!(shown("Settings"), ["⌘,"]);
+        assert_eq!(shown("Command palette"), ["⌘K"]);
+        assert_eq!(shown("Quick open"), ["⌘P"]);
         assert_eq!(shown("History"), ["⌘2", "⌘Y"]);
         assert_eq!(shown("Delete history entry"), ["⌫"]);
     }
@@ -205,6 +208,8 @@ mod tests {
         assert_eq!(shown("Save as"), ["Ctrl+Shift+S"]);
         assert_eq!(shown("Send request"), ["Ctrl+Enter"]);
         assert_eq!(shown("Back"), ["Ctrl+[", "Alt+Left"]);
+        assert_eq!(shown("Command palette"), ["Ctrl+K"]);
+        assert_eq!(shown("Quick open"), ["Ctrl+P"]);
         assert_eq!(shown("Delete history entry"), ["Delete"]);
     }
 }

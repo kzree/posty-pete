@@ -30,9 +30,9 @@ use self::{
 use crate::{
     collection_view::CollectionView,
     collections::Collections,
-    domain::{self, environment_selection::EnvironmentSelection},
+    command_palette::CommandPalette,
+    domain::{self, environment_selection::EnvironmentSelection, palette::Scope},
     history::History,
-    quick_open,
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},
     settings::{AppSettings, SettingsEvent},
@@ -113,7 +113,7 @@ pub struct Workspace {
     discard_confirmed: bool,
     /// Set once the user agreed to quit or close the window, so they aren't asked again.
     closing: bool,
-    quick_open_subscription: Option<Subscription>,
+    command_palette_subscription: Option<Subscription>,
     pending: Option<Task<()>>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
@@ -173,7 +173,7 @@ impl Workspace {
             discard_prompt: None,
             discard_confirmed: false,
             closing: false,
-            quick_open_subscription: None,
+            command_palette_subscription: None,
             pending: None,
             left_panel,
             main_layout: cx.new(|_| ResizableState::default()),
@@ -330,28 +330,54 @@ impl Workspace {
         );
     }
 
-    fn open_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_command_palette(&mut self, scope: Scope, window: &mut Window, cx: &mut Context<Self>) {
         if window.has_active_dialog(cx) {
             return;
         }
-        let entries = domain::quick_open::entries(self.collections.read(cx).all());
-        let quick_open = cx.new(|cx| quick_open::QuickOpen::new(entries, window, cx));
-        self.quick_open_subscription = Some(cx.subscribe_in(
-            &quick_open,
+        let entries = domain::palette::entries(
+            self.collections.read(cx).all(),
+            self.shared_environments.read(cx).all(),
+        );
+        let palette = cx.new(|cx| CommandPalette::new(entries, scope, window, cx));
+        self.command_palette_subscription = Some(cx.subscribe_in(
+            &palette,
             window,
-            |this, _, event, window, cx| this.on_quick_open_event(event, window, cx),
+            |this, _, event, window, cx| this.on_command_palette_event(event, window, cx),
         ));
         // The builder reruns on every rebuild of the dialog layer.
         let initial_focus = Cell::new(true);
         window.open_dialog(cx, move |dialog, window, cx| {
             if initial_focus.replace(false) {
-                quick_open.update(cx, |quick_open, cx| quick_open.focus(window, cx));
+                palette.update(cx, |palette, cx| palette.focus(window, cx));
             }
             dialog
                 .w(px(560.))
                 .p_0()
                 .close_button(false)
-                .child(quick_open.clone())
+                .child(palette.clone())
+        });
+    }
+
+    /// Opens the library with folder `folder_id` expanded to and selected.
+    fn reveal_folder(
+        &mut self,
+        collection_id: Uuid,
+        folder_id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ancestors) = self
+            .collections
+            .read(cx)
+            .get(collection_id)
+            .and_then(|collection| collection.ancestors(folder_id))
+        else {
+            return;
+        };
+        self.open_sidebar_tab(SidebarTab::Library, cx);
+        let expand = std::iter::once(collection_id).chain(ancestors);
+        self.library_panel.update(cx, |panel, cx| {
+            panel.select_row(folder_id, expand, window, cx)
         });
     }
 

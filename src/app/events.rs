@@ -5,9 +5,11 @@ use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
     collection_view::{CollectionViewEvent, VariableSet},
     collections::CollectionsEvent,
-    domain::{collection::NEW_COLLECTION_NAME, history::OpenMode, request::KeyValue},
+    command_palette::CommandPaletteEvent,
+    domain::{
+        collection::NEW_COLLECTION_NAME, history::OpenMode, palette::Target, request::KeyValue,
+    },
     history::HistoryEvent,
-    quick_open::QuickOpenEvent,
     request_editor::RequestEditorEvent,
     sidebar::{history_panel::HistoryPanelEvent, library_panel::LibraryPanelEvent},
     ui::environments_editor::EnvironmentsEditorEvent,
@@ -337,21 +339,34 @@ impl Workspace {
         }
     }
 
-    pub(super) fn on_quick_open_event(
+    pub(super) fn on_command_palette_event(
         &mut self,
-        event: &QuickOpenEvent,
+        event: &CommandPaletteEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         window.close_dialog(cx);
         match *event {
-            QuickOpenEvent::OpenCollection(id) => {
-                self.navigate(AppRoute::Collection(id), window, cx)
-            }
-            QuickOpenEvent::OpenRequest {
+            CommandPaletteEvent::Open(target) => self.open_palette_target(target, window, cx),
+        }
+    }
+
+    fn open_palette_target(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        match target {
+            Target::Request {
                 collection_id,
                 request_id,
             } => self.open_saved_request(collection_id, request_id, window, cx),
+            Target::Collection(id) => self.navigate(AppRoute::Collection(id), window, cx),
+            Target::Folder {
+                collection_id,
+                folder_id,
+            } => self.reveal_folder(collection_id, folder_id, window, cx),
+            Target::SharedEnvironment(id) => self.open_shared_environments(Some(id), window, cx),
+            Target::CollectionEnvironment {
+                collection_id,
+                environment_id,
+            } => self.open_environments(collection_id, Some(environment_id), window, cx),
         }
     }
 }

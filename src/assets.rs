@@ -11,6 +11,7 @@ gpui_kit_assets::icon_assets!(
         FolderPlus,
         House,
         Keyboard,
+        Layers,
         LayersPlus,
         LibraryBig,
         RotateCcwClock,
