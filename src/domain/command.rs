@@ -96,14 +96,6 @@ impl Command {
         }
     }
 
-    /// Whether it runs a key-bound action rather than a Workspace call.
-    pub fn has_action(self) -> bool {
-        !matches!(
-            self,
-            Self::NewCollection | Self::NewEnvironment | Self::NewSharedEnvironment
-        )
-    }
-
     pub fn is_available(self, state: &CommandState) -> bool {
         match self {
             Self::Save => state.editor_shown && (state.draft || state.dirty),
@@ -125,9 +117,22 @@ impl Command {
             | Self::Quit => true,
         }
     }
+
+    /// Whether its shortcut and menu item work in `state`; the Workspace only
+    /// registers the action then. Save, Back and Forward stay registered and
+    /// their handlers check for themselves. Send does too on the editor: an
+    /// unhandled cmd-enter would reach the focused input and add a newline.
+    pub fn action_enabled(self, state: &CommandState) -> bool {
+        match self {
+            Self::Save | Self::Back | Self::Forward => true,
+            Self::SendRequest => state.editor_shown,
+            _ => self.is_available(state),
+        }
+    }
 }
 
-/// What decides which commands can run, read when the palette opens.
+/// What decides which commands can run, read when the palette opens and on
+/// every Workspace render.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CommandState {
     /// The main pane shows the request editor.
@@ -245,6 +250,58 @@ mod tests {
             ..ready
         };
         assert!(!Command::SendRequest.is_available(&sending));
+    }
+
+    fn every_state() -> impl Iterator<Item = CommandState> {
+        (0u8..=u8::MAX).map(|bits| {
+            let bit = |n: u8| bits & (1 << n) != 0;
+            CommandState {
+                editor_shown: bit(0),
+                draft: bit(1),
+                dirty: bit(2),
+                has_url: bit(3),
+                sending: bit(4),
+                can_go_back: bit(5),
+                can_go_forward: bit(6),
+                in_collection: bit(7),
+            }
+        })
+    }
+
+    #[test]
+    fn actions_agree_with_the_palette() {
+        let checked_by_handler = [
+            Command::Save,
+            Command::Back,
+            Command::Forward,
+            Command::SendRequest,
+        ];
+        for state in every_state() {
+            for command in Command::ALL {
+                let offered = command.is_available(&state);
+                let enabled = command.action_enabled(&state);
+                if checked_by_handler.contains(&command) {
+                    assert!(!offered || enabled, "{command:?} in {state:?}");
+                } else {
+                    assert_eq!(offered, enabled, "{command:?} in {state:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn editor_actions_only_work_where_the_editor_is_shown() {
+        let editor_actions = [
+            Command::SaveAs,
+            Command::SendRequest,
+            Command::Revert,
+            Command::FocusUrl,
+        ];
+        for state in every_state().filter(|state| !state.editor_shown) {
+            for command in editor_actions {
+                assert!(!command.action_enabled(&state), "{command:?} in {state:?}");
+            }
+        }
     }
 
     #[test]

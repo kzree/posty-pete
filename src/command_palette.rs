@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use gpui::{
-    Action, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, IntoElement,
-    ParentElement, Render, Styled, Subscription, Task, Window, div, prelude::FluentBuilder as _,
-    px,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, IntoElement, ParentElement,
+    Render, Styled, Subscription, Task, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, IndexPath, Sizable, StyledExt, h_flex,
@@ -26,34 +25,9 @@ pub enum CommandPaletteEvent {
     Run(Command),
 }
 
-/// The action a command dispatches, or `None` for one Workspace runs itself.
-pub fn action(command: Command) -> Option<Box<dyn Action>> {
-    let action: Box<dyn Action> = match command {
-        Command::NewRequest => Box::new(actions::NewRequest),
-        Command::Save => Box::new(actions::SaveRequest),
-        Command::SaveAs => Box::new(actions::SaveRequestAs),
-        Command::SendRequest => Box::new(actions::SendRequest),
-        Command::Revert => Box::new(actions::RevertRequest),
-        Command::Back => Box::new(actions::GoBack),
-        Command::Forward => Box::new(actions::GoForward),
-        Command::FocusUrl => Box::new(actions::FocusUrl),
-        Command::ToggleSidebar => Box::new(actions::ToggleSidebar),
-        Command::Library => Box::new(actions::OpenLibrary),
-        Command::History => Box::new(actions::OpenHistory),
-        Command::Tests => Box::new(actions::OpenTests),
-        Command::SharedEnvironments => Box::new(actions::OpenSharedEnvironments),
-        Command::Settings => Box::new(actions::OpenSettings),
-        Command::Quit => Box::new(actions::Quit),
-        Command::NewCollection | Command::NewEnvironment | Command::NewSharedEnvironment => {
-            return None;
-        }
-    };
-    Some(action)
-}
-
 /// The key binding that runs `command` where `focus` is, read from the keymap.
 fn shortcut(command: Command, focus: &FocusHandle, window: &Window) -> Option<Kbd> {
-    let action = action(command)?;
+    let action = actions::action(command)?;
     Kbd::binding_for_action_in(action.as_ref(), focus, window)
         .or_else(|| Kbd::global_binding_for_action(action.as_ref(), window))
 }
@@ -354,34 +328,5 @@ fn accessibility_label(entry: &Entry) -> String {
         Target::Command(_) => format!("{path}, command"),
         Target::SettingsSection(_) => format!("{path}, settings page"),
         Target::Setting(_) => format!("{path}, setting"),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_action_backed_command_has_an_action() {
-        for command in Command::ALL {
-            assert_eq!(
-                action(command).is_some(),
-                command.has_action(),
-                "{command:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn commands_dispatch_distinct_actions() {
-        let mut names: Vec<&str> = Command::ALL
-            .into_iter()
-            .filter_map(action)
-            .map(|action| action.name())
-            .collect();
-        let count = names.len();
-        names.sort_unstable();
-        names.dedup();
-        assert_eq!(names.len(), count);
     }
 }

@@ -365,7 +365,8 @@ impl Workspace {
             self.collections.read(cx).all(),
             self.shared_environments.read(cx).all(),
         );
-        let state = self.command_state(window, cx);
+        let dirty = self.is_dirty_now(window, cx);
+        let state = self.command_state(dirty, cx);
         entries.extend(domain::palette::command_entries(
             domain::command::available(&state),
         ));

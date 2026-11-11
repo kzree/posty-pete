@@ -3,18 +3,17 @@ use gpui_component::WindowExt;
 
 use super::Workspace;
 use crate::actions::{
-    FocusUrl, GoBack, GoForward, NewRequest, OpenCommandPalette, OpenHistory, OpenLibrary,
-    OpenSettings, OpenSharedEnvironments, QuickOpen, SaveRequest, SendRequest, ToggleSidebar,
+    GoBack, GoForward, NewRequest, OpenCommandPalette, OpenHistory, OpenLibrary, OpenSettings,
+    OpenSharedEnvironments, QuickOpen, SaveRequest, ToggleSidebar,
 };
 
 /// Menu items dispatch to the focused element, so with focus outside the
 /// Workspace (nothing focused, a toast) its handlers wouldn't run and the items
 /// would be disabled. These app-level handlers only run when nothing on the
 /// focus path handled the action; they focus the Workspace and dispatch again.
-/// `SaveRequestAs` and `RevertRequest` aren't forwarded: a global handler would
-/// keep their menu items enabled where they do nothing.
+/// Actions the Workspace registers only where they act (`Command::action_enabled`)
+/// aren't forwarded: a global handler would keep their menu items enabled.
 pub(super) fn init(cx: &mut App) {
-    forward::<SendRequest>(cx);
     forward::<SaveRequest>(cx);
     forward::<NewRequest>(cx);
     forward::<GoBack>(cx);
@@ -24,7 +23,6 @@ pub(super) fn init(cx: &mut App) {
     forward::<OpenHistory>(cx);
     forward::<OpenSettings>(cx);
     forward::<OpenSharedEnvironments>(cx);
-    forward::<FocusUrl>(cx);
     forward::<QuickOpen>(cx);
     forward::<OpenCommandPalette>(cx);
 }

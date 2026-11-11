@@ -12,7 +12,7 @@ use crate::{
         OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest, SaveRequest,
         SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
-    domain::palette::Scope,
+    domain::{command::Command, palette::Scope},
     sidebar::SidebarTab,
     window_title_bar::WindowTitleBar,
 };
@@ -50,19 +50,24 @@ impl Workspace {
         root: Stateful<Div>,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        root.on_action(cx.listener(|this, _: &SendRequest, _, cx| {
-            this.request_editor.update(cx, |editor, cx| editor.send(cx));
-        }))
+        // Some actions are only registered where they act, so their menu items
+        // grey out elsewhere.
+        let state = self.command_state(self.is_dirty(), cx);
+        let enabled = |command: Command| command.action_enabled(&state);
+        root.when(enabled(Command::SendRequest), |this| {
+            this.on_action(cx.listener(|this, _: &SendRequest, _, cx| {
+                this.request_editor.update(cx, |editor, cx| editor.send(cx));
+            }))
+        })
         .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {
             this.save_request(window, cx);
         }))
-        // Save As and Revert are only registered where they act, so their menu items grey out elsewhere.
-        .when(self.current_route() == self.editor_route(), |this| {
+        .when(enabled(Command::SaveAs), |this| {
             this.on_action(cx.listener(|this, _: &SaveRequestAs, window, cx| {
                 this.open_save_as(window, cx);
             }))
         })
-        .when(self.shows_dirty_request(), |this| {
+        .when(enabled(Command::Revert), |this| {
             this.on_action(cx.listener(|this, _: &RevertRequest, window, cx| {
                 this.revert_request(window, cx);
             }))
@@ -70,10 +75,12 @@ impl Workspace {
         .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
             this.new_request(window, cx);
         }))
-        .on_action(cx.listener(|this, _: &FocusUrl, window, cx| {
-            this.request_editor
-                .update(cx, |editor, cx| editor.focus_url(window, cx));
-        }))
+        .when(enabled(Command::FocusUrl), |this| {
+            this.on_action(cx.listener(|this, _: &FocusUrl, window, cx| {
+                this.request_editor
+                    .update(cx, |editor, cx| editor.focus_url(window, cx));
+            }))
+        })
     }
 
     fn register_navigation_actions(

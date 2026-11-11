@@ -1,4 +1,6 @@
-use gpui::{App, KeyBinding, actions};
+use gpui::{Action, App, KeyBinding, actions};
+
+use crate::domain::command::Command;
 
 actions!(
     posty_pete,
@@ -27,6 +29,31 @@ actions!(
         ShowAll
     ]
 );
+
+/// The action a command dispatches, or `None` for one Workspace runs itself.
+pub fn action(command: Command) -> Option<Box<dyn Action>> {
+    let action: Box<dyn Action> = match command {
+        Command::NewRequest => Box::new(NewRequest),
+        Command::Save => Box::new(SaveRequest),
+        Command::SaveAs => Box::new(SaveRequestAs),
+        Command::SendRequest => Box::new(SendRequest),
+        Command::Revert => Box::new(RevertRequest),
+        Command::Back => Box::new(GoBack),
+        Command::Forward => Box::new(GoForward),
+        Command::FocusUrl => Box::new(FocusUrl),
+        Command::ToggleSidebar => Box::new(ToggleSidebar),
+        Command::Library => Box::new(OpenLibrary),
+        Command::History => Box::new(OpenHistory),
+        Command::Tests => Box::new(OpenTests),
+        Command::SharedEnvironments => Box::new(OpenSharedEnvironments),
+        Command::Settings => Box::new(OpenSettings),
+        Command::Quit => Box::new(Quit),
+        Command::NewCollection | Command::NewEnvironment | Command::NewSharedEnvironment => {
+            return None;
+        }
+    };
+    Some(action)
+}
 
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 pub const HISTORY_PANEL_CONTEXT: &str = "HistoryPanel";
@@ -138,4 +165,38 @@ pub fn bind_keys(cx: &mut App) {
         [HISTORY_PANEL_CONTEXT, HISTORY_LIST_CONTEXT]
             .map(|context| KeyBinding::new(keys::SEND, SendHistoryEntryAgain, Some(context))),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_workspace_calls_lack_an_action() {
+        let without: Vec<_> = Command::ALL
+            .into_iter()
+            .filter(|command| action(*command).is_none())
+            .collect();
+        assert_eq!(
+            without,
+            [
+                Command::NewCollection,
+                Command::NewEnvironment,
+                Command::NewSharedEnvironment
+            ]
+        );
+    }
+
+    #[test]
+    fn commands_dispatch_distinct_actions() {
+        let mut names: Vec<&str> = Command::ALL
+            .into_iter()
+            .filter_map(action)
+            .map(|action| action.name())
+            .collect();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), count);
+    }
 }

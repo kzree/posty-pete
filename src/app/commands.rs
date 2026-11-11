@@ -1,23 +1,20 @@
-use gpui::{Context, FocusHandle, Window};
+use gpui::{App, Context, FocusHandle, Window};
 use uuid::Uuid;
 
 use super::{EditorContent, Workspace, navigation::Direction, routes::AppRoute};
 use crate::{
-    command_palette,
+    actions,
     domain::command::{Command, CommandState},
 };
 
 impl Workspace {
-    pub(super) fn command_state(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> CommandState {
-        let editor_shown = self.current_route() == self.editor_route();
+    /// What decides which commands run, for the palette and for registering
+    /// actions. `dirty` comes from `is_dirty` or `is_dirty_now`.
+    pub(super) fn command_state(&self, dirty: bool, cx: &App) -> CommandState {
         CommandState {
-            editor_shown,
+            editor_shown: self.current_route() == self.editor_route(),
             draft: self.editor_content == EditorContent::Draft,
-            dirty: self.is_dirty_now(window, cx),
+            dirty,
             has_url: self.request_editor.read(cx).has_url(cx),
             sending: self.pending.is_some(),
             can_go_back: self.can_go(Direction::Back, cx),
@@ -53,8 +50,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if command.has_action() {
-            self.dispatch_command(command, window, cx);
+        if let Some(action) = actions::action(command) {
+            let focus = self.command_focus(window, cx);
+            window.focus(&focus, cx);
+            window.dispatch_action(action, cx);
             return;
         }
         match command {
@@ -67,14 +66,5 @@ impl Workspace {
             Command::NewSharedEnvironment => self.add_shared_environment(window, cx),
             _ => {}
         }
-    }
-
-    fn dispatch_command(&self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(action) = command_palette::action(command) else {
-            return;
-        };
-        let focus = self.command_focus(window, cx);
-        window.focus(&focus, cx);
-        window.dispatch_action(action, cx);
     }
 }
