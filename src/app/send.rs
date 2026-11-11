@@ -188,13 +188,14 @@ impl Workspace {
         }
     }
 
-    /// Aborts the request in flight. Nothing is recorded in history or kept
-    /// as the response.
+    /// Aborts the request in flight. Nothing is recorded in history; the
+    /// editor's content remembers the cancel instead of its last response.
     pub(super) fn cancel_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending.take().is_none() {
             return;
         }
         self.set_sending(false, cx);
+        self.responses.insert_cancelled(self.editor_content);
         self.response_view
             .update(cx, |view, cx| view.show_cancelled(window, cx));
     }

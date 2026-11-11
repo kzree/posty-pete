@@ -156,7 +156,8 @@ impl RequestsPage {
                     cx,
                 )
                 .description(
-                    "System uses the HTTP_PROXY, HTTPS_PROXY and NO_PROXY environment variables.",
+                    "System uses the HTTP_PROXY, HTTPS_PROXY and NO_PROXY environment variables, \
+                     which are usually only set when the app is opened from a terminal.",
                 )
                 .control(self.render_proxy(cx)),
             )

@@ -2,7 +2,10 @@ use gpui::{App, Context, Window};
 use gpui_component::{WindowExt, notification::Notification};
 use uuid::Uuid;
 
-use super::{EditorContent, Workspace, dirty::Baseline, routes::AppRoute, show_error};
+use super::{
+    EditorContent, Workspace, dirty::Baseline, response_cache::CachedResponse, routes::AppRoute,
+    show_error,
+};
 use crate::{
     domain::{self, collection::SavedRequest},
     settings::AppSettings,
@@ -100,7 +103,10 @@ impl Workspace {
         self.load_request(content, request, window, cx);
         let kept = self.responses.get(content).cloned();
         self.response_view.update(cx, |view, cx| match kept {
-            Some(kept) => view.set_response(kept.result, kept.body_text, window, cx),
+            Some(CachedResponse::Received { result, body_text }) => {
+                view.set_response(result, body_text, window, cx)
+            }
+            Some(CachedResponse::Cancelled) => view.show_cancelled(window, cx),
             None => view.clear(window, cx),
         });
     }
@@ -143,8 +149,8 @@ impl Workspace {
         self.schedule_navigation_save(cx);
     }
 
-    /// Asks to throw away the unsaved changes to the editor's saved request,
-    /// then reloads the stored request. The shown response stays.
+    /// Throws away the unsaved changes to the editor's saved request, asking
+    /// first if set to, and reloads the stored request. The shown response stays.
     pub(super) fn revert_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editor_content == EditorContent::Draft
             || window.has_active_dialog(cx)
@@ -153,6 +159,10 @@ impl Workspace {
             return;
         }
         if self.refuse_while_pending(window, cx) {
+            return;
+        }
+        if !AppSettings::get(cx).general.ask_before_discarding {
+            self.reload_editor(window, cx);
             return;
         }
         let Some(name) = self

@@ -9,9 +9,12 @@ const MAX_ENTRIES: usize = 20;
 const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
-pub(super) struct CachedResponse {
-    pub(super) result: Result<Response, SendError>,
-    pub(super) body_text: SharedString,
+pub(super) enum CachedResponse {
+    Received {
+        result: Result<Response, SendError>,
+        body_text: SharedString,
+    },
+    Cancelled,
 }
 
 /// The last response per key, least recently used first.
@@ -39,10 +42,20 @@ impl<K: Copy + Eq> ResponseCache<K> {
         if body_text.len() > MAX_BODY_BYTES {
             return;
         }
-        let entry = CachedResponse {
+        let entry = CachedResponse::Received {
             result: result.clone(),
             body_text,
         };
+        self.push(key, entry);
+    }
+
+    /// Replaces the entry for `key` with a note that its send was cancelled.
+    pub(super) fn insert_cancelled(&mut self, key: K) {
+        self.remove(key);
+        self.push(key, CachedResponse::Cancelled);
+    }
+
+    fn push(&mut self, key: K, entry: CachedResponse) {
         self.entries.push_back((key, entry));
         while self.entries.len() > MAX_ENTRIES {
             self.entries.pop_front();
@@ -76,8 +89,12 @@ impl<K: Copy + Eq> ResponseCache<K> {
 
     /// Copies the entry for `from` to `to`, replacing what `to` had.
     pub(super) fn copy(&mut self, from: K, to: K) {
+        if from == to {
+            return;
+        }
         if let Some(entry) = self.position(from).map(|ix| self.entries[ix].1.clone()) {
-            self.insert(to, &entry.result, entry.body_text);
+            self.remove(to);
+            self.push(to, entry);
         }
     }
 
@@ -100,11 +117,28 @@ mod tests {
         Ok(Response::new(status, vec![], vec![], Duration::ZERO))
     }
 
+    fn received(cache: &mut ResponseCache<u32>, key: u32) -> Option<&Result<Response, SendError>> {
+        match cache.get(key)? {
+            CachedResponse::Received { result, .. } => Some(result),
+            CachedResponse::Cancelled => None,
+        }
+    }
+
+    fn body(cache: &mut ResponseCache<u32>, key: u32) -> Option<SharedString> {
+        match cache.get(key)? {
+            CachedResponse::Received { body_text, .. } => Some(body_text.clone()),
+            CachedResponse::Cancelled => None,
+        }
+    }
+
     fn status(cache: &mut ResponseCache<u32>, key: u32) -> Option<u16> {
-        cache
-            .get(key)
-            .and_then(|entry| entry.result.as_ref().ok())
+        received(cache, key)
+            .and_then(|result| result.as_ref().ok())
             .map(|response| response.status)
+    }
+
+    fn is_cancelled(cache: &mut ResponseCache<u32>, key: u32) -> bool {
+        matches!(cache.get(key), Some(CachedResponse::Cancelled))
     }
 
     #[test]
@@ -114,9 +148,13 @@ mod tests {
         cache.insert(1, &ok(404), "second".into());
         cache.insert(2, &Err(SendError::new("timed out")), "".into());
         assert_eq!(status(&mut cache, 1), Some(404));
-        assert_eq!(cache.get(1).unwrap().body_text, "second");
+        assert_eq!(body(&mut cache, 1).unwrap(), "second");
         assert_eq!(
-            cache.get(2).unwrap().result.as_ref().unwrap_err().message,
+            received(&mut cache, 2)
+                .unwrap()
+                .as_ref()
+                .unwrap_err()
+                .message,
             "timed out"
         );
         assert!(cache.get(3).is_none());
@@ -173,11 +211,11 @@ mod tests {
     #[test]
     fn shares_the_body_instead_of_copying() {
         let mut cache = ResponseCache::new();
-        let body = SharedString::from("x".repeat(100));
-        cache.insert(1, &ok(200), body.clone());
+        let shared = SharedString::from("x".repeat(100));
+        cache.insert(1, &ok(200), shared.clone());
         cache.copy(1, 2);
-        assert_eq!(cache.get(1).unwrap().body_text.as_ptr(), body.as_ptr());
-        assert_eq!(cache.get(2).unwrap().body_text.as_ptr(), body.as_ptr());
+        assert_eq!(body(&mut cache, 1).unwrap().as_ptr(), shared.as_ptr());
+        assert_eq!(body(&mut cache, 2).unwrap().as_ptr(), shared.as_ptr());
     }
 
     #[test]
@@ -192,5 +230,18 @@ mod tests {
         assert!(cache.get(1).is_none());
         assert!(cache.get(2).is_none());
         assert!(cache.get(3).is_none());
+    }
+
+    #[test]
+    fn cancelled_replaces_the_response_until_the_next_send() {
+        let mut cache = ResponseCache::new();
+        cache.insert(1, &ok(200), "body".into());
+        cache.insert_cancelled(1);
+        assert!(is_cancelled(&mut cache, 1));
+        cache.copy(1, 2);
+        assert!(is_cancelled(&mut cache, 2));
+        cache.insert(1, &ok(201), "".into());
+        assert_eq!(status(&mut cache, 1), Some(201));
+        assert!(!is_cancelled(&mut cache, 1));
     }
 }
