@@ -1,7 +1,10 @@
+mod about;
+mod ai;
 mod appearance;
 mod general;
 mod history_and_data;
 mod requests;
+mod shortcuts;
 
 use gpui::{
     AnyElement, AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
@@ -19,10 +22,13 @@ use gpui_component::{
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
+use about::AboutPage;
+use ai::AiPage;
 use appearance::AppearancePage;
 use general::GeneralPage;
 use history_and_data::HistoryAndDataPage;
 use requests::RequestsPage;
+use shortcuts::ShortcutsPage;
 
 /// A page of the settings, in menu order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,6 +115,9 @@ pub struct SettingsPage {
     appearance: Entity<AppearancePage>,
     requests: Entity<RequestsPage>,
     history_and_data: Entity<HistoryAndDataPage>,
+    ai: Entity<AiPage>,
+    shortcuts: Entity<ShortcutsPage>,
+    about: Entity<AboutPage>,
 }
 
 impl SettingsPage {
@@ -123,6 +132,9 @@ impl SettingsPage {
             appearance: cx.new(|cx| AppearancePage::new(window, cx)),
             requests: cx.new(|cx| RequestsPage::new(window, cx)),
             history_and_data: cx.new(|cx| HistoryAndDataPage::new(window, cx)),
+            ai: cx.new(|cx| AiPage::new(window, cx)),
+            shortcuts: cx.new(|_| ShortcutsPage::new()),
+            about: cx.new(|_| AboutPage),
         }
     }
 
@@ -223,21 +235,19 @@ impl SettingsPage {
                             .text_color(cx.theme().muted_foreground)
                             .child(section.description()),
                     )
-                    .child(div().pt_6().child(self.render_settings(cx))),
+                    .child(div().pt_6().child(self.render_settings())),
             )
     }
 
-    fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_settings(&self) -> AnyElement {
         match self.section {
             SettingsSection::General => self.general.clone().into_any_element(),
             SettingsSection::Appearance => self.appearance.clone().into_any_element(),
             SettingsSection::Requests => self.requests.clone().into_any_element(),
             SettingsSection::HistoryAndData => self.history_and_data.clone().into_any_element(),
-            SettingsSection::Ai | SettingsSection::Shortcuts | SettingsSection::About => div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("Nothing to configure here yet.")
-                .into_any_element(),
+            SettingsSection::Ai => self.ai.clone().into_any_element(),
+            SettingsSection::Shortcuts => self.shortcuts.clone().into_any_element(),
+            SettingsSection::About => self.about.clone().into_any_element(),
         }
     }
 }

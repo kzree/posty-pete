@@ -35,7 +35,7 @@ const INPUT_CONTEXT: &str = "Input";
 
 // gpui-pre 0.3.11's `KeyBinding::new` can't parse "secondary-".
 #[cfg(target_os = "macos")]
-mod keys {
+pub(crate) mod keys {
     pub const SEND: &str = "cmd-enter";
     pub const SAVE: &str = "cmd-s";
     pub const SAVE_AS: &str = "cmd-shift-s";
@@ -56,7 +56,7 @@ mod keys {
     pub const HIDE_OTHERS: &str = "alt-cmd-h";
 }
 #[cfg(not(target_os = "macos"))]
-mod keys {
+pub(crate) mod keys {
     pub const SEND: &str = "ctrl-enter";
     pub const SAVE: &str = "ctrl-s";
     pub const SAVE_AS: &str = "ctrl-shift-s";
