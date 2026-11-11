@@ -52,6 +52,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Palette: match saved requests on URL and method.** Saved requests are matched on name and folder path only, so a URL fragment finds history entries but not the saved request.
 - [ ] **Palette recents: environments chosen inside the environment pages.** Selecting an environment on the shared environments page or a collection's Environments tab isn't recorded, because those views auto-select the first environment and would record ones you only glanced at. Record only deliberate selections.
 - [ ] **Palette recents: back/forward and in-editor opens.** Items reached with back/forward, and requests opened while the editor is already showing, aren't recorded as recents. Decide whether they should be.
+- [ ] **Never leave the window with no focus.** With nothing focused (right after launch, or after clicking an empty area), the Workspace's action handlers aren't on the dispatch path, so Send, Focus URL, Save As and Revert are greyed out in the menu even on the editor page. Focus the workspace at startup and whenever focus would drop to none (the Escape handler already refocuses it). App-level fallbacks can't fix this: a global handler makes gpui show the item as enabled on every page.
 - [ ] **Persist layout.** Remember sidebar width / request-response split across restarts.
 
 ## Look and feel
