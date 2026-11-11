@@ -9,7 +9,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Auth: more types.** OAuth 2.0, Digest, AWS Signature.
 - [ ] **Secrets at rest.** Once requests are persisted, don't store passwords and tokens in plain JSON. Use the OS keychain (`keyring` crate) or environment variables.
 - [ ] **Body: more modes.** `x-www-form-urlencoded`, file fields in form-data, more raw kinds (XML, HTML).
-- [ ] **Body: JSON helpers.** Validate and prettify raw JSON.
 - [ ] **Param descriptions.** Description column in the Params table (removed for now).
 - [ ] **Request timeout setting.** The 30s timeout (`REQUEST_TIMEOUT` in `app.rs`) is hard-coded; make it configurable on the Settings page and per request.
 - [ ] **Cancel in-flight requests.** Send is disabled while a request runs; a Cancel button could take its place. Dropping `pending` alone doesn't stop the request on tokio (abort the `JoinHandle`).
