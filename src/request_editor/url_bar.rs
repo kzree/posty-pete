@@ -58,13 +58,26 @@ impl RequestEditor {
                     }),
             )
             .child(
-                Button::new("send")
-                    .primary()
-                    .label("Send")
-                    .loading(self.loading)
-                    .tooltip_with_action("Send request", &SendRequest, Some(WORKSPACE_CONTEXT))
-                    .on_click(cx.listener(|this, _, _, cx| this.send(cx))),
+                div()
+                    .flex_none()
+                    .w(px(80.))
+                    .child(self.send_button(cx).w_full()),
             )
+    }
+
+    /// Becomes Cancel while sending; the fixed-width slot keeps the layout still.
+    fn send_button(&self, cx: &mut Context<Self>) -> Button {
+        if self.loading {
+            return Button::new("cancel")
+                .label("Cancel")
+                .tooltip_with_action("Cancel request", &SendRequest, Some(WORKSPACE_CONTEXT))
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(RequestEditorEvent::CancelRequested)));
+        }
+        Button::new("send")
+            .primary()
+            .label("Send")
+            .tooltip_with_action("Send request", &SendRequest, Some(WORKSPACE_CONTEXT))
+            .on_click(cx.listener(|this, _, _, cx| this.send(cx)))
     }
 
     /// Always takes its line, so the tabs don't move when the hint comes and goes.

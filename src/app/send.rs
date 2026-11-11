@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use gpui::{App, AppContext, Context, SharedString, Window};
-use tokio::task::JoinError;
+use gpui::{App, AppContext, Context, SharedString, Task, Window};
+use tokio::task::{AbortHandle, JoinError};
 
 use super::{EditorContent, Workspace, show_error};
 use crate::{
@@ -20,6 +20,19 @@ use crate::{
     },
     ui::clipboard::copy_with_notification,
 };
+
+/// A send in flight. Dropping it aborts the request on tokio and stops
+/// `finish_request` from running.
+pub(super) struct PendingSend {
+    _task: Task<()>,
+    abort: AbortHandle,
+}
+
+impl Drop for PendingSend {
+    fn drop(&mut self) {
+        self.abort.abort();
+    }
+}
 
 fn flatten_send_result(
     joined: Result<Result<Response, SendError>, JoinError>,
@@ -126,7 +139,8 @@ impl Workspace {
         let content = self.editor_content;
         let sent_at = Utc::now();
         let handle = http::spawn_send(self.client.clone(), request.clone());
-        self.pending = Some(cx.spawn_in(window, async move |this, cx| {
+        let abort = handle.abort_handle();
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = flatten_send_result(handle.await);
             let outcome = result.as_ref().ok().map(|r| Outcome {
                 status: r.status,
@@ -151,7 +165,28 @@ impl Workspace {
                 this.finish_request(content, result, body_text, record, window, cx)
             })
             .ok();
-        }));
+        });
+        self.pending = Some(PendingSend { _task: task, abort });
+    }
+
+    /// Sends the editor's request, or cancels the one in flight.
+    pub(super) fn send_or_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending.is_some() {
+            self.cancel_request(window, cx);
+        } else {
+            self.request_editor.update(cx, |editor, cx| editor.send(cx));
+        }
+    }
+
+    /// Aborts the request in flight. Nothing is recorded in history or kept
+    /// as the response.
+    pub(super) fn cancel_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending.take().is_none() {
+            return;
+        }
+        self.set_sending(false, cx);
+        self.response_view
+            .update(cx, |view, cx| view.show_cancelled(window, cx));
     }
 
     /// `content` is what the editor held when the request was sent.
@@ -188,6 +223,8 @@ impl Workspace {
             .update(cx, |editor, cx| editor.set_loading(sending, cx));
         self.loading_bar
             .update(cx, |bar, cx| bar.set_active(sending, cx));
+        // Which actions are registered depends on it.
+        cx.notify();
     }
 }
 

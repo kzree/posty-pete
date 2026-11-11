@@ -17,8 +17,7 @@ mod send;
 use std::{cell::Cell, time::Duration};
 
 use gpui::{
-    App, AppContext, Context, Entity, FocusHandle, ParentElement, Styled, Subscription, Task,
-    Window, px,
+    App, AppContext, Context, Entity, FocusHandle, ParentElement, Styled, Subscription, Window, px,
 };
 use gpui_component::{ResizableState, Root, WindowExt, notification::Notification};
 use uuid::Uuid;
@@ -123,7 +122,7 @@ pub struct Workspace {
     /// failed ones, so neither starts again.
     closing: bool,
     command_palette_subscription: Option<Subscription>,
-    pending: Option<Task<()>>,
+    pending: Option<send::PendingSend>,
     left_panel: LeftPanelState,
     main_layout: Entity<ResizableState>,
     request_response_layout: Entity<ResizableState>,

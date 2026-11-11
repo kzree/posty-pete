@@ -54,6 +54,8 @@ pub enum ResponseViewEvent {
 
 pub struct ResponseView {
     response: Option<Result<Response, SendError>>,
+    /// The last send was cancelled; only meaningful while `response` is `None`.
+    cancelled: bool,
     active_tab: ResponseTab,
     body: Entity<EditorState>,
 }
@@ -65,6 +67,7 @@ impl ResponseView {
         let body = cx.new(|cx| EditorState::new(window, cx).language("json"));
         Self {
             response: None,
+            cancelled: false,
             active_tab: ResponseTab::Body,
             body,
         }
@@ -85,14 +88,22 @@ impl ResponseView {
             state.set_value(body_text, window, cx);
         });
         self.response = Some(response);
+        self.cancelled = false;
         cx.notify();
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.response = None;
+        self.cancelled = false;
         self.body
             .update(cx, |state, cx| state.set_value("", window, cx));
         cx.notify();
+    }
+
+    /// Replaces the response with a note that the request was cancelled.
+    pub fn show_cancelled(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear(window, cx);
+        self.cancelled = true;
     }
 
     fn copy_button(&self, response: &Response, cx: &mut Context<Self>) -> Button {
@@ -169,7 +180,11 @@ impl Render for ResponseView {
                 .p_4()
                 .text_color(cx.theme().muted_foreground)
                 .text_sm()
-                .child("Send a request to see the response.")
+                .child(if self.cancelled {
+                    "Request cancelled"
+                } else {
+                    "Send a request to see the response."
+                })
                 .into_any_element(),
             Some(Err(error)) => h_flex()
                 .items_start()

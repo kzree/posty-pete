@@ -145,6 +145,7 @@ mod tests {
     use std::{
         io::{Read as _, Write as _},
         net::{SocketAddr, TcpListener},
+        sync::mpsc,
         thread,
     };
 
@@ -370,6 +371,35 @@ mod tests {
         let client = client(Duration::from_millis(200)).unwrap();
         let error = send_blocking(client, format!("http://{addr}/")).unwrap_err();
         assert_eq!(error.hint.as_deref(), Some(send_error::TIMEOUT_HINT));
+    }
+
+    #[test]
+    fn aborted_send_stops_and_closes_the_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (accepted_tx, accepted) = mpsc::channel();
+        let (closed_tx, closed) = mpsc::channel();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            accepted_tx.send(()).unwrap();
+            let mut buf = [0; 1024];
+            while let Ok(1..) = stream.read(&mut buf) {}
+            let _ = closed_tx.send(());
+        });
+
+        let client = client(Duration::from_secs(60)).unwrap();
+        let handle = spawn_send(client, get(format!("http://{addr}/")));
+        accepted.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let start = Instant::now();
+        handle.abort();
+        let joined = futures::executor::block_on(handle);
+        assert!(joined.unwrap_err().is_cancelled());
+        assert!(start.elapsed() < Duration::from_secs(1));
+        closed.recv_timeout(Duration::from_secs(2)).unwrap();
     }
 
     struct FailingResolver;

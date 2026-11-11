@@ -6,12 +6,12 @@ mod unresolved_hint;
 mod url_bar;
 
 use gpui::{
-    App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder,
+    App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     IndexPath, StyledExt,
-    input::{Input, InputEvent, InputState},
+    input::{Escape, Input, InputEvent, InputState},
     scroll::ScrollableElement,
     select::{SelectEvent, SelectState},
     v_flex,
@@ -29,6 +29,8 @@ use unresolved_hint::unresolved_hint;
 
 pub enum RequestEditorEvent {
     SendRequested(Request),
+    /// Cancel the request in flight.
+    CancelRequested,
     CopyAsCurl(Request),
     Save,
     /// A field of the request or its name changed.
@@ -278,6 +280,14 @@ impl Render for RequestEditor {
             .size_full()
             .p_4()
             .gap_2()
+            // Only while sending, so Escape otherwise still reaches the Workspace.
+            .when(self.loading, |this| {
+                this.on_action(
+                    cx.listener(|_, _: &Escape, _, cx| {
+                        cx.emit(RequestEditorEvent::CancelRequested)
+                    }),
+                )
+            })
             .when(self.saved_name.is_some(), |this| {
                 this.child(
                     Input::new(&self.name)

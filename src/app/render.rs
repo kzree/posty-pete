@@ -8,9 +8,9 @@ use gpui_component::{ActiveTheme, h_resizable, input::Escape, resizable_panel};
 use super::{LeftPanelState, Workspace, navigation::Direction, routes::AppRoute};
 use crate::{
     actions::{
-        FocusUrl, GoBack, GoForward, NewRequest, OpenCommandPalette, OpenHistory, OpenLibrary,
-        OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest, SaveRequest,
-        SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
+        CancelRequest, FocusUrl, GoBack, GoForward, NewRequest, OpenCommandPalette, OpenHistory,
+        OpenLibrary, OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest,
+        SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
     domain::{command::Command, palette::Scope},
     sidebar::SidebarTab,
@@ -55,8 +55,13 @@ impl Workspace {
         let state = self.command_state(self.is_dirty(), cx);
         let enabled = |command: Command| command.action_enabled(&state);
         root.when(enabled(Command::SendRequest), |this| {
-            this.on_action(cx.listener(|this, _: &SendRequest, _, cx| {
-                this.request_editor.update(cx, |editor, cx| editor.send(cx));
+            this.on_action(cx.listener(|this, _: &SendRequest, window, cx| {
+                this.send_or_cancel(window, cx);
+            }))
+        })
+        .when(enabled(Command::CancelRequest), |this| {
+            this.on_action(cx.listener(|this, _: &CancelRequest, window, cx| {
+                this.cancel_request(window, cx);
             }))
         })
         .on_action(cx.listener(|this, _: &SaveRequest, window, cx| {

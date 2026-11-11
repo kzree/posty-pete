@@ -9,6 +9,7 @@ pub enum Command {
     Save,
     SaveAs,
     SendRequest,
+    CancelRequest,
     Revert,
     NewCollection,
     NewEnvironment,
@@ -27,11 +28,12 @@ pub enum Command {
 
 impl Command {
     /// In palette order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::NewRequest,
         Self::Save,
         Self::SaveAs,
         Self::SendRequest,
+        Self::CancelRequest,
         Self::Revert,
         Self::NewCollection,
         Self::NewEnvironment,
@@ -55,6 +57,7 @@ impl Command {
             Self::Save => "Save",
             Self::SaveAs => "Save as",
             Self::SendRequest => "Send request",
+            Self::CancelRequest => "Cancel request",
             Self::Revert => "Revert changes",
             Self::NewCollection => "New collection",
             Self::NewEnvironment => "New environment",
@@ -79,6 +82,7 @@ impl Command {
             Self::Save => &["request", "store"],
             Self::SaveAs => &["copy", "duplicate", "request"],
             Self::SendRequest => &["run", "execute"],
+            Self::CancelRequest => &["stop", "abort"],
             Self::Revert => &["discard", "undo", "reset"],
             Self::NewCollection => &["create", "add"],
             Self::NewEnvironment => &["create", "add", "variables"],
@@ -101,6 +105,7 @@ impl Command {
             Self::Save => state.editor_shown && (state.draft || state.dirty),
             Self::SaveAs | Self::FocusUrl => state.editor_shown,
             Self::SendRequest => state.editor_shown && state.has_url && !state.sending,
+            Self::CancelRequest => state.sending,
             Self::Revert => state.editor_shown && state.dirty,
             Self::NewEnvironment => state.in_collection,
             Self::Back => state.can_go_back,
@@ -122,6 +127,7 @@ impl Command {
     /// registers the action then. Save, Back and Forward stay registered and
     /// their handlers check for themselves. Send does too on the editor: an
     /// unhandled cmd-enter would reach the focused input and add a newline.
+    /// While sending, Send's handler cancels.
     pub fn action_enabled(self, state: &CommandState) -> bool {
         match self {
             Self::Save | Self::Back | Self::Forward => true,
@@ -250,6 +256,22 @@ mod tests {
             ..ready
         };
         assert!(!Command::SendRequest.is_available(&sending));
+    }
+
+    #[test]
+    fn cancel_is_offered_only_while_sending() {
+        for state in every_state() {
+            assert_eq!(
+                Command::CancelRequest.is_available(&state),
+                state.sending,
+                "{state:?}"
+            );
+        }
+        let away = CommandState {
+            sending: true,
+            ..CommandState::default()
+        };
+        assert!(Command::CancelRequest.action_enabled(&away));
     }
 
     fn every_state() -> impl Iterator<Item = CommandState> {

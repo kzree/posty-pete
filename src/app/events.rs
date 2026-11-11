@@ -331,6 +331,7 @@ impl Workspace {
             RequestEditorEvent::SendRequested(request) => {
                 self.send_request(request.clone(), window, cx)
             }
+            RequestEditorEvent::CancelRequested => self.cancel_request(window, cx),
             RequestEditorEvent::CopyAsCurl(request) => {
                 self.copy_editor_as_curl(request.clone(), window, cx)
             }

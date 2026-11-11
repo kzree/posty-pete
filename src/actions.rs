@@ -6,6 +6,7 @@ actions!(
     posty_pete,
     [
         SendRequest,
+        CancelRequest,
         SaveRequest,
         SaveRequestAs,
         RevertRequest,
@@ -38,6 +39,7 @@ pub fn action(command: Command) -> Option<Box<dyn Action>> {
         Command::Save => Box::new(SaveRequest),
         Command::SaveAs => Box::new(SaveRequestAs),
         Command::SendRequest => Box::new(SendRequest),
+        Command::CancelRequest => Box::new(CancelRequest),
         Command::Revert => Box::new(RevertRequest),
         Command::Back => Box::new(GoBack),
         Command::Forward => Box::new(GoForward),
