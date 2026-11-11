@@ -13,7 +13,7 @@ use gpui_component::{
 };
 
 use crate::{
-    domain::{body_format::BodyFormat, response::Response},
+    domain::{body_format::BodyFormat, response::Response, send_error::SendError},
     ui::{clipboard::copy_with_notification, status_tag::status_tag},
 };
 use gpui_kit_assets::IconName as LucideIcon;
@@ -53,7 +53,7 @@ pub enum ResponseViewEvent {
 }
 
 pub struct ResponseView {
-    response: Option<Result<Response, String>>,
+    response: Option<Result<Response, SendError>>,
     active_tab: ResponseTab,
     body: Entity<EditorState>,
 }
@@ -72,7 +72,7 @@ impl ResponseView {
 
     pub fn set_response(
         &mut self,
-        response: Result<Response, String>,
+        response: Result<Response, SendError>,
         body_text: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -176,11 +176,21 @@ impl Render for ResponseView {
                 .gap_2()
                 .p_4()
                 .child(
-                    div()
+                    v_flex()
                         .flex_1()
                         .min_w_0()
-                        .text_color(cx.theme().danger)
-                        .child(format!("Request failed: {error}")),
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(cx.theme().danger)
+                                .child(format!("Request failed: {}", error.message)),
+                        )
+                        .children(error.hint.clone().map(|hint| {
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(hint)
+                        })),
                 )
                 .child(self.clear_button(cx))
                 .into_any_element(),

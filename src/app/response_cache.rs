@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use gpui::SharedString;
 
-use crate::domain::response::Response;
+use crate::domain::{response::Response, send_error::SendError};
 
 const MAX_ENTRIES: usize = 20;
 /// Larger display bodies aren't kept.
@@ -10,7 +10,7 @@ const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub(super) struct CachedResponse {
-    pub(super) result: Result<Response, String>,
+    pub(super) result: Result<Response, SendError>,
     pub(super) body_text: SharedString,
 }
 
@@ -32,7 +32,7 @@ impl<K: Copy + Eq> ResponseCache<K> {
     pub(super) fn insert(
         &mut self,
         key: K,
-        result: &Result<Response, String>,
+        result: &Result<Response, SendError>,
         body_text: SharedString,
     ) {
         self.remove(key);
@@ -96,7 +96,7 @@ mod tests {
 
     use super::*;
 
-    fn ok(status: u16) -> Result<Response, String> {
+    fn ok(status: u16) -> Result<Response, SendError> {
         Ok(Response::new(status, vec![], vec![], Duration::ZERO))
     }
 
@@ -112,11 +112,11 @@ mod tests {
         let mut cache = ResponseCache::new();
         cache.insert(1, &ok(200), "first".into());
         cache.insert(1, &ok(404), "second".into());
-        cache.insert(2, &Err("timed out".into()), "".into());
+        cache.insert(2, &Err(SendError::new("timed out")), "".into());
         assert_eq!(status(&mut cache, 1), Some(404));
         assert_eq!(cache.get(1).unwrap().body_text, "second");
         assert_eq!(
-            cache.get(2).unwrap().result.as_ref().unwrap_err(),
+            cache.get(2).unwrap().result.as_ref().unwrap_err().message,
             "timed out"
         );
         assert!(cache.get(3).is_none());

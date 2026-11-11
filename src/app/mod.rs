@@ -162,11 +162,7 @@ impl Workspace {
             shared_environments_view,
             settings_page,
             loading_bar,
-            client: reqwest::Client::builder()
-                .timeout(REQUEST_TIMEOUT)
-                .redirect(domain::http::redirect_policy())
-                .build()
-                .expect("failed to build HTTP client"),
+            client: domain::http::client(REQUEST_TIMEOUT).expect("failed to build HTTP client"),
             history,
             collections,
             shared_environments,

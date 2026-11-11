@@ -15,19 +15,16 @@ use crate::{
         http,
         request::Request,
         response::Response,
+        send_error::SendError,
         variables::Variables,
     },
     ui::clipboard::copy_with_notification,
 };
 
 fn flatten_send_result(
-    joined: Result<anyhow::Result<Response>, JoinError>,
-) -> Result<Response, String> {
-    match joined {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(e)) => Err(format!("{e:#}")),
-        Err(e) => Err(format!("task failed: {e}")),
-    }
+    joined: Result<Result<Response, SendError>, JoinError>,
+) -> Result<Response, SendError> {
+    joined.unwrap_or_else(|e| Err(SendError::new(format!("task failed: {e}"))))
 }
 
 /// The variables that apply to what the editor holds: a saved request's
@@ -161,7 +158,7 @@ impl Workspace {
     fn finish_request(
         &mut self,
         content: EditorContent,
-        result: Result<Response, String>,
+        result: Result<Response, SendError>,
         body_text: SharedString,
         record: HistoryRecord,
         window: &mut Window,

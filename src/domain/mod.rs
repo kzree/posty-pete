@@ -15,6 +15,7 @@ pub mod recents;
 pub mod request;
 pub mod resolved;
 pub mod response;
+pub mod send_error;
 pub mod settings;
 pub mod settings_index;
 pub mod store;
