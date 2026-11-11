@@ -23,7 +23,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Revisit library empty rows.** The muted "No collections yet" / "No environments yet" rows replaced "Your library is empty." Revisit the empty state later, e.g. make the rows actionable ("Create a collection") or bring back a first-run message.
 - [ ] **One save queue for stores.** `SharedEnvironments` copies the ordered save queue from `Collections`; extract a shared helper if a third store appears.
 - [ ] **Environment colours.** Mark an environment (e.g. red for Prod) in the picker and title bar so sending to production is hard to miss.
-- [ ] **Duplicate environments.** Copy an environment with its variables, e.g. Staging → Prod.
 - [ ] **Truncate long names in the environment menu.** `PopupMenuItem` wraps long labels; needs a custom element item or an upstream change.
 - [ ] **Variable autocomplete and highlighting.** Suggest names after typing `{{` and highlight references (resolved vs unresolved) in the URL, key/value and body inputs. `domain::variables::references` returns byte ranges for this.
 - [ ] **Folder-level variables.** Variables on folders, overriding the collection's for requests inside them.
