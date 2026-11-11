@@ -1,5 +1,6 @@
 use gpui::{
-    AppContext, Context, Entity, Hsla, IntoElement, ParentElement, Render, Styled, Window, px, rgb,
+    App, AppContext, Context, Entity, Hsla, IntoElement, ParentElement, Render, Styled,
+    Subscription, Window, px, rgb,
 };
 use gpui_component::{
     ActiveTheme,
@@ -8,35 +9,31 @@ use gpui_component::{
 };
 
 use super::{group, number_state, page, switch};
-use crate::domain::accent::Accent;
+use crate::domain::{accent::Accent, settings::ThemePreference};
+use crate::settings::AppSettings;
 use crate::ui::{color_swatches::ColorSwatches, setting_row::SettingRow};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ThemeChoice {
-    System,
-    Light,
-    Dark,
-}
+const THEMES: [ThemePreference; 3] = [
+    ThemePreference::System,
+    ThemePreference::Light,
+    ThemePreference::Dark,
+];
 
-impl ThemeChoice {
-    const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::System => "System",
-            Self::Light => "Light",
-            Self::Dark => "Dark",
-        }
+fn theme_label(theme: ThemePreference) -> &'static str {
+    match theme {
+        ThemePreference::System => "System",
+        ThemePreference::Light => "Light",
+        ThemePreference::Dark => "Dark",
     }
 }
 
 pub struct AppearancePage {
-    theme: ThemeChoice,
     accent: Accent,
     ui_font_size: Entity<InputState>,
     editor_font_family: Entity<InputState>,
     editor_font_size: Entity<InputState>,
     wrap_responses: bool,
+    _settings: Subscription,
 }
 
 impl AppearancePage {
@@ -46,26 +43,25 @@ impl AppearancePage {
         let editor_font_size = theme.mono_font_size.as_f32() as u32;
         let editor_font_family = theme.mono_font_family.clone();
         Self {
-            // The app always starts in dark mode for now.
-            theme: ThemeChoice::Dark,
             accent: Accent::default(),
             ui_font_size: cx.new(|cx| number_state(ui_font_size, 10, 24, window, cx)),
             editor_font_family: cx
                 .new(|cx| InputState::new(window, cx).default_value(editor_font_family)),
             editor_font_size: cx.new(|cx| number_state(editor_font_size, 8, 32, window, cx)),
             wrap_responses: true,
+            _settings: cx.observe_global::<AppSettings>(|_, cx| cx.notify()),
         }
     }
 
-    fn render_theme(&self, cx: &mut Context<Self>) -> RadioGroup {
-        let selected = ThemeChoice::ALL.iter().position(|t| *t == self.theme);
+    fn render_theme(&self, cx: &App) -> RadioGroup {
+        let current = AppSettings::get(cx).appearance.theme;
         RadioGroup::horizontal("theme")
-            .children(ThemeChoice::ALL.map(ThemeChoice::label))
-            .selected_index(selected)
-            .on_change(cx.listener(|this, index: &usize, _, cx| {
-                this.theme = ThemeChoice::ALL[*index];
-                cx.notify();
-            }))
+            .children(THEMES.map(theme_label))
+            .selected_index(THEMES.iter().position(|t| *t == current))
+            .on_change(|index: &usize, _, cx| {
+                let theme = THEMES[*index];
+                AppSettings::update(cx, |s| s.appearance.theme = theme);
+            })
     }
 
     fn render_accent(&self, cx: &mut Context<Self>) -> ColorSwatches {

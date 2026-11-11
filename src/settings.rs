@@ -30,14 +30,12 @@ impl AppSettings {
         cx.set_global(Self { settings, saver });
     }
 
-    #[expect(dead_code, reason = "wired in task 66")]
     pub fn get(cx: &App) -> &Settings {
         &cx.global::<Self>().settings
     }
 
     /// Applies `f`. If that changed anything, notifies observers and saves a
     /// moment later.
-    #[expect(dead_code, reason = "wired in task 66")]
     pub fn update(cx: &mut App, f: impl FnOnce(&mut Settings)) {
         let current = &cx.global::<Self>().settings;
         let mut settings = current.clone();

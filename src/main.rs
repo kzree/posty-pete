@@ -1,5 +1,5 @@
 use gpui::{Anchor, App, AppContext, Bounds, WindowOptions, px, size};
-use gpui_component::{Root, Theme, ThemeMode, TitleBar};
+use gpui_component::{Root, Theme, TitleBar};
 use gpui_platform::application;
 
 mod actions;
@@ -21,6 +21,7 @@ mod shared_environments;
 mod shared_environments_view;
 mod sidebar;
 mod status_bar;
+mod theme;
 mod ui;
 mod window_title_bar;
 
@@ -40,7 +41,7 @@ fn run() {
         menus::init(WINDOW_TITLE, cx);
         app::init(cx);
         settings::AppSettings::init(cx);
-        Theme::change(ThemeMode::Dark, None, cx);
+        theme::init(cx);
         Theme::global_mut(cx).notification.placement = Anchor::BottomRight;
 
         let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
@@ -54,6 +55,7 @@ fn run() {
                 ..TitleBar::window_options()
             },
             |window, cx| {
+                theme::follow_system_appearance(window).detach();
                 let view = cx.new(|cx| Workspace::new(window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
