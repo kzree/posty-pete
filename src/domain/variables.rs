@@ -135,6 +135,7 @@ impl Substitution<'_> {
 
     fn auth(&self, auth: &Auth) -> Auth {
         match auth {
+            Auth::Inherit => Auth::Inherit,
             Auth::None => Auth::None,
             Auth::ApiKey {
                 key,
@@ -157,8 +158,14 @@ impl Substitution<'_> {
 }
 
 impl Request {
-    /// A copy with variables substituted (method untouched).
+    #[cfg(test)]
     pub fn with_variables(&self, variables: &Variables) -> Request {
+        self.with_auth_and_variables(&self.auth, variables)
+    }
+
+    /// A copy with `auth` in place of the request's and variables
+    /// substituted (method untouched).
+    pub(super) fn with_auth_and_variables(&self, auth: &Auth, variables: &Variables) -> Request {
         let s = Substitution(variables);
         Request {
             method: self.method,
@@ -174,14 +181,23 @@ impl Request {
                     text: s.text(text),
                 },
             },
-            auth: s.auth(&self.auth),
+            auth: s.auth(auth),
         }
     }
 
-    /// The names that don't resolve in the parts of the request that get
-    /// sent, in first-seen order. Whether a part is sent is decided as
-    /// [`Request::resolve`] does, after substitution.
+    #[cfg(test)]
     pub fn unresolved_variables(&self, variables: &Variables) -> Vec<String> {
+        self.unresolved_variables_with_auth(&self.auth, variables)
+    }
+
+    /// The names that don't resolve in the parts of the request that get
+    /// sent with `auth` in place of its own, in first-seen order. Whether a
+    /// part is sent is decided as [`Request::resolve`] does, after substitution.
+    pub(super) fn unresolved_variables_with_auth(
+        &self,
+        auth: &Auth,
+        variables: &Variables,
+    ) -> Vec<String> {
         // Only keys and auth decide what is sent; the URL and raw text always are.
         let s = Substitution(variables);
         let substituted = Request {
@@ -194,7 +210,7 @@ impl Request {
                 Body::UrlEncoded(fields) => Body::UrlEncoded(s.rows(fields)),
                 _ => Body::None,
             },
-            auth: s.auth(&self.auth),
+            auth: s.auth(auth),
         };
 
         let mut texts: Vec<&str> = vec![&self.url];
@@ -225,8 +241,8 @@ impl Request {
             texts.push(text);
         }
         if substituted.sends_auth() {
-            match &self.auth {
-                Auth::None => {}
+            match auth {
+                Auth::Inherit | Auth::None => {}
                 Auth::ApiKey { key, value, .. } => texts.extend([key.as_str(), value]),
                 Auth::Basic { username, password } => texts.extend([username.as_str(), password]),
                 Auth::Bearer { token } => texts.push(token),

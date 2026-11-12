@@ -7,7 +7,10 @@ use std::{collections::HashSet, sync::Arc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::{request::KeyValue, variables::Variables};
+use super::{
+    request::{Auth, KeyValue},
+    variables::Variables,
+};
 
 pub const NEW_ENVIRONMENT_NAME: &str = "New environment";
 
@@ -21,6 +24,9 @@ pub struct Environment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base: Option<Uuid>,
     pub variables: Vec<KeyValue>,
+    /// Inherit means not set: the next layer's auth applies.
+    #[serde(default, skip_serializing_if = "Auth::is_inherit")]
+    pub auth: Auth,
 }
 
 impl Environment {
@@ -30,18 +36,13 @@ impl Environment {
             name: name.into(),
             base: None,
             variables: Vec::new(),
+            auth: Auth::Inherit,
         }
     }
 }
 
 pub fn find(shared: &[Arc<Environment>], id: Uuid) -> Option<&Environment> {
     shared.iter().find(|env| env.id == id).map(|env| &**env)
-}
-
-/// The shared environment's variables alone, or `None` if there's no such
-/// environment.
-pub fn shared_variables(shared: &[Arc<Environment>], id: Uuid) -> Option<Variables> {
-    find(shared, id).map(|env| Variables::layered([env.variables.as_slice()]))
 }
 
 /// A base environment's variable as seen from an environment based on it.
@@ -151,6 +152,7 @@ pub(super) fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> +
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::layers::Layers;
 
     fn variable(key: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -180,6 +182,35 @@ mod tests {
         let value = serde_json::to_value(&based).unwrap();
         let reloaded: Environment = serde_json::from_value(value).unwrap();
         assert_eq!(reloaded, based);
+    }
+
+    #[test]
+    fn json_without_auth_inherits_and_saves_without_it() {
+        let json =
+            r#"{"id": "6f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f", "name": "Old", "variables": []}"#;
+        let loaded: Environment = serde_json::from_str(json).unwrap();
+        assert_eq!(loaded.auth, Auth::Inherit);
+        let expected: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+
+        for auth in [Auth::None, Auth::Bearer { token: "t".into() }] {
+            let with_auth = Environment {
+                auth,
+                ..loaded.clone()
+            };
+            let value = serde_json::to_value(&with_auth).unwrap();
+            let reloaded: Environment = serde_json::from_value(value).unwrap();
+            assert_eq!(reloaded, with_auth);
+        }
+    }
+
+    #[test]
+    fn duplicate_copies_auth() {
+        let mut shared = Vec::new();
+        let id = add(&mut shared);
+        Arc::make_mut(&mut shared[0]).auth = Auth::Bearer { token: "t".into() };
+        let copy = duplicate(&mut shared, id).unwrap();
+        assert_eq!(find(&shared, copy).unwrap().auth, shared[0].auth);
     }
 
     #[test]
@@ -296,10 +327,9 @@ mod tests {
         disabled.enabled = false;
         set_variables(&mut shared, id, vec![variable("host", "staging"), disabled]);
 
-        let variables = shared_variables(&shared, id).unwrap();
+        let variables = Layers::Shared(find(&shared, id).unwrap()).variables();
         assert_eq!(variables.get("host"), Some("staging"));
         assert_eq!(variables.get("token"), None);
-        assert_eq!(shared_variables(&shared, Uuid::new_v4()), None);
     }
 
     #[test]

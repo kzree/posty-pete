@@ -6,7 +6,7 @@ use uuid::Uuid;
 use super::{
     collection::Collection,
     environment::{self, Environment},
-    variables::Variables,
+    layers::Layers,
 };
 
 /// What drafts resolve against.
@@ -102,25 +102,28 @@ impl EnvironmentSelection {
         self.draft = DraftSource::Shared(id);
     }
 
-    /// The draft's variables; `None` when it has nothing to resolve against.
-    pub fn draft_variables(
+    /// What drafts resolve against; `None` when they have nothing to.
+    pub fn draft_layers<'a>(
         &self,
-        collections: &[Arc<Collection>],
-        shared: &[Arc<Environment>],
-    ) -> Option<Variables> {
+        collections: &'a [Arc<Collection>],
+        shared: &'a [Arc<Environment>],
+    ) -> Option<Layers<'a>> {
         match self.draft {
             DraftSource::None => None,
             DraftSource::Collection(_) => self
                 .draft_collection(collections)
-                .map(|collection| self.variables(collection, shared)),
-            DraftSource::Shared(id) => environment::shared_variables(shared, id),
+                .map(|collection| self.layers(collection, shared)),
+            DraftSource::Shared(id) => environment::find(shared, id).map(Layers::Shared),
         }
     }
 
-    /// `collection`'s variables with its active environment, and the shared
-    /// environment that's based on, in front.
-    pub fn variables(&self, collection: &Collection, shared: &[Arc<Environment>]) -> Variables {
-        collection.variables_with(self.active_environment(collection), shared)
+    /// What `collection`'s requests resolve against with its active environment.
+    pub fn layers<'a>(
+        &self,
+        collection: &'a Collection,
+        shared: &'a [Arc<Environment>],
+    ) -> Layers<'a> {
+        collection.layers(self.active_environment(collection), shared)
     }
 
     /// This selection without the ids that no longer exist, as (active
@@ -205,21 +208,21 @@ mod tests {
         let (collection, staging) = collection();
         let mut selection = EnvironmentSelection::default();
         assert_eq!(
-            selection.variables(&collection, &[]).get("host"),
+            selection.layers(&collection, &[]).variables().get("host"),
             Some("local")
         );
 
         selection.set_active_environment(collection.id, Some(staging));
         assert_eq!(selection.active_environment(&collection), Some(staging));
         assert_eq!(
-            selection.variables(&collection, &[]).get("host"),
+            selection.layers(&collection, &[]).variables().get("host"),
             Some("staging")
         );
 
         selection.set_active_environment(collection.id, None);
         assert_eq!(selection.active_environment(&collection), None);
         assert_eq!(
-            selection.variables(&collection, &[]).get("host"),
+            selection.layers(&collection, &[]).variables().get("host"),
             Some("local")
         );
     }
@@ -254,7 +257,7 @@ mod tests {
 
         assert_eq!(selection.active_environment(&collection), None);
         assert_eq!(
-            selection.variables(&collection, &[]).get("host"),
+            selection.layers(&collection, &[]).variables().get("host"),
             Some("local")
         );
         assert!(selection.draft_collection(&collections).is_none());
@@ -284,10 +287,18 @@ mod tests {
         let dev = shared("Dev", "dev");
         let shared = [dev.clone()];
         let mut selection = EnvironmentSelection::default();
-        assert_eq!(selection.draft_variables(&collections, &shared), None);
+        assert_eq!(
+            selection
+                .draft_layers(&collections, &shared)
+                .map(|layers| layers.variables()),
+            None
+        );
 
         selection.set_draft_collection(Some(collection.id), Some(staging));
-        let variables = selection.draft_variables(&collections, &shared).unwrap();
+        let variables = selection
+            .draft_layers(&collections, &shared)
+            .map(|layers| layers.variables())
+            .unwrap();
         assert_eq!(variables.get("host"), Some("staging"));
 
         selection.set_draft_shared_environment(dev.id);
@@ -296,13 +307,21 @@ mod tests {
             selection.draft_shared_environment(&shared).map(|e| e.id),
             Some(dev.id)
         );
-        let variables = selection.draft_variables(&collections, &shared).unwrap();
+        let variables = selection
+            .draft_layers(&collections, &shared)
+            .map(|layers| layers.variables())
+            .unwrap();
         assert_eq!(variables.get("host"), Some("dev"));
         // The collection keeps its active environment.
         assert_eq!(selection.active_environment(&collection), Some(staging));
 
         selection.set_draft_collection(None, None);
-        assert_eq!(selection.draft_variables(&collections, &shared), None);
+        assert_eq!(
+            selection
+                .draft_layers(&collections, &shared)
+                .map(|layers| layers.variables()),
+            None
+        );
     }
 
     #[test]
@@ -311,7 +330,12 @@ mod tests {
         let mut selection = EnvironmentSelection::default();
         selection.set_draft_shared_environment(dev.id);
 
-        assert_eq!(selection.draft_variables(&[], &[]), None);
+        assert_eq!(
+            selection
+                .draft_layers(&[], &[])
+                .map(|layers| layers.variables()),
+            None
+        );
         assert!(selection.draft_shared_environment(&[]).is_none());
         assert_eq!(selection.pruned(&[], Some(&[])).1, DraftSource::None);
         assert_eq!(selection.pruned(&[], None).1, DraftSource::Shared(dev.id));

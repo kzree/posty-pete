@@ -12,7 +12,10 @@ pub struct Request {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Auth {
+    /// Uses the auth from the environment or collection; see [`super::auth`].
     #[default]
+    Inherit,
+    /// Explicitly no auth.
     None,
     ApiKey {
         key: String,
@@ -35,6 +38,12 @@ pub enum ApiKeyLocation {
     #[default]
     Header,
     Query,
+}
+
+impl Auth {
+    pub fn is_inherit(&self) -> bool {
+        *self == Self::Inherit
+    }
 }
 
 impl ApiKeyLocation {
@@ -196,7 +205,8 @@ mod tests {
          "body": {"Raw": {"kind": "Html", "text": "<p>"}}, "auth": "None"},
         {"method": "Delete", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
         {"method": "Head", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
-        {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"}
+        {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
+        {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "Inherit"}
     ]"#;
 
     #[test]
@@ -214,7 +224,7 @@ mod tests {
         assert_eq!(request.method, HttpMethod::Get);
         assert!(request.url.is_empty() && request.params.is_empty() && request.headers.is_empty());
         assert!(matches!(request.body, Body::None));
-        assert!(matches!(request.auth, Auth::None));
+        assert!(matches!(request.auth, Auth::Inherit));
     }
 
     #[test]
@@ -237,6 +247,8 @@ mod tests {
                 ..
             }
         ));
+        assert!(matches!(requests[0].auth, Auth::None));
+        assert!(matches!(requests[11].auth, Auth::Inherit));
         assert!(matches!(&requests[5].body, Body::UrlEncoded(fields) if fields.len() == 1));
         assert!(matches!(
             requests[6].body,

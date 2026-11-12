@@ -1,4 +1,5 @@
 pub mod accent;
+pub mod auth;
 pub mod body_format;
 pub mod collection;
 pub mod command;
@@ -9,6 +10,7 @@ pub mod environment_selection;
 pub mod history;
 pub mod http;
 pub mod json_body;
+pub mod layers;
 pub mod layout;
 pub mod mcp;
 pub mod navigation;

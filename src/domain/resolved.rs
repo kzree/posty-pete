@@ -102,7 +102,8 @@ impl Request {
                 .any(|header| self.sends_header(header) && header.key.eq_ignore_ascii_case(name))
         };
         match &self.auth {
-            Auth::None => false,
+            // Requests are resolved with their effective auth, which is never Inherit.
+            Auth::Inherit | Auth::None => false,
             Auth::ApiKey { key, location, .. } => {
                 !key.is_empty()
                     && match location {

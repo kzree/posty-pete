@@ -19,6 +19,7 @@ use crate::domain::request::{ApiKeyLocation, Auth};
 #[derive(Clone, Copy, Default, PartialEq)]
 enum AuthKind {
     #[default]
+    Inherit,
     None,
     ApiKey,
     Basic,
@@ -26,10 +27,17 @@ enum AuthKind {
 }
 
 impl AuthKind {
-    const ALL: [AuthKind; 4] = [Self::None, Self::ApiKey, Self::Basic, Self::Bearer];
+    const ALL: [AuthKind; 5] = [
+        Self::Inherit,
+        Self::None,
+        Self::ApiKey,
+        Self::Basic,
+        Self::Bearer,
+    ];
 
     fn label(self) -> &'static str {
         match self {
+            Self::Inherit => "Inherit",
             Self::None => "No auth",
             Self::ApiKey => "API key",
             Self::Basic => "Basic auth",
@@ -122,6 +130,7 @@ impl AuthEditor {
     pub fn set_auth(&mut self, auth: &Auth, window: &mut Window, cx: &mut Context<Self>) {
         let empty = String::new();
         let (kind, api_key_name, api_key_value, username, password, token) = match auth {
+            Auth::Inherit => (AuthKind::Inherit, &empty, &empty, &empty, &empty, &empty),
             Auth::None => (AuthKind::None, &empty, &empty, &empty, &empty, &empty),
             Auth::ApiKey { key, value, .. } => {
                 (AuthKind::ApiKey, key, value, &empty, &empty, &empty)
@@ -156,6 +165,7 @@ impl AuthEditor {
     pub fn auth(&self, cx: &App) -> Auth {
         let text = |input: &Entity<InputState>| input.read(cx).value().to_string();
         match self.kind {
+            AuthKind::Inherit => Auth::Inherit,
             AuthKind::None => Auth::None,
             AuthKind::ApiKey => Auth::ApiKey {
                 key: text(&self.api_key_name),
@@ -188,6 +198,11 @@ impl Render for AuthEditor {
             );
 
         let fields = match self.kind {
+            AuthKind::Inherit => div()
+                .text_sm()
+                .text_color(muted)
+                .child("Uses the auth from the environment or collection.")
+                .into_any_element(),
             AuthKind::None => div()
                 .text_sm()
                 .text_color(muted)

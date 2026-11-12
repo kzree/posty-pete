@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    environment::{self, Environment, NEW_ENVIRONMENT_NAME, copy_of, unique_name},
-    request::{KeyValue, Request},
-    variables::Variables,
+    environment::{Environment, NEW_ENVIRONMENT_NAME, copy_of, unique_name},
+    layers::Layers,
+    request::{Auth, KeyValue, Request},
 };
 
 /// A named tree of folders and saved requests, stored as one JSON file.
@@ -19,6 +19,17 @@ pub struct Collection {
     pub variables: Vec<KeyValue>,
     #[serde(default)]
     pub environments: Vec<Environment>,
+    /// Inherit means the same as `None` here: there's nothing to inherit from.
+    #[serde(default = "no_auth", skip_serializing_if = "sets_no_auth")]
+    pub auth: Auth,
+}
+
+fn no_auth() -> Auth {
+    Auth::None
+}
+
+fn sets_no_auth(auth: &Auth) -> bool {
+    matches!(auth, Auth::None | Auth::Inherit)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -149,7 +160,7 @@ pub fn rename_environment(
 }
 
 /// Inserts a copy of the environment after it, in the same collection (see
-/// [`environment::copy_of`]). Returns the copy's id, or `None`, changing (and
+/// [`copy_of`]). Returns the copy's id, or `None`, changing (and
 /// copying) nothing, if there's no such environment.
 pub fn duplicate_environment(
     collections: &mut [Arc<Collection>],
@@ -333,6 +344,7 @@ impl Collection {
             items: Vec::new(),
             variables: Vec::new(),
             environments: Vec::new(),
+            auth: Auth::None,
         }
     }
 
@@ -340,24 +352,14 @@ impl Collection {
         self.environments.iter().find(|env| env.id == id)
     }
 
-    /// The environment's variables, then those of the shared environment it's
-    /// based on, then the collection's; the first wins. An unknown environment
-    /// or base is left out.
-    pub fn variables_with(
-        &self,
+    /// What a request in this collection resolves against with
+    /// `environment_id` active; see [`Layers::collection`].
+    pub fn layers<'a>(
+        &'a self,
         environment_id: Option<Uuid>,
-        shared: &[Arc<Environment>],
-    ) -> Variables {
-        let environment = environment_id.and_then(|id| self.environment(id));
-        let base = environment
-            .and_then(|env| env.base)
-            .and_then(|id| environment::find(shared, id));
-        let environments = environment.into_iter().chain(base);
-        Variables::layered(
-            environments
-                .map(|env| env.variables.as_slice())
-                .chain([self.variables.as_slice()]),
-        )
+        shared: &'a [Arc<Environment>],
+    ) -> Layers<'a> {
+        Layers::collection(self, environment_id, shared)
     }
 
     pub fn find_request(&self, id: Uuid) -> Option<&SavedRequest> {
@@ -512,7 +514,29 @@ fn find_request_in(items: &[Item], id: Uuid) -> Option<&SavedRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::{Auth, Body, HttpMethod, KeyValue};
+    use crate::domain::{
+        environment,
+        request::{Body, HttpMethod, KeyValue},
+    };
+
+    #[test]
+    fn new_requests_inherit_auth() {
+        let mut collections = Vec::new();
+        let (collection_id, request_id) = add_request_at(
+            &mut collections,
+            Location::NewCollection,
+            NEW_REQUEST_NAME,
+            Request::default(),
+        )
+        .unwrap();
+        let collection = &collections[0];
+        assert_eq!(collection.id, collection_id);
+        assert_eq!(collection.auth, Auth::None);
+        assert_eq!(
+            collection.find_request(request_id).unwrap().request.auth,
+            Auth::Inherit
+        );
+    }
 
     fn request(url: &str) -> Request {
         Request {
@@ -624,6 +648,40 @@ mod tests {
         assert_eq!(value["variables"][0]["key"], "host");
         let reloaded: Collection = serde_json::from_value(value).unwrap();
         assert_eq!(reloaded.variables, loaded.variables);
+    }
+
+    #[test]
+    fn json_without_auth_loads_as_none_and_saves_without_it() {
+        let json = r#"{
+            "id": "6f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f",
+            "name": "Old",
+            "items": [{"type": "request", "id": "7f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f",
+                       "name": "R", "request": {"method": "Get", "url": "x", "params": [],
+                       "headers": [], "body": "None", "auth": "None"}}],
+            "variables": [],
+            "environments": [{"id": "8f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f", "name": "Dev",
+                              "variables": []}]
+        }"#;
+        let mut loaded: Collection = serde_json::from_str(json).unwrap();
+        assert_eq!(loaded.auth, Auth::None);
+        assert_eq!(loaded.environments[0].auth, Auth::Inherit);
+        let Item::Request(saved) = &loaded.items[0] else {
+            panic!("expected a request");
+        };
+        assert_eq!(saved.request.auth, Auth::None);
+        let expected: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+
+        loaded.auth = Auth::Inherit;
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
+
+        loaded.auth = Auth::Basic {
+            username: "u".into(),
+            password: "p".into(),
+        };
+        let value = serde_json::to_value(&loaded).unwrap();
+        let reloaded: Collection = serde_json::from_value(value).unwrap();
+        assert_eq!(reloaded.auth, loaded.auth);
     }
 
     #[test]
@@ -1053,15 +1111,15 @@ mod tests {
         ));
         let collection = &collections[0];
 
-        let variables = collection.variables_with(Some(environment_id), &[]);
+        let variables = collection.layers(Some(environment_id), &[]).variables();
         assert_eq!(variables.get("host"), Some("staging"));
         assert_eq!(variables.get("token"), Some("t"));
 
-        let variables = collection.variables_with(None, &[]);
+        let variables = collection.layers(None, &[]).variables();
         assert_eq!(variables.get("host"), Some("local"));
         assert_eq!(
-            collection.variables_with(Some(Uuid::new_v4()), &[]),
-            collection.variables_with(None, &[])
+            collection.layers(Some(Uuid::new_v4()), &[]).variables(),
+            collection.layers(None, &[]).variables()
         );
     }
 
@@ -1104,13 +1162,15 @@ mod tests {
             Some(shared[0].id)
         ));
 
-        let variables = collections[0].variables_with(Some(environment_id), &shared);
+        let variables = collections[0]
+            .layers(Some(environment_id), &shared)
+            .variables();
         assert_eq!(variables.get("host"), Some("own-host"));
         assert_eq!(variables.get("token"), Some("shared-token"));
         assert_eq!(variables.get("region"), Some("eu"));
         assert_eq!(variables.get("user"), Some("me"));
 
-        let without_environment = collections[0].variables_with(None, &shared);
+        let without_environment = collections[0].layers(None, &shared).variables();
         assert_eq!(without_environment.get("region"), Some("us"));
     }
 
@@ -1130,7 +1190,9 @@ mod tests {
             Some(Uuid::new_v4()),
         );
 
-        let variables = collections[0].variables_with(Some(environment_id), &shared_base());
+        let variables = collections[0]
+            .layers(Some(environment_id), &shared_base())
+            .variables();
         assert_eq!(variables.get("host"), Some("own-host"));
         assert_eq!(variables.get("region"), Some("us"));
         assert_eq!(variables.get("token"), None);

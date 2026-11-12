@@ -13,10 +13,10 @@ use crate::{
         environment_selection::EnvironmentSelection,
         history::{HistoryRecord, Outcome},
         http,
+        layers::Layers,
         request::Request,
         response::Response,
         send_error::SendError,
-        variables::Variables,
     },
     settings::AppSettings,
     ui::clipboard::copy_with_notification,
@@ -41,28 +41,21 @@ fn flatten_send_result(
     joined.unwrap_or_else(|e| Err(SendError::new(format!("task failed: {e}"))))
 }
 
-/// The variables that apply to what the editor holds: a saved request's
-/// collection's, with that collection's active environment and its base; the
-/// draft's source's for the draft. `None` with nothing to resolve against.
-fn editor_variables(
+/// What the editor's request resolves against: a saved request's collection,
+/// with that collection's active environment and its base; the draft's source
+/// for the draft. `None` with nothing to resolve against.
+fn editor_layers<'a>(
     content: EditorContent,
     selection: &EnvironmentSelection,
-    collections: &[Arc<Collection>],
-    shared: &[Arc<Environment>],
-) -> Option<Variables> {
+    collections: &'a [Arc<Collection>],
+    shared: &'a [Arc<Environment>],
+) -> Option<Layers<'a>> {
     match content {
         EditorContent::Saved { collection_id, .. } => collections
             .iter()
             .find(|collection| collection.id == collection_id)
-            .map(|collection| selection.variables(collection, shared)),
-        EditorContent::Draft => selection.draft_variables(collections, shared),
-    }
-}
-
-fn resolve(request: Request, variables: Option<&Variables>) -> Request {
-    match variables {
-        Some(variables) => request.with_variables(variables),
-        None => request,
+            .map(|collection| selection.layers(collection, shared)),
+        EditorContent::Draft => selection.draft_layers(collections, shared),
     }
 }
 
@@ -72,25 +65,26 @@ impl Workspace {
         self.client.apply(&AppSettings::get(cx).requests);
     }
 
-    /// The request the editor's `request` sends, with the variables as they are now.
+    /// The request the editor's `request` sends, with the variables and
+    /// inherited auth as they are now.
     fn resolve_editor_request(&mut self, request: Request, cx: &mut Context<Self>) -> Request {
         self.flush_pending_variables(cx);
-        let variables = self.editor_variables(cx);
-        resolve(request, variables.as_ref())
+        request.resolved_with(self.editor_layers(cx).as_ref())
     }
 
-    fn editor_variables(&self, cx: &App) -> Option<Variables> {
+    fn editor_layers<'a>(&self, cx: &'a App) -> Option<Layers<'a>> {
         let collections = self.collections.read(cx).all();
         let shared = self.shared_environments.read(cx).all();
-        editor_variables(self.editor_content, &self.environments, collections, shared)
+        editor_layers(self.editor_content, &self.environments, collections, shared)
     }
 
     /// Hands the editor the variables `request` references but that don't
-    /// resolve. Without a collection to resolve against, all of them.
+    /// resolve, including those in inherited auth. Without a collection to
+    /// resolve against, all of them.
     pub(super) fn sync_unresolved_variables(&mut self, request: &Request, cx: &mut Context<Self>) {
-        let variables = self.editor_variables(cx);
-        let resolvable = variables.is_some();
-        let names = request.unresolved_variables(&variables.unwrap_or_default());
+        let layers = self.editor_layers(cx);
+        let resolvable = layers.is_some();
+        let names = request.unresolved_variables_with(layers.as_ref());
         self.request_editor.update(cx, |editor, cx| {
             editor.set_unresolved_variables(&names, resolvable, cx)
         });
@@ -250,7 +244,8 @@ mod tests {
     use super::*;
     use crate::domain::{
         collection::{add_environment, set_environment_base, set_environment_variables},
-        request::KeyValue,
+        request::{Auth, KeyValue},
+        variables::Variables,
     };
 
     fn row(enabled: bool, key: &str, value: &str) -> KeyValue {
@@ -292,8 +287,20 @@ mod tests {
         }
     }
 
+    fn editor_variables(
+        content: EditorContent,
+        selection: &EnvironmentSelection,
+        collections: &[Arc<Collection>],
+        shared: &[Arc<Environment>],
+    ) -> Option<Variables> {
+        editor_layers(content, selection, collections, shared)
+            .as_ref()
+            .map(Layers::variables)
+    }
+
     fn templated() -> Request {
         Request {
+            auth: Auth::None,
             url: "{{base}}/users/{{id}}".into(),
             headers: vec![row(true, "{{k}}", "v")],
             ..Request::default()
@@ -309,8 +316,8 @@ mod tests {
         ]);
         let collections = [other, own.clone()];
 
-        let variables = editor_variables(saved_in(own.id), &none(), &collections, &[]);
-        let sent = resolve(templated(), variables.as_ref());
+        let layers = editor_layers(saved_in(own.id), &none(), &collections, &[]);
+        let sent = templated().resolved_with(layers.as_ref());
 
         assert_eq!(sent.url, "https://api/users/{{id}}");
     }
@@ -319,17 +326,18 @@ mod tests {
     fn draft_and_missing_collection_are_sent_unchanged() {
         let collections = [collection(vec![row(true, "base", "https://api")])];
         for content in [EditorContent::Draft, saved_in(Uuid::new_v4())] {
-            let variables = editor_variables(content, &none(), &collections, &[]);
+            let layers = editor_layers(content, &none(), &collections, &[]);
+            let variables = layers.as_ref().map(Layers::variables);
             assert_eq!(variables, None);
-            assert_eq!(resolve(templated(), variables.as_ref()), templated());
+            assert_eq!(templated().resolved_with(layers.as_ref()), templated());
         }
     }
 
     #[test]
     fn key_resolving_to_empty_is_dropped_when_sent() {
         let collections = [collection(vec![row(true, "k", "")])];
-        let variables = editor_variables(saved_in(collections[0].id), &none(), &collections, &[]);
-        let sent = resolve(templated(), variables.as_ref());
+        let layers = editor_layers(saved_in(collections[0].id), &none(), &collections, &[]);
+        let sent = templated().resolved_with(layers.as_ref());
 
         assert_eq!(sent.headers, [row(true, "", "v")]);
         assert!(sent.resolve().headers.is_empty());
@@ -343,11 +351,13 @@ mod tests {
         let mut selection = none();
         selection.set_active_environment(own.id, Some(staging));
 
-        let variables = editor_variables(saved_in(own.id), &selection, &collections, &[]);
+        let layers = editor_layers(saved_in(own.id), &selection, &collections, &[]);
+        let variables = layers.as_ref().map(Layers::variables);
         assert_eq!(variables.unwrap().get("base"), Some("https://staging"));
 
         selection.set_active_environment(own.id, None);
-        let variables = editor_variables(saved_in(own.id), &selection, &collections, &[]);
+        let layers = editor_layers(saved_in(own.id), &selection, &collections, &[]);
+        let variables = layers.as_ref().map(Layers::variables);
         assert_eq!(variables.unwrap().get("base"), Some("https://api"));
     }
 
@@ -359,8 +369,8 @@ mod tests {
         let mut selection = none();
         selection.set_draft_collection(Some(own.id), Some(staging));
 
-        let variables = editor_variables(EditorContent::Draft, &selection, &collections, &[]);
-        let sent = resolve(templated(), variables.as_ref());
+        let layers = editor_layers(EditorContent::Draft, &selection, &collections, &[]);
+        let sent = templated().resolved_with(layers.as_ref());
         assert_eq!(sent.url, "https://staging/users/{{id}}");
 
         selection.set_draft_collection(None, None);
@@ -415,18 +425,57 @@ mod tests {
         let mut selection = none();
         selection.set_draft_shared_environment(dev.id);
 
-        let variables = editor_variables(
+        let layers = editor_layers(
             EditorContent::Draft,
             &selection,
             &collections,
             std::slice::from_ref(&dev),
         );
-        let sent = resolve(templated(), variables.as_ref());
+        let sent = templated().resolved_with(layers.as_ref());
         assert_eq!(sent.url, "https://dev/users/{{id}}");
 
         assert_eq!(
             editor_variables(EditorContent::Draft, &selection, &collections, &[]),
             None
         );
+    }
+
+    #[test]
+    fn inherit_sends_the_active_environments_auth_with_its_variables() {
+        let mut own = Collection::new("API");
+        own.variables = vec![row(true, "token", "from-collection")];
+        own.auth = Auth::Bearer {
+            token: "collection".into(),
+        };
+        let mut staging = Environment::new("Staging");
+        staging.auth = Auth::Bearer {
+            token: "{{token}}".into(),
+        };
+        let staging_id = staging.id;
+        own.environments.push(staging);
+        let collections = [Arc::new(own)];
+        let id = collections[0].id;
+        let mut selection = none();
+        let inherit = Request::default();
+
+        let layers = editor_layers(saved_in(id), &selection, &collections, &[]);
+        assert_eq!(
+            inherit.resolved_with(layers.as_ref()).auth,
+            Auth::Bearer {
+                token: "collection".into()
+            }
+        );
+
+        selection.set_active_environment(id, Some(staging_id));
+        let layers = editor_layers(saved_in(id), &selection, &collections, &[]);
+        assert_eq!(
+            inherit.resolved_with(layers.as_ref()).auth,
+            Auth::Bearer {
+                token: "from-collection".into()
+            }
+        );
+
+        let layers = editor_layers(EditorContent::Draft, &selection, &collections, &[]);
+        assert_eq!(inherit.resolved_with(layers.as_ref()).auth, Auth::None);
     }
 }
