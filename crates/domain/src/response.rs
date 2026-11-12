@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::time::Duration;
 
 use encoding_rs::{Encoding, UTF_8};
@@ -55,7 +56,7 @@ impl Response {
             text: None,
         };
         response.format = BodyFormat::from_content_type(response.content_type());
-        response.text = decode_body(&body, response.content_type());
+        response.text = decode_body(body, response.content_type());
         response.binary = response.text.is_none();
         response
     }
@@ -183,14 +184,29 @@ fn pretty_json(text: &str) -> Option<String> {
     Some(out)
 }
 
-/// Decodes with the BOM or declared charset, else strict UTF-8.
-fn decode_body(bytes: &[u8], content_type: Option<&str>) -> Option<String> {
-    let (encoding, bytes) = match Encoding::for_bom(bytes) {
-        Some((encoding, bom_len)) => (encoding, &bytes[bom_len..]),
-        None => (declared_charset(content_type)?, bytes),
+/// Decodes with the BOM or declared charset, else strict UTF-8. Reuses the
+/// buffer when the text is UTF-8 (or ASCII under an ASCII-compatible charset).
+fn decode_body(mut bytes: Vec<u8>, content_type: Option<&str>) -> Option<String> {
+    let (encoding, bom_len) = match Encoding::for_bom(&bytes) {
+        Some(found) => found,
+        None => (declared_charset(content_type)?, 0),
     };
-    let text = encoding.decode_without_bom_handling_and_without_replacement(bytes)?;
-    (!text.contains('\0')).then(|| text.into_owned())
+    let transcoded = if encoding == UTF_8 {
+        None
+    } else {
+        match encoding.decode_without_bom_handling_and_without_replacement(&bytes[bom_len..])? {
+            Cow::Owned(text) => Some(text),
+            Cow::Borrowed(_) => None,
+        }
+    };
+    let text = match transcoded {
+        Some(text) => text,
+        None => {
+            bytes.drain(..bom_len);
+            String::from_utf8(bytes).ok()?
+        }
+    };
+    (!text.contains('\0')).then_some(text)
 }
 
 /// `None` for an unsupported charset; UTF-8 when none is declared.
@@ -215,7 +231,7 @@ mod tests {
     use super::*;
 
     fn decode(bytes: &[u8], content_type: &str) -> Option<String> {
-        decode_body(bytes, Some(content_type))
+        decode_body(bytes.to_vec(), Some(content_type))
     }
 
     #[test]
@@ -225,7 +241,7 @@ mod tests {
             Some("héllo ✓")
         );
         assert_eq!(
-            decode_body("{\"a\":\"ü\"}".as_bytes(), None).as_deref(),
+            decode_body("{\"a\":\"ü\"}".into(), None).as_deref(),
             Some("{\"a\":\"ü\"}")
         );
     }
@@ -236,6 +252,20 @@ mod tests {
             decode(b"\xEF\xBB\xBF{}", "application/json").as_deref(),
             Some("{}")
         );
+    }
+
+    #[test]
+    fn utf8_decoding_reuses_the_buffer() {
+        for (body, content_type) in [
+            (&b"{\"a\":\"\xC3\xBC\"}"[..], None),
+            (b"\xEF\xBB\xBF{}", Some("application/json")),
+            (b"plain ascii", Some("text/plain; charset=ISO-8859-1")),
+        ] {
+            let bytes = body.to_vec();
+            let ptr = bytes.as_ptr();
+            let text = decode_body(bytes, content_type).unwrap();
+            assert_eq!(text.as_ptr(), ptr, "{content_type:?}");
+        }
     }
 
     #[test]
@@ -257,7 +287,7 @@ mod tests {
     #[test]
     fn malformed_utf8_is_not_shown_as_text() {
         assert_eq!(decode(b"caf\xE9", "text/plain; charset=utf-8"), None);
-        assert_eq!(decode_body(b"caf\xE9", None), None);
+        assert_eq!(decode_body(b"caf\xE9".to_vec(), None), None);
     }
 
     #[test]
