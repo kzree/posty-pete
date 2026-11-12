@@ -282,6 +282,29 @@ fn library_menu(
             )
             .separator();
     }
+    if let MenuTarget::Collection(collection_id) = target
+        && panel.upgrade().is_some_and(|panel| {
+            panel
+                .read(cx)
+                .list
+                .read(cx)
+                .delegate()
+                .is_imported(collection_id)
+        })
+    {
+        let panel = panel.clone();
+        menu = menu
+            .item(
+                PopupMenuItem::new("Update from spec…").on_click(move |_, _, cx| {
+                    panel
+                        .update(cx, |_, cx| {
+                            cx.emit(LibraryPanelEvent::UpdateFromSpec(collection_id))
+                        })
+                        .ok();
+                }),
+            )
+            .separator();
+    }
     let (rename_panel, delete_panel) = (panel.clone(), panel.clone());
     menu.item(
         PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {

@@ -94,12 +94,29 @@ pub enum SourceLocation {
     File(PathBuf),
 }
 
+impl SourceLocation {
+    /// The URL, or the file's name.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Url(url) => url.clone(),
+            Self::File(path) => path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            ),
+        }
+    }
+}
+
 /// What an imported item came from, and a hash of it as imported, which
 /// tells whether it changed since.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Origin {
     pub key: String,
     pub hash: String,
+    /// Set on a request from an operation without a tag, which the import
+    /// put at the top level.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub untagged: bool,
 }
 
 mod rfc3339 {
@@ -508,6 +525,34 @@ impl Collection {
         }
     }
 
+    pub fn find_folder_mut(&mut self, id: Uuid) -> Option<&mut Folder> {
+        let (items, index) = locate(&mut self.items, id)?;
+        match &mut items[index] {
+            Item::Folder(folder) => Some(folder),
+            Item::Request(_) => None,
+        }
+    }
+
+    /// Forgets the spec the collection was imported from: clears `source`
+    /// and every origin. Returns `false` if there was nothing to clear.
+    pub fn stop_syncing(&mut self) -> bool {
+        fn clear(items: &mut [Item]) -> bool {
+            let mut cleared = false;
+            for item in items {
+                match item {
+                    Item::Request(saved) => cleared |= saved.origin.take().is_some(),
+                    Item::Folder(folder) => {
+                        cleared |= folder.origin.take().is_some();
+                        cleared |= clear(&mut folder.items);
+                    }
+                }
+            }
+            cleared
+        }
+        let had_source = self.source.take().is_some();
+        clear(&mut self.items) || had_source
+    }
+
     /// Adds `item` to the folder `parent`, or to the root when `parent` is `None`.
     /// Returns false if `parent` isn't a folder in this collection.
     pub fn add_item(&mut self, parent: Option<Uuid>, item: Item) -> bool {
@@ -559,7 +604,7 @@ impl Collection {
 }
 
 impl Item {
-    fn id(&self) -> Uuid {
+    pub fn id(&self) -> Uuid {
         match self {
             Self::Folder(folder) => folder.id,
             Self::Request(request) => request.id,
@@ -871,11 +916,13 @@ mod tests {
         folder.origin = Some(Origin {
             key: "pets".into(),
             hash: folder.content_hash(),
+            untagged: false,
         });
         let mut saved = SavedRequest::new("List pets", request("{{baseUrl}}/pets"));
         saved.origin = Some(Origin {
             key: "listPets".into(),
             hash: saved.content_hash(),
+            untagged: false,
         });
         folder.items.push(Item::Request(saved));
         collection.items.push(Item::Folder(folder));
@@ -890,6 +937,7 @@ mod tests {
             variables: vec![Origin {
                 key: "baseUrl".into(),
                 hash: value_hash("https://example.com"),
+                untagged: false,
             }],
             auth_hash: auth_hash(&Auth::None),
         });
@@ -919,6 +967,30 @@ mod tests {
     }
 
     #[test]
+    fn source_labels_are_the_url_or_the_file_name() {
+        let url = SourceLocation::Url("https://example.com/openapi.json".into());
+        assert_eq!(url.label(), "https://example.com/openapi.json");
+        let file = SourceLocation::File("/specs/pets.yaml".into());
+        assert_eq!(file.label(), "pets.yaml");
+        assert_eq!(SourceLocation::File("/".into()).label(), "/");
+    }
+
+    #[test]
+    fn stop_syncing_clears_the_source_and_every_origin() {
+        let mut collection = imported_fixture();
+        let folder_id = folder(&collection, &[0]).id;
+        assert!(collection.stop_syncing());
+        assert!(collection.source.is_none());
+        let folder = collection.find_folder(folder_id).unwrap();
+        assert!(folder.origin.is_none());
+        let Item::Request(saved) = &folder.items[0] else {
+            panic!("expected a request");
+        };
+        assert!(saved.origin.is_none());
+        assert!(!collection.stop_syncing());
+    }
+
+    #[test]
     fn content_hashes_are_stable() {
         assert_eq!(fnv1a(b""), "cbf29ce484222325");
         assert_eq!(fnv1a(b"a"), "af63dc4c8601ec8c");
@@ -936,6 +1008,7 @@ mod tests {
         copy.origin = Some(Origin {
             key: "k".into(),
             hash: "h".into(),
+            untagged: false,
         });
         assert_eq!(saved.content_hash(), copy.content_hash());
         copy.request.url.push('/');

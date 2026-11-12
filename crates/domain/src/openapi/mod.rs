@@ -7,6 +7,7 @@ mod document;
 mod example;
 pub mod load;
 mod refs;
+pub mod update;
 mod warnings;
 
 #[cfg(test)]

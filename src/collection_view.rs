@@ -1,5 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
+use chrono::Local;
+
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, Role, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window,
@@ -8,7 +10,7 @@ use gpui::{
 use gpui_component::{
     ActiveTheme, Disableable, IconName, Sizable, StyledExt,
     button::{Button, ButtonVariants},
-    form::{field, v_form},
+    form::{Field, field, v_form},
     h_flex,
     input::{Input, InputEvent, InputState},
     scroll::ScrollableElement,
@@ -18,7 +20,7 @@ use gpui_component::{
 use uuid::Uuid;
 
 use domain::{
-    collection::Collection,
+    collection::{Collection, CollectionSource},
     defined_names::DefinedNames,
     environment::Environment,
     request::{Auth, KeyValue},
@@ -27,6 +29,7 @@ use domain::{
 use crate::ui::{
     auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
     auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
+    confirm_dialog::open_confirm_dialog,
     environments_editor::{
         BaseOptions, EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
     },
@@ -105,6 +108,10 @@ pub enum CollectionViewEvent {
     },
     /// Open the shared environments page, with `Uuid` selected if given.
     ManageSharedEnvironments(Option<Uuid>),
+    UpdateFromSpec(Uuid),
+    ChangeSource(Uuid),
+    /// Confirmed already.
+    StopSyncing(Uuid),
     Back,
 }
 
@@ -497,27 +504,110 @@ impl CollectionView {
         cx.emit(CollectionViewEvent::Rename { id, name });
     }
 
+    fn confirm_stop_syncing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(collection) = &self.collection else {
+            return;
+        };
+        let (id, name) = (collection.id, collection.name.clone());
+        let view = cx.weak_entity();
+        open_confirm_dialog(
+            format!("Stop syncing “{name}”?"),
+            "Its requests stay as they are, but it can no longer be updated from the spec.",
+            "Stop syncing",
+            move |_, cx| {
+                view.update(cx, |_, cx| cx.emit(CollectionViewEvent::StopSyncing(id)))
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn render_source(&self, id: Uuid, source: &CollectionSource, cx: &mut Context<Self>) -> Field {
+        let updated = source
+            .imported_at
+            .with_timezone(&Local)
+            .format("%b %-d, %Y at %H:%M");
+        let details = match source.version.as_str() {
+            "" => format!("Last updated {updated}"),
+            version => format!("Version {version} · Last updated {updated}"),
+        };
+        field().label("Source").child(
+            v_flex()
+                .w_full()
+                .gap_3()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .text_sm()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .child(format!("Imported from {}", source.location.label())),
+                        )
+                        .child(div().text_color(cx.theme().muted_foreground).child(details)),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(
+                            Button::new("collection-update-from-spec")
+                                .outline()
+                                .label("Update from spec…")
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(CollectionViewEvent::UpdateFromSpec(id))
+                                })),
+                        )
+                        .child(
+                            Button::new("collection-change-source")
+                                .outline()
+                                .label("Change source…")
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(CollectionViewEvent::ChangeSource(id))
+                                })),
+                        )
+                        .child(
+                            Button::new("collection-stop-syncing")
+                                .ghost()
+                                .label("Stop syncing…")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.confirm_stop_syncing(window, cx)
+                                })),
+                        ),
+                ),
+        )
+    }
+
     fn render_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let can_save = self.pending_name(cx).is_some();
-        v_form().max_w(px(480.)).child(
-            field().label("Name").child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&self.name).aria_label("Name")),
-                    )
-                    .child(
-                        Button::new("collection-save")
-                            .primary()
-                            .label("Save")
-                            .disabled(!can_save)
-                            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-                    ),
-            ),
-        )
+        let source = self.collection.as_ref().and_then(|collection| {
+            let source = collection.source.as_ref()?;
+            Some(self.render_source(collection.id, source, cx))
+        });
+        v_form()
+            .max_w(px(480.))
+            .child(
+                field().label("Name").child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(Input::new(&self.name).aria_label("Name")),
+                        )
+                        .child(
+                            Button::new("collection-save")
+                                .primary()
+                                .label("Save")
+                                .disabled(!can_save)
+                                .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
+                        ),
+                ),
+            )
+            .children(source)
     }
 
     fn render_not_found(&self, cx: &mut Context<Self>) -> impl IntoElement {

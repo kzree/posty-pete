@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use domain::{
     collection::{self, Collection, Folder, Item, Location, SavedRequest},
+    openapi::update::{self, Choices},
     request::{Auth, KeyValue, Request},
     store::{
         self,
@@ -324,6 +325,31 @@ impl Collections {
         cx.notify();
         for id in changed {
             self.enqueue_save(id, cx);
+        }
+    }
+
+    /// Updates an imported collection from `fresh`, a new import of its
+    /// spec, with one save. Returns `false` if there's no such collection.
+    pub fn apply_spec_update(
+        &mut self,
+        collection_id: Uuid,
+        fresh: &Collection,
+        choices: &Choices,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(slot) = self.collections.iter_mut().find(|c| c.id == collection_id) else {
+            return false;
+        };
+        *slot = Arc::new(update::apply(slot, fresh, choices));
+        self.sort();
+        self.changed(collection_id, cx);
+        true
+    }
+
+    /// Clears the collection's source and origins, so it's no longer updated from a spec.
+    pub fn stop_syncing(&mut self, collection_id: Uuid, cx: &mut Context<Self>) {
+        if self.modify(collection_id, Collection::stop_syncing) {
+            self.changed(collection_id, cx);
         }
     }
 

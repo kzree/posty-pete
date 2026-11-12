@@ -42,6 +42,7 @@ pub enum LibraryPanelEvent {
         name: String,
     },
     DeleteCollection(Uuid),
+    UpdateFromSpec(Uuid),
     DeleteItem {
         collection_id: Uuid,
         item_id: Uuid,

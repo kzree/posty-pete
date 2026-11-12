@@ -20,6 +20,7 @@ mod settings_page;
 mod shared_environments;
 mod shared_environments_view;
 mod sidebar;
+mod spec_update_dialog;
 mod status_bar;
 mod theme;
 mod ui;

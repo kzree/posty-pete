@@ -15,6 +15,7 @@ mod response_cache;
 mod routes;
 mod save;
 mod send;
+mod spec_update;
 
 use std::cell::Cell;
 

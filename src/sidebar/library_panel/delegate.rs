@@ -172,6 +172,12 @@ impl LibraryDelegate {
         }
     }
 
+    pub(super) fn is_imported(&self, collection_id: Uuid) -> bool {
+        self.collections
+            .iter()
+            .any(|collection| collection.id == collection_id && collection.source.is_some())
+    }
+
     fn rebuild_rows(&mut self) {
         self.rows = flatten(
             &self.collections,

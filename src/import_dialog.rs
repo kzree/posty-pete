@@ -1,5 +1,13 @@
 use std::{path::PathBuf, rc::Rc};
 
+use domain::{
+    collection::SourceLocation,
+    http::Client,
+    openapi::{
+        ImportResult,
+        load::{self, FetchGuard, FetchHandle, LoadError, Preview},
+    },
+};
 use gpui::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _,
@@ -14,16 +22,6 @@ use gpui_component::{
     spinner::Spinner,
     tab::TabBar,
     v_flex,
-};
-use tokio::task::AbortHandle;
-
-use domain::{
-    http::Client,
-    openapi::{
-        ImportResult,
-        load::{self, LoadError, Preview},
-    },
-    send_error::SendError,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,17 +51,28 @@ enum Status {
     Failed(SharedString),
 }
 
-/// A load in flight. Dropping it aborts the download and stops `finish`
-/// from running.
+/// A load in flight. Dropping it aborts the load and stops `finish` from
+/// running.
 struct PendingLoad {
     _task: Task<()>,
-    abort: Option<AbortHandle>,
+    _guard: FetchGuard,
 }
 
-impl Drop for PendingLoad {
-    fn drop(&mut self) {
-        if let Some(abort) = &self.abort {
-            abort.abort();
+/// What the dialog is for: importing a new collection, or picking another
+/// source for an imported one.
+pub struct ImportDialogOptions {
+    pub title: &'static str,
+    pub confirm_label: &'static str,
+    /// Picks the mode, and fills in the URL.
+    pub initial: Option<SourceLocation>,
+}
+
+impl ImportDialogOptions {
+    pub fn import() -> Self {
+        Self {
+            title: "Import from OpenAPI",
+            confirm_label: "Import",
+            initial: None,
         }
     }
 }
@@ -84,18 +93,26 @@ struct ImportDialog {
 impl ImportDialog {
     fn new(
         client: Result<Client, SharedString>,
+        initial: Option<&SourceLocation>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let url = cx
-            .new(|cx| InputState::new(window, cx).placeholder("https://example.com/openapi.json"));
+        let (mode, initial_url) = match initial {
+            Some(SourceLocation::Url(url)) => (Mode::Url, url.clone()),
+            Some(SourceLocation::File(_)) | None => (Mode::File, String::new()),
+        };
+        let url = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("https://example.com/openapi.json")
+                .default_value(initial_url)
+        });
         let subscription = cx.subscribe(&url, |this, _, event: &InputEvent, cx| {
             if let InputEvent::Change = event {
                 this.reset(cx);
             }
         });
         Self {
-            mode: Mode::File,
+            mode,
             path: None,
             url,
             client,
@@ -170,16 +187,20 @@ impl ImportDialog {
 
     fn load_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.path = Some(path.clone());
+        self.start(load::spawn_load_file(path), cx);
+    }
+
+    fn start(&mut self, handle: FetchHandle<ImportResult>, cx: &mut Context<Self>) {
         self.status = Status::Loading;
+        let guard = handle.guard();
         let task = cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_spawn(async move { load::load_file(path) })
-                .await;
-            this.update(cx, |this, cx| this.finish(result, cx)).ok();
+            if let Some(result) = handle.result().await {
+                this.update(cx, |this, cx| this.finish(result, cx)).ok();
+            }
         });
         self.pending = Some(PendingLoad {
             _task: task,
-            abort: None,
+            _guard: guard,
         });
         cx.notify();
     }
@@ -193,26 +214,7 @@ impl ImportDialog {
             Ok(client) => client.clone(),
             Err(error) => return self.fail(error.clone(), cx),
         };
-        self.status = Status::Loading;
-        let handle = load::spawn_fetch(client, url.clone());
-        let abort = handle.abort_handle();
-        let task = cx.spawn(async move |this, cx| {
-            let result = match handle.await {
-                Ok(Ok(text)) => {
-                    cx.background_spawn(async move { load::import_downloaded(&text, &url) })
-                        .await
-                }
-                Ok(Err(error)) => Err(error),
-                Err(error) if error.is_cancelled() => return,
-                Err(error) => Err(LoadError::Unreachable(SendError::new(error.to_string()))),
-            };
-            this.update(cx, |this, cx| this.finish(result, cx)).ok();
-        });
-        self.pending = Some(PendingLoad {
-            _task: task,
-            abort: Some(abort),
-        });
-        cx.notify();
+        self.start(load::spawn_load_url(client, url), cx);
     }
 
     fn finish(&mut self, result: Result<ImportResult, LoadError>, cx: &mut Context<Self>) {
@@ -375,6 +377,7 @@ impl Render for ImportDialog {
 /// A view of its own, so Import re-renders as the dialog loads.
 struct ImportFooter {
     dialog: Entity<ImportDialog>,
+    confirm_label: &'static str,
     _subscription: Subscription,
 }
 
@@ -387,7 +390,7 @@ impl Render for ImportFooter {
                 DialogAction::new().child(
                     Button::new("import-confirm")
                         .primary()
-                        .label("Import")
+                        .label(self.confirm_label)
                         .disabled(!loaded),
                 ),
             )
@@ -397,22 +400,25 @@ impl Render for ImportFooter {
 /// Opens the import dialog. `client` fetches spec URLs; `on_import` gets the
 /// converted collection once the user confirms the preview.
 pub fn open_import_dialog(
+    options: ImportDialogOptions,
     client: Result<Client, SharedString>,
     on_import: impl Fn(ImportResult, &mut Window, &mut App) + 'static,
     window: &mut Window,
     cx: &mut App,
 ) {
-    let dialog = cx.new(|cx| ImportDialog::new(client, window, cx));
+    let dialog = cx.new(|cx| ImportDialog::new(client, options.initial.as_ref(), window, cx));
     let footer = cx.new(|cx| ImportFooter {
         _subscription: cx.observe(&dialog, |_, _, cx| cx.notify()),
         dialog: dialog.clone(),
+        confirm_label: options.confirm_label,
     });
+    let title = options.title;
     let on_import = Rc::new(on_import);
 
     window.open_dialog(cx, move |modal, _, _| {
         let (for_ok, for_close, on_import) = (dialog.clone(), dialog.clone(), on_import.clone());
         modal
-            .title("Import from OpenAPI")
+            .title(title)
             .w(px(480.))
             .child(dialog.clone())
             .footer(footer.clone())

@@ -92,6 +92,7 @@ pub(super) fn convert(root: &Value, version: Version, location: SourceLocation) 
         saved.origin = Some(Origin {
             key,
             hash: saved.content_hash(),
+            untagged: operation.tag().is_none(),
         });
         let item = Item::Request(saved);
         match operation.tag() {
@@ -117,6 +118,7 @@ pub(super) fn convert(root: &Value, version: Version, location: SourceLocation) 
             folder.origin = Some(Origin {
                 key: tag,
                 hash: folder.content_hash(),
+                untagged: false,
             });
             Item::Folder(folder)
         })
@@ -136,6 +138,7 @@ pub(super) fn convert(root: &Value, version: Version, location: SourceLocation) 
             .map(|variable| Origin {
                 key: variable.key.clone(),
                 hash: value_hash(&variable.value),
+                untagged: false,
             })
             .collect(),
         auth_hash: auth_hash(&collection.auth),

@@ -15,7 +15,7 @@ use crate::{
     collections::CollectionsEvent,
     command_palette::CommandPaletteEvent,
     history::HistoryEvent,
-    import_dialog::open_import_dialog,
+    import_dialog::{ImportDialogOptions, open_import_dialog},
     request_editor::RequestEditorEvent,
     sidebar::{SidebarTab, history_panel::HistoryPanelEvent, library_panel::LibraryPanelEvent},
     ui::environments_editor::EnvironmentsEditorEvent,
@@ -151,6 +151,7 @@ impl Workspace {
             } => self.collections.update(cx, |collections, cx| {
                 collections.rename(*collection_id, *item_id, name.clone(), cx)
             }),
+            LibraryPanelEvent::UpdateFromSpec(id) => self.update_from_spec(*id, window, cx),
             LibraryPanelEvent::DeleteCollection(id) => self
                 .collections
                 .update(cx, |collections, cx| collections.delete(*id, cx)),
@@ -222,6 +223,7 @@ impl Workspace {
             .map_err(|error| SharedString::from(error.to_string()));
         let workspace = cx.weak_entity();
         open_import_dialog(
+            ImportDialogOptions::import(),
             client,
             move |result, window, cx| {
                 workspace
@@ -301,6 +303,9 @@ impl Workspace {
             CollectionViewEvent::ManageSharedEnvironments(id) => {
                 self.open_shared_environments(*id, window, cx)
             }
+            CollectionViewEvent::UpdateFromSpec(id) => self.update_from_spec(*id, window, cx),
+            CollectionViewEvent::ChangeSource(id) => self.change_source(*id, window, cx),
+            CollectionViewEvent::StopSyncing(id) => self.stop_syncing(*id, cx),
             CollectionViewEvent::Back => self.go_back_or_to_editor(window, cx),
         }
     }

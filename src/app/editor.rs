@@ -189,7 +189,7 @@ impl Workspace {
     }
 
     /// Loads the stored version of the editor's saved request, keeping the response view as is.
-    fn reload_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn reload_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(request) = self
             .editor_saved_request(cx)
             .map(|saved| saved.request.clone())

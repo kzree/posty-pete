@@ -9,7 +9,7 @@ use std::{
 };
 
 use reqwest::header::{ACCEPT, HeaderValue};
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinError, JoinHandle};
 
 use super::{BASE_URL_VARIABLE, ImportError, ImportResult, import};
 use crate::{
@@ -108,13 +108,78 @@ fn decode(bytes: Vec<u8>) -> Result<String, LoadError> {
     String::from_utf8(bytes).map_err(|_| LoadError::NotText)
 }
 
-/// Downloads the spec text on the shared runtime. Aborting the handle stops
-/// the download. The text goes nowhere else and isn't kept.
-pub fn spawn_fetch(
-    client: reqwest::Client,
-    url: url::Url,
-) -> JoinHandle<Result<String, LoadError>> {
-    crate::http::runtime().spawn(fetch(client, url, MAX_SPEC_BYTES))
+/// Loading on the shared runtime. Await [`FetchHandle::result`] for the
+/// outcome; [`FetchHandle::guard`] stops it when dropped.
+pub struct FetchHandle<T> {
+    join: JoinHandle<Result<T, LoadError>>,
+}
+
+/// Aborts its load when dropped.
+pub struct FetchGuard(AbortHandle);
+
+impl Drop for FetchGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+impl<T> FetchHandle<T> {
+    pub fn guard(&self) -> FetchGuard {
+        FetchGuard(self.join.abort_handle())
+    }
+
+    /// `None` if the load was aborted.
+    pub async fn result(self) -> Option<Result<T, LoadError>> {
+        match self.join.await {
+            Ok(result) => Some(result),
+            Err(error) if error.is_cancelled() => None,
+            Err(error) => Some(Err(join_error(error))),
+        }
+    }
+}
+
+fn join_error(error: JoinError) -> LoadError {
+    LoadError::Unreachable(SendError::new(error.to_string()))
+}
+
+/// Downloads the spec text. The text goes nowhere else and isn't kept.
+pub fn spawn_fetch(client: reqwest::Client, url: url::Url) -> FetchHandle<String> {
+    FetchHandle {
+        join: crate::http::runtime().spawn(fetch(client, url, MAX_SPEC_BYTES)),
+    }
+}
+
+/// Downloads and converts the spec at `url`.
+pub fn spawn_load_url(client: reqwest::Client, url: url::Url) -> FetchHandle<ImportResult> {
+    let runtime = crate::http::runtime();
+    let join = runtime.spawn(async move {
+        let text = fetch(client, url.clone(), MAX_SPEC_BYTES).await?;
+        tokio::task::spawn_blocking(move || import_downloaded(&text, &url))
+            .await
+            .map_err(join_error)?
+    });
+    FetchHandle { join }
+}
+
+/// Reads and converts the spec at `path`.
+pub fn spawn_load_file(path: PathBuf) -> FetchHandle<ImportResult> {
+    FetchHandle {
+        join: crate::http::runtime().spawn_blocking(move || load_file(path)),
+    }
+}
+
+/// Loads the spec from where a collection's source says. A URL needs `client`.
+pub fn spawn_load(
+    location: &SourceLocation,
+    client: impl FnOnce() -> Result<reqwest::Client, String>,
+) -> Result<FetchHandle<ImportResult>, String> {
+    match location {
+        SourceLocation::File(path) => Ok(spawn_load_file(path.clone())),
+        SourceLocation::Url(url) => {
+            let url = parse_url(url).map_err(|error| error.to_string())?;
+            Ok(spawn_load_url(client()?, url))
+        }
+    }
 }
 
 async fn fetch(client: reqwest::Client, url: url::Url, limit: u64) -> Result<String, LoadError> {
@@ -426,7 +491,7 @@ paths:
     fn fetch_downloads_the_spec_and_imports_it() {
         let (addr, server) = serve_once(ok_reply(SPEC));
         let url = parse_url(&format!("http://{addr}/openapi.yaml")).unwrap();
-        let text = futures::executor::block_on(spawn_fetch(test_client(), url.clone()))
+        let text = futures::executor::block_on(spawn_fetch(test_client(), url.clone()).result())
             .unwrap()
             .unwrap();
         let request = server.join().unwrap();
@@ -439,6 +504,56 @@ paths:
             result.collection.source.unwrap().location,
             SourceLocation::Url(format!("http://{addr}/openapi.yaml"))
         );
+    }
+
+    #[test]
+    fn spawn_load_url_downloads_and_converts() {
+        let (addr, _server) = serve_once(ok_reply(SPEC));
+        let location = SourceLocation::Url(format!("http://{addr}/openapi.yaml"));
+        let handle = spawn_load(&location, || Ok(test_client())).unwrap();
+        let result = futures::executor::block_on(handle.result())
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.collection.name, "Pets");
+        assert_eq!(result.collection.source.unwrap().location, location);
+    }
+
+    #[test]
+    fn spawn_load_reads_files_and_reports_bad_urls_and_clients() {
+        let dir = TempDir::new();
+        let path = write(&dir, "pets.yaml", SPEC.as_bytes());
+        let handle = spawn_load(&SourceLocation::File(path), || unreachable!()).unwrap();
+        let result = futures::executor::block_on(handle.result()).unwrap();
+        assert_eq!(result.unwrap().collection.name, "Pets");
+
+        let missing = spawn_load(
+            &SourceLocation::File(dir.path().join("nope.json")),
+            || unreachable!(),
+        )
+        .unwrap();
+        let error = futures::executor::block_on(missing.result()).unwrap();
+        assert!(matches!(error, Err(LoadError::ReadFile(_))), "{error:?}");
+
+        let bad = spawn_load(
+            &SourceLocation::Url("ftp://example.com".into()),
+            || unreachable!(),
+        );
+        assert_eq!(bad.err().unwrap(), "Enter an http:// or https:// URL.");
+        let no_client = spawn_load(&SourceLocation::Url("https://example.com".into()), || {
+            Err("The proxy URL isn't valid.".into())
+        });
+        assert_eq!(no_client.err().unwrap(), "The proxy URL isn't valid.");
+    }
+
+    #[test]
+    fn dropping_the_guard_aborts_the_fetch() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let url = parse_url(&format!("http://{addr}/slow")).unwrap();
+        let handle = spawn_fetch(test_client(), url);
+        drop(handle.guard());
+        assert_eq!(futures::executor::block_on(handle.result()), None);
+        drop(listener);
     }
 
     #[test]
