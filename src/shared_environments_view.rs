@@ -15,7 +15,9 @@ use domain::{
 
 use crate::ui::{
     auth_editor::AuthEditorOptions,
-    environments_editor::{EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions},
+    environments_editor::{
+        EnvironmentList, EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
+    },
 };
 
 const OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOptions {
@@ -52,13 +54,13 @@ impl SharedEnvironmentsView {
     /// and `defined` is what each one's auth can reference.
     pub fn show(
         &mut self,
-        environments: &[Arc<Environment>],
+        environments: Vec<Arc<Environment>>,
         linked: HashMap<Uuid, usize>,
         defined: HashMap<Uuid, DefinedNames>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let environments = environments.iter().map(|env| (**env).clone()).collect();
+        let environments = EnvironmentList::Shared(environments);
         self.environments.update(cx, |editor, cx| {
             editor.show(environments, None, linked, Vec::new(), defined, window, cx)
         });

@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use domain::{
     auth::InheritNote,
+    collection::Collection,
     defined_names::DefinedNames,
     environment::{self, Environment, InheritedVariable},
     request::{Auth, KeyValue},
@@ -109,12 +110,59 @@ impl Pane {
     }
 }
 
+/// The environments an [`EnvironmentsEditor`] shows, shared with their owner
+/// rather than copied.
+#[derive(Clone)]
+pub enum EnvironmentList {
+    None,
+    /// A collection's environments.
+    Collection(Arc<Collection>),
+    Shared(Vec<Arc<Environment>>),
+}
+
+impl EnvironmentList {
+    fn iter(&self) -> impl Iterator<Item = &Environment> {
+        let (owned, shared): (&[Environment], &[Arc<Environment>]) = match self {
+            Self::None => (&[], &[]),
+            Self::Collection(collection) => (&collection.environments, &[]),
+            Self::Shared(environments) => (&[], environments),
+        };
+        owned.iter().chain(shared.iter().map(|env| &**env))
+    }
+
+    fn find(&self, id: Uuid) -> Option<&Environment> {
+        self.iter().find(|env| env.id == id)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.iter().next().is_none()
+    }
+
+    /// Whether both hold the same environments. Shared environments are
+    /// compared by pointer: while one is held here, a change copies it.
+    /// A collection's are compared by value unless it's the same snapshot.
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::None, Self::None) => true,
+            (Self::Collection(a), Self::Collection(b)) => {
+                Arc::ptr_eq(a, b) || a.environments == b.environments
+            }
+            (Self::Shared(a), Self::Shared(b)) => same_arcs(a, b),
+            _ => self.is_empty() && other.is_empty(),
+        }
+    }
+}
+
+fn same_arcs(a: &[Arc<Environment>], b: &[Arc<Environment>]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Arc::ptr_eq(a, b))
+}
+
 /// A list of environments with the selected one's variables or auth next to
 /// it. Variables and auth auto-save; everything else is emitted for the
 /// parent to apply.
 pub struct EnvironmentsEditor {
     options: EnvironmentsEditorOptions,
-    environments: Vec<Environment>,
+    environments: EnvironmentList,
     active: Option<Uuid>,
     /// How many environments are based on each one, by id.
     linked: HashMap<Uuid, usize>,
@@ -160,7 +208,7 @@ impl EnvironmentsEditor {
         });
         Self {
             options,
-            environments: Vec::new(),
+            environments: EnvironmentList::None,
             active: None,
             linked: HashMap::new(),
             bases: Vec::new(),
@@ -177,10 +225,11 @@ impl EnvironmentsEditor {
     /// Variables being edited are kept; a pending edit of an environment no
     /// longer shown is emitted. `bases` are what environments can be based on;
     /// `defined` is what each one's auth can reference, for the unresolved warning.
+    /// Nothing is reloaded if none of it changed.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
-        environments: Vec<Environment>,
+        environments: EnvironmentList,
         active: Option<Uuid>,
         linked: HashMap<Uuid, usize>,
         bases: Vec<Arc<Environment>>,
@@ -188,11 +237,22 @@ impl EnvironmentsEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let previous = self.selected;
+        // No selection: shown for the first time or after `clear_selection`.
+        let unchanged = self.selected.is_some()
+            && self.environments.same(&environments)
+            && self.active == active
+            && same_arcs(&self.bases, &bases)
+            && self.linked == linked
+            && self.defined == defined;
+        // Keeps the newest snapshot, so older ones can be freed.
         self.environments = environments;
+        self.bases = bases;
+        if unchanged {
+            return;
+        }
+        let previous = self.selected;
         self.active = active;
         self.linked = linked;
-        self.bases = bases;
         self.defined = defined;
         self.sync_selection(window, cx);
         self.emit_selected_if_changed(previous, cx);
@@ -283,11 +343,11 @@ impl EnvironmentsEditor {
             self.emit_pending(cx);
         }
         let inherit_note = id
-            .and_then(|id| find(&self.environments, id))
+            .and_then(|id| self.environments.find(id))
             .and_then(|env| self.base_of(env))
             .and_then(|(_, base)| environment::base_auth_note(&Auth::Inherit, base))
             .map(InheritNote::plain);
-        let environment = id.and_then(|id| find(&self.environments, id));
+        let environment = id.and_then(|id| self.environments.find(id));
         let empty = Vec::new();
         let stored = environment.map_or(&empty, |env| &env.variables);
         self.variables.load(id, stored, window, cx);
@@ -309,7 +369,7 @@ impl EnvironmentsEditor {
     }
 
     fn rename(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(environment) = find(&self.environments, id) else {
+        let Some(environment) = self.environments.find(id) else {
             return;
         };
         let view = cx.weak_entity();
@@ -329,7 +389,7 @@ impl EnvironmentsEditor {
     }
 
     fn delete(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(environment) = find(&self.environments, id) else {
+        let Some(environment) = self.environments.find(id) else {
             return;
         };
         let linked = self.linked.get(&id).copied().unwrap_or(0);
@@ -441,7 +501,7 @@ impl EnvironmentsEditor {
     }
 
     fn render_details(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.selected.and_then(|id| find(&self.environments, id));
+        let selected = self.selected.and_then(|id| self.environments.find(id));
         let base_select = selected
             .zip(self.options.bases)
             .map(|(environment, options)| {
@@ -730,22 +790,18 @@ fn inherited_row((ix, row): (usize, InheritedVariable)) -> impl IntoElement {
         .child(div().flex_1().min_w_0().truncate().child(value))
 }
 
-fn find(environments: &[Environment], id: Uuid) -> Option<&Environment> {
-    environments.iter().find(|env| env.id == id)
-}
-
 /// The environment to show: `current` if it still exists, else the active
 /// one, else the first.
 fn environment_to_select(
-    environments: &[Environment],
+    environments: &EnvironmentList,
     current: Option<Uuid>,
     active: Option<Uuid>,
 ) -> Option<Uuid> {
-    let exists = |id: &Uuid| find(environments, *id).is_some();
+    let exists = |id: &Uuid| environments.find(*id).is_some();
     current
         .filter(exists)
         .or(active.filter(exists))
-        .or_else(|| environments.first().map(|env| env.id))
+        .or_else(|| environments.iter().next().map(|env| env.id))
 }
 
 /// The delete confirmation's message. `linked` environments are based on it.
@@ -762,10 +818,108 @@ pub fn delete_message(name: &str, linked: usize) -> String {
 mod tests {
     use super::*;
 
-    fn environments() -> (Vec<Environment>, Uuid, Uuid) {
-        let environments = vec![Environment::new("Staging"), Environment::new("Production")];
+    use domain::{collection, request::Request};
+
+    fn environments() -> (EnvironmentList, Uuid, Uuid) {
+        let environments = vec![
+            Arc::new(Environment::new("Staging")),
+            Arc::new(Environment::new("Production")),
+        ];
         let (first, second) = (environments[0].id, environments[1].id);
-        (environments, first, second)
+        (EnvironmentList::Shared(environments), first, second)
+    }
+
+    fn variable(key: &str, value: &str) -> KeyValue {
+        KeyValue {
+            enabled: true,
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    /// Stored collections, and what the editor shows: the same snapshot.
+    fn collections() -> (Vec<Arc<Collection>>, EnvironmentList, Uuid, Uuid) {
+        let mut collection = Collection::new("API");
+        collection.environments = vec![Environment::new("Staging")];
+        let environment_id = collection.environments[0].id;
+        collection
+            .items
+            .push(collection::Item::Request(collection::SavedRequest::new(
+                "List",
+                Request::default(),
+            )));
+        let collection = Arc::new(collection);
+        let shown = EnvironmentList::Collection(collection.clone());
+        let collection_id = collection.id;
+        (vec![collection], shown, collection_id, environment_id)
+    }
+
+    fn current(collections: &[Arc<Collection>]) -> EnvironmentList {
+        EnvironmentList::Collection(collections[0].clone())
+    }
+
+    #[test]
+    fn editing_an_unrelated_request_keeps_the_environments() {
+        let (mut collections, shown, id, _) = collections();
+        assert!(collection::modify(&mut collections, id, |collection| {
+            collection.items.clear();
+            true
+        }));
+        assert!(shown.same(&current(&collections)));
+    }
+
+    #[test]
+    fn an_environment_change_is_a_change() {
+        let (mut collections, shown, id, environment_id) = collections();
+        assert!(collection::set_environment_variables(
+            &mut collections,
+            id,
+            environment_id,
+            vec![variable("host", "example.com")],
+        ));
+        assert!(!shown.same(&current(&collections)));
+    }
+
+    #[test]
+    fn shared_environments_compare_by_pointer() {
+        let (shown, first, _) = environments();
+        let EnvironmentList::Shared(mut stored) = shown.clone() else {
+            unreachable!()
+        };
+        assert!(shown.same(&EnvironmentList::Shared(stored.clone())));
+        assert!(environment::set_variables(
+            &mut stored,
+            first,
+            vec![variable("host", "example.com")],
+        ));
+        assert!(!shown.same(&EnvironmentList::Shared(stored.clone())));
+        stored.pop();
+        assert!(!shown.same(&EnvironmentList::Shared(stored)));
+    }
+
+    #[test]
+    fn no_environments_are_the_same_wherever_they_come_from() {
+        assert!(EnvironmentList::None.same(&EnvironmentList::Shared(Vec::new())));
+        let (_, shown, ..) = collections();
+        assert!(!EnvironmentList::None.same(&shown));
+    }
+
+    #[test]
+    fn the_selection_survives_an_environment_change() {
+        let (shown, first, second) = environments();
+        let EnvironmentList::Shared(mut stored) = shown else {
+            unreachable!()
+        };
+        assert!(environment::set_variables(
+            &mut stored,
+            second,
+            vec![variable("host", "example.com")],
+        ));
+        let next = EnvironmentList::Shared(stored);
+        assert_eq!(
+            environment_to_select(&next, Some(second), Some(first)),
+            Some(second)
+        );
     }
 
     #[test]
@@ -797,7 +951,10 @@ mod tests {
 
     #[test]
     fn selects_nothing_without_environments() {
-        assert_eq!(environment_to_select(&[], None, None), None);
+        assert_eq!(
+            environment_to_select(&EnvironmentList::None, None, None),
+            None
+        );
     }
 
     #[test]

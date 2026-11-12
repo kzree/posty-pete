@@ -335,7 +335,7 @@ impl Workspace {
         let linked = collection::base_counts(collections);
         let defined = DefinedNames::shared_environments(&environments, collections);
         self.shared_environments_view.update(cx, |view, cx| {
-            view.show(&environments, linked, defined, window, cx)
+            view.show(environments, linked, defined, window, cx)
         });
     }
 

@@ -31,7 +31,8 @@ use crate::ui::{
     auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
     confirm_dialog::open_confirm_dialog,
     environments_editor::{
-        BaseOptions, EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
+        BaseOptions, EnvironmentList, EnvironmentsEditor, EnvironmentsEditorEvent,
+        EnvironmentsEditorOptions,
     },
     key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
 };
@@ -257,8 +258,8 @@ impl CollectionView {
             .update(cx, |editor, cx| editor.set_defined_names(defined, cx));
 
         let environments = collection
-            .as_ref()
-            .map_or_else(Vec::new, |c| c.environments.clone());
+            .clone()
+            .map_or(EnvironmentList::None, EnvironmentList::Collection);
         let environments_defined = collection
             .as_ref()
             .map(|c| DefinedNames::collection_environments(c, &shared))
