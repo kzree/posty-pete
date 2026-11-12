@@ -12,6 +12,7 @@ pub(super) enum Counted {
     CombinedSchemes,
     SkippedMethod(String),
     TruncatedExample,
+    OversizedExample,
     UnsupportedBody(String),
 }
 
@@ -86,6 +87,10 @@ fn message(kind: &Counted, n: usize) -> String {
         Counted::TruncatedExample => {
             let body = if one { "body" } else { "bodies" };
             format!("{n} generated example {body} {were} cut short.")
+        }
+        Counted::OversizedExample => {
+            let mb = super::example::MAX_BODY_BYTES >> 20;
+            format!("{n} operation{s} had example values cut short (over {mb} MB).")
         }
         Counted::UnsupportedBody(media) => {
             let body = if one { "body" } else { "bodies" };

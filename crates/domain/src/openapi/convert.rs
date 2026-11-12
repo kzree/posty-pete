@@ -40,6 +40,7 @@ pub(super) fn convert(root: &Value, version: Version, location: SourceLocation) 
         source_url,
         auth_variables: Vec::new(),
         path_variables: Vec::new(),
+        cell_bytes: example::MAX_BODY_BYTES,
     };
     if let Version::OpenApi3 { minor } = version
         && minor > 1
@@ -256,6 +257,9 @@ struct Converter<'a> {
     source_url: Option<url::Url>,
     auth_variables: Vec<&'static str>,
     path_variables: Vec<KeyValue>,
+    /// What's left of the current operation's budget for parameter and form
+    /// field values.
+    cell_bytes: usize,
 }
 
 impl<'a> Converter<'a> {
@@ -368,6 +372,7 @@ impl<'a> Converter<'a> {
 
     fn request(&mut self, operation: &Operation<'a>, global_security: Option<&Value>) -> Request {
         let label = operation.label();
+        self.cell_bytes = example::MAX_BODY_BYTES;
         let mut request = Request {
             method: operation.method,
             url: format!("{{{{baseUrl}}}}{}", path_with_variables(operation.path)),
@@ -383,16 +388,16 @@ impl<'a> Converter<'a> {
             let required = param.get("required").and_then(Value::as_bool) == Some(true);
             match param.get("in").and_then(Value::as_str) {
                 Some("path") => {
-                    path_values.insert(name, self.param_value(param));
+                    path_values.insert(name, self.param_value(param, &label));
                 }
                 Some("query") => {
-                    let value = self.param_value(param);
+                    let value = self.param_value(param, &label);
                     request.params.push(row(required, name, value));
                 }
                 Some("header")
                     if !IGNORED_HEADERS.contains(&name.to_ascii_lowercase().as_str()) =>
                 {
-                    let value = self.param_value(param);
+                    let value = self.param_value(param, &label);
                     request.headers.push(row(required, name, value));
                 }
                 Some("cookie") => self
@@ -459,21 +464,33 @@ impl<'a> Converter<'a> {
     }
 
     /// The parameter's example, default or first enum value, else empty.
-    fn param_value(&mut self, param: &'a Value) -> String {
-        if let Some(example) = param.get("example").or_else(|| param.get("x-example")) {
-            return value_text(example);
+    fn param_value(&mut self, param: &'a Value, label: &str) -> String {
+        let value = match param.get("example").or_else(|| param.get("x-example")) {
+            Some(example) => Some(example),
+            None => self.first_example(param).or_else(|| {
+                param
+                    .get("schema")
+                    .and_then(|schema| self.spec.resolve(schema))
+                    .and_then(example::given)
+                    .or_else(|| example::given(param))
+            }),
+        };
+        value.map_or_else(String::new, |value| self.cell_text(value, label))
+    }
+
+    /// [`value_text`] within the operation's budget; empty once it runs out.
+    fn cell_text(&mut self, value: &Value, label: &str) -> String {
+        match value_text_within(value, self.cell_bytes) {
+            Some(text) => {
+                self.cell_bytes -= text.len();
+                text
+            }
+            None => {
+                self.cell_bytes = 0;
+                self.spec.warnings.count(Counted::OversizedExample, label);
+                String::new()
+            }
         }
-        if let Some(value) = self.first_example(param) {
-            return value_text(value);
-        }
-        let schema = param
-            .get("schema")
-            .and_then(|schema| self.spec.resolve(schema));
-        schema
-            .and_then(example::given)
-            .or_else(|| example::given(param))
-            .map(value_text)
-            .unwrap_or_default()
     }
 
     /// The `value` of the first entry in an `examples` map.
@@ -538,8 +555,12 @@ impl<'a> Converter<'a> {
                     .get("example")
                     .or_else(|| self.first_example(media))
                     .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
+                    .unwrap_or_default();
+                let end = text.floor_char_boundary(example::MAX_BODY_BYTES);
+                if end < text.len() {
+                    self.spec.warnings.count(Counted::OversizedExample, label);
+                }
+                let text = text[..end].to_string();
                 (
                     Body::Raw { kind, text },
                     content_type_header(kind, media_type),
@@ -550,16 +571,37 @@ impl<'a> Converter<'a> {
 
     fn json_example(&mut self, media: &'a Value, label: &str) -> String {
         if let Some(example) = media.get("example").or_else(|| self.first_example(media)) {
-            return pretty(example);
+            let example = match parsed(example) {
+                Some(value) => example::bounded(&value),
+                None => example::bounded(example),
+            };
+            return self.json_text(example, label);
         }
         let Some(schema) = media.get("schema") else {
             return String::new();
         };
-        let (value, truncated) = example::generate(&mut self.spec, schema);
-        if truncated {
+        self.generated_json(schema, label)
+    }
+
+    fn generated_json(&mut self, schema: &'a Value, label: &str) -> String {
+        let mut example = example::generate(&mut self.spec, schema);
+        if let Some(value) = parsed(&example.value) {
+            let reparsed = example::bounded(&value);
+            example.value = reparsed.value;
+            example.oversized |= reparsed.oversized;
+        }
+        self.json_text(example, label)
+    }
+
+    fn json_text(&mut self, example: example::Example, label: &str) -> String {
+        if example.truncated {
             self.spec.warnings.count(Counted::TruncatedExample, label);
         }
-        pretty(&value)
+        let (text, cut) = pretty(&example.value);
+        if example.oversized || cut {
+            self.spec.warnings.count(Counted::OversizedExample, label);
+        }
+        text
     }
 
     /// Form fields from an object schema's properties.
@@ -584,8 +626,7 @@ impl<'a> Converter<'a> {
                     example
                         .and_then(|example| example.get(name))
                         .or_else(|| property.and_then(example::given))
-                        .map(value_text)
-                        .unwrap_or_default()
+                        .map_or_else(String::new, |value| self.cell_text(value, label))
                 };
                 row(required.contains(&name), name, value)
             })
@@ -664,13 +705,7 @@ impl<'a> Converter<'a> {
             };
             let kind = raw_kind(class, media_type);
             let text = match (class, param.get("schema")) {
-                (MediaClass::Json, Some(schema)) => {
-                    let (value, truncated) = example::generate(&mut self.spec, schema);
-                    if truncated {
-                        self.spec.warnings.count(Counted::TruncatedExample, label);
-                    }
-                    pretty(&value)
-                }
+                (MediaClass::Json, Some(schema)) => self.generated_json(schema, label),
                 _ => String::new(),
             };
             return (
@@ -695,7 +730,7 @@ impl<'a> Converter<'a> {
                         .count(Counted::FileField, format!("{label} {name}"));
                     String::new()
                 } else {
-                    self.param_value(param)
+                    self.param_value(param, label)
                 };
                 Some(row(required, name, value))
             })
@@ -879,20 +914,81 @@ fn value_text(value: &Value) -> String {
     }
 }
 
-/// Pretty JSON; a string example that holds JSON is parsed first.
-fn pretty(value: &Value) -> String {
-    let parsed;
-    let value = match value {
-        Value::String(text) => match serde_json::from_str::<Value>(text) {
-            Ok(value) => {
-                parsed = value;
-                &parsed
+/// [`value_text`], or `None` if it's longer than `limit` bytes.
+fn value_text_within(value: &Value, limit: usize) -> Option<String> {
+    match value {
+        Value::Null => Some(String::new()),
+        Value::String(s) => (s.len() <= limit).then(|| s.clone()),
+        Value::Array(items) => {
+            let mut text = String::new();
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    text.push(',');
+                }
+                let left = limit.checked_sub(text.len())?;
+                text.push_str(&value_text_within(item, left)?);
             }
-            Err(_) => value,
-        },
-        value => value,
+            (text.len() <= limit).then_some(text)
+        }
+        other => {
+            let mut out = Capped::new(limit);
+            serde_json::to_writer(&mut out, other).ok()?;
+            String::from_utf8(out.bytes).ok()
+        }
+    }
+}
+
+/// A string example that holds JSON, parsed.
+fn parsed(value: &Value) -> Option<Value> {
+    serde_json::from_str(value.as_str()?).ok()
+}
+
+/// Pretty JSON, cut at [`example::MAX_BODY_BYTES`]; `true` if it was cut.
+fn pretty(value: &Value) -> (String, bool) {
+    let mut out = Capped::new(example::MAX_BODY_BYTES);
+    let cut = serde_json::to_writer_pretty(&mut out, value).is_err();
+    let bytes = out.bytes;
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => {
+            let valid = err.utf8_error().valid_up_to();
+            let mut bytes = err.into_bytes();
+            bytes.truncate(valid);
+            String::from_utf8(bytes).unwrap_or_default()
+        }
     };
-    serde_json::to_string_pretty(value).unwrap_or_default()
+    (text, cut)
+}
+
+/// A buffer that refuses writes past `limit` bytes.
+struct Capped {
+    bytes: Vec<u8>,
+    limit: usize,
+}
+
+impl Capped {
+    fn new(limit: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            limit,
+        }
+    }
+}
+
+impl std::io::Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let room = self.limit - self.bytes.len();
+        if room == 0 && !buf.is_empty() {
+            return Err(std::io::ErrorKind::FileTooLarge.into());
+        }
+        let n = buf.len().min(room);
+        self.bytes.extend_from_slice(&buf[..n]);
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// The `{name}`s in a path or server URL template, in order.
@@ -941,4 +1037,22 @@ fn fill_server_variables(url: &str, variables: Option<&Value>) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn pretty_bodies_are_capped() {
+        let value = json!(["é".repeat(example::MAX_BODY_BYTES)]);
+        let (text, cut) = pretty(&value);
+        assert!(cut);
+        assert!(text.len() <= example::MAX_BODY_BYTES);
+        assert!(text.len() > example::MAX_BODY_BYTES - 4);
+
+        assert_eq!(pretty(&json!({"a": 1})), ("{\n  \"a\": 1\n}".into(), false));
+    }
 }

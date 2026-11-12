@@ -717,6 +717,161 @@ fn huge_generated_examples_are_cut_short() {
     );
 }
 
+#[test]
+fn shared_large_examples_stay_within_the_byte_limit() {
+    let big = "x".repeat(64 * 1024);
+    let properties: serde_json::Map<String, serde_json::Value> = (0..40)
+        .map(|i| {
+            (
+                format!("field{i}"),
+                json!({"$ref": "#/components/schemas/Big"}),
+            )
+        })
+        .collect();
+    let mut spec = v3(json!({
+        "/schema": {"post": {"requestBody": {"content": {"application/json": {
+            "schema": {"type": "object", "properties": properties}}}}}},
+        "/small": {"post": {"requestBody": {"content": {"application/json": {
+            "schema": {"$ref": "#/components/schemas/Big"}}}}}},
+        "/media": {"post": {"requestBody": {"content": {"application/json": {
+            "examples": {"big": {"$ref": "#/components/examples/Big"}}}}}}},
+        "/text": {"put": {"requestBody": {"content": {"text/plain": {
+            "examples": {"big": {"$ref": "#/components/examples/Text"}}}}}}}
+    }));
+    spec["components"] = json!({
+        "schemas": {"Big": {"type": "string", "example": big}},
+        "examples": {
+            "Big": {"value": vec![big.clone(); 40]},
+            "Text": {"value": "y".repeat(2 * 1024 * 1024)}
+        }
+    });
+    let result = convert(spec);
+    let all = requests(&result.collection.items);
+
+    let fields: serde_json::Value = serde_json::from_str(raw_text(all[0])).unwrap();
+    let fields = fields.as_object().unwrap();
+    assert!(raw_text(all[0]).len() <= example::MAX_BODY_BYTES);
+    assert!((1..40).contains(&fields.len()));
+    assert!(fields.values().all(|value| value == &json!(big)));
+
+    assert_eq!(raw_text(all[1]), serde_json::to_string(&big).unwrap());
+
+    let items: serde_json::Value = serde_json::from_str(raw_text(all[2])).unwrap();
+    assert!(raw_text(all[2]).len() <= example::MAX_BODY_BYTES);
+    assert!((1..40).contains(&items.as_array().unwrap().len()));
+
+    assert_eq!(raw_text(all[3]).len(), example::MAX_BODY_BYTES);
+    assert_eq!(
+        result.warnings,
+        ["3 operations had example values cut short (over 1 MB)."]
+    );
+}
+
+#[test]
+fn form_fields_and_parameters_share_a_byte_limit() {
+    let big = "x".repeat(64 * 1024);
+    let reference = json!({"$ref": "#/components/schemas/Big"});
+    let properties: serde_json::Map<String, serde_json::Value> = (0..40)
+        .map(|i| (format!("field{i}"), reference.clone()))
+        .collect();
+    let params: Vec<_> = (0..40)
+        .map(|i| json!({"name": format!("q{i}"), "in": "query", "schema": reference}))
+        .collect();
+    let mut spec = v3(json!({
+        "/form": {"post": {"requestBody": {"content": {"application/x-www-form-urlencoded": {
+            "schema": {"type": "object", "properties": properties}}}}}},
+        "/query": {"get": {"parameters": params}},
+        "/small": {"get": {"parameters": [{"name": "q", "in": "query", "schema": reference}]}}
+    }));
+    spec["components"] = json!({"schemas": {"Big": {"type": "string", "example": big}}});
+    let result = convert(spec);
+    let all = requests(&result.collection.items);
+
+    let Body::UrlEncoded(fields) = &all[0].request.body else {
+        panic!("expected a form body");
+    };
+    let filled = |rows: &[KeyValue]| {
+        let total: usize = rows.iter().map(|row| row.value.len()).sum();
+        assert!(total <= example::MAX_BODY_BYTES);
+        assert!(
+            rows.iter()
+                .all(|row| row.value.is_empty() || row.value == big)
+        );
+        rows.iter().filter(|row| !row.value.is_empty()).count()
+    };
+    assert_eq!(fields.len(), 40);
+    assert!((1..40).contains(&filled(fields)));
+    assert_eq!(all[1].request.params.len(), 40);
+    assert!((1..40).contains(&filled(&all[1].request.params)));
+    assert_eq!(all[2].request.params, [row(false, "q", &big)]);
+    assert_eq!(
+        result.warnings,
+        ["2 operations had example values cut short (over 1 MB)."]
+    );
+}
+
+#[test]
+fn large_enum_and_default_values_are_charged() {
+    let big = "x".repeat(64 * 1024);
+    let object: serde_json::Map<String, serde_json::Value> =
+        (0..40).map(|i| (format!("key{i}"), json!(big))).collect();
+    let result = convert(v3(json!({
+        "/default": {"post": {"requestBody": {"content": {"application/json": {
+            "schema": {"type": "object", "default": object}}}}}},
+        "/enum": {"post": {"requestBody": {"content": {"application/json": {
+            "schema": {"type": "array", "enum": [vec![big.clone(); 40]]}}}}}},
+        "/huge-string": {"post": {"requestBody": {"content": {"application/json": {
+            "schema": {"type": "object", "properties": {
+                "small": {"type": "integer"},
+                "huge": {"type": "string", "enum": ["z".repeat(2 * 1024 * 1024)]}
+            }}}}}}}
+    })));
+    let all = requests(&result.collection.items);
+    for saved in &all {
+        assert!(raw_text(saved).len() <= example::MAX_BODY_BYTES);
+    }
+    let default: serde_json::Value = serde_json::from_str(raw_text(all[0])).unwrap();
+    assert!((1..40).contains(&default.as_object().unwrap().len()));
+    let enumerated: serde_json::Value = serde_json::from_str(raw_text(all[1])).unwrap();
+    assert!((1..40).contains(&enumerated.as_array().unwrap().len()));
+    assert_eq!(raw_text(all[2]), "{\n  \"small\": 0\n}");
+    assert_eq!(
+        result.warnings,
+        ["3 operations had example values cut short (over 1 MB)."]
+    );
+}
+
+#[test]
+fn cut_short_examples_convert_the_same_every_time() {
+    let big = "x".repeat(64 * 1024);
+    let properties: serde_json::Map<String, serde_json::Value> = (0..40)
+        .map(|i| {
+            (
+                format!("field{i}"),
+                json!({"$ref": "#/components/schemas/Big"}),
+            )
+        })
+        .collect();
+    let mut spec = v3(json!({
+        "/a": {"post": {"requestBody": {"content": {"application/json": {
+            "schema": {"type": "object", "properties": properties}}}}}},
+        "/b": {"put": {"requestBody": {"content": {"application/json": {
+            "schema": {"type": "array", "items": {"$ref": "#/components/schemas/Big"},
+                       "default": vec![big.clone(); 40]}}}}}}
+    }));
+    spec["components"] = json!({"schemas": {"Big": {"type": "string", "example": big}}});
+    let first = convert(spec.clone());
+    let second = convert(spec);
+    let snapshot = |result: &ImportResult| {
+        requests(&result.collection.items)
+            .into_iter()
+            .map(|saved| (saved.request.clone(), saved.origin.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(snapshot(&first), snapshot(&second));
+    assert_eq!(first.warnings, second.warnings);
+}
+
 fn with_security(schemes: serde_json::Value, security: serde_json::Value) -> serde_json::Value {
     let mut spec = v3(json!({"/x": {"get": {}}}));
     spec["components"] = json!({"securitySchemes": schemes});

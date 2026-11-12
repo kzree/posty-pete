@@ -8,17 +8,43 @@ use super::refs::{MAX_REF_HOPS, Spec, reference};
 pub(super) const MAX_DEPTH: usize = 8;
 /// How many values one generated example holds at most.
 pub(super) const MAX_NODES: usize = 2000;
+/// How many bytes one example body takes up at most, pretty-printed.
+pub(super) const MAX_BODY_BYTES: usize = 1 << 20;
 
-/// An example for `schema`, and whether it was cut short by the limits.
-pub(super) fn generate<'a>(spec: &mut Spec<'a>, schema: &'a Value) -> (Value, bool) {
+pub(super) struct Example {
+    pub value: Value,
+    /// Cut short by the node or depth limit.
+    pub truncated: bool,
+    /// Cut short by [`MAX_BODY_BYTES`].
+    pub oversized: bool,
+}
+
+/// An example for `schema`, within the limits.
+pub(super) fn generate<'a>(spec: &mut Spec<'a>, schema: &'a Value) -> Example {
     let mut builder = Builder {
         spec,
         budget: MAX_NODES,
+        bytes: Bytes::new(),
         truncated: false,
         refs: Vec::new(),
     };
     let value = builder.build(schema, 0).unwrap_or(Value::Null);
-    (value, builder.truncated)
+    Example {
+        value,
+        truncated: builder.truncated,
+        oversized: builder.bytes.exhausted,
+    }
+}
+
+/// A copy of `value`, leaving out what doesn't fit in [`MAX_BODY_BYTES`].
+pub(super) fn bounded(value: &Value) -> Example {
+    let mut bytes = Bytes::new();
+    let value = bytes.copy(value, 0).unwrap_or(Value::Null);
+    Example {
+        value,
+        truncated: false,
+        oversized: bytes.exhausted,
+    }
 }
 
 /// The example, default or first enum value the schema itself gives.
@@ -49,6 +75,7 @@ pub(super) fn schema_type(schema: &Value) -> Option<&str> {
 struct Builder<'s, 'a> {
     spec: &'s mut Spec<'a>,
     budget: usize,
+    bytes: Bytes,
     truncated: bool,
     /// The `$ref`s being expanded, to stop at cycles.
     refs: Vec<&'a str>,
@@ -59,6 +86,9 @@ impl<'a> Builder<'_, 'a> {
     fn build(&mut self, schema: &'a Value, depth: usize) -> Option<Value> {
         if self.budget == 0 {
             self.truncated = true;
+            return None;
+        }
+        if self.bytes.exhausted {
             return None;
         }
         self.budget -= 1;
@@ -86,7 +116,7 @@ impl<'a> Builder<'_, 'a> {
             return None;
         }
         if let Some(value) = given(schema) {
-            return Some(value.clone());
+            return self.bytes.copy(value, depth);
         }
         if let Some(all) = schema.get("allOf").and_then(Value::as_array) {
             return self.all_of(schema, all, depth);
@@ -107,16 +137,23 @@ impl<'a> Builder<'_, 'a> {
                     self.truncated = true;
                     return None;
                 }
-                let item = schema
-                    .get("items")
-                    .and_then(|items| self.build(items, depth + 1));
+                self.bytes.charge(container_size(depth))?;
+                let item = schema.get("items").and_then(|items| {
+                    self.bytes.charge(entry_size(depth, None))?;
+                    self.build(items, depth + 1)
+                });
                 Some(Value::Array(item.into_iter().collect()))
             }
-            Some("string") => Some(Value::String(sample_string(schema).into())),
-            Some("integer" | "number") => Some(Value::from(0)),
-            Some("boolean") => Some(Value::Bool(true)),
-            _ => Some(Value::Null),
+            Some("string") => self.scalar(Value::String(sample_string(schema).into())),
+            Some("integer" | "number") => self.scalar(Value::from(0)),
+            Some("boolean") => self.scalar(Value::Bool(true)),
+            _ => self.scalar(Value::Null),
         }
+    }
+
+    fn scalar(&mut self, value: Value) -> Option<Value> {
+        self.bytes.charge(scalar_size(&value))?;
+        Some(value)
     }
 
     fn object(&mut self, schema: &'a Value, depth: usize) -> Option<Map<String, Value>> {
@@ -124,9 +161,13 @@ impl<'a> Builder<'_, 'a> {
             self.truncated = true;
             return None;
         }
+        self.bytes.charge(container_size(depth))?;
         let mut map = Map::new();
         if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
             for (name, property) in properties {
+                if self.bytes.charge(entry_size(depth, Some(name))).is_none() {
+                    break;
+                }
                 if let Some(value) = self.build(property, depth + 1) {
                     map.insert(name.clone(), value);
                 }
@@ -157,6 +198,103 @@ impl<'a> Builder<'_, 'a> {
     }
 }
 
+/// What's left of the byte budget. Sizes are upper bounds on
+/// `serde_json::to_string_pretty` output.
+struct Bytes {
+    left: usize,
+    exhausted: bool,
+}
+
+impl Bytes {
+    fn new() -> Self {
+        Self {
+            left: MAX_BODY_BYTES,
+            exhausted: false,
+        }
+    }
+
+    /// Once a charge doesn't fit, every later one fails too.
+    fn charge(&mut self, size: usize) -> Option<()> {
+        if self.exhausted || size > self.left {
+            self.left = 0;
+            self.exhausted = true;
+            return None;
+        }
+        self.left -= size;
+        Some(())
+    }
+
+    fn copy(&mut self, value: &Value, depth: usize) -> Option<Value> {
+        match value {
+            Value::Array(items) => {
+                self.charge(container_size(depth))?;
+                let mut copied = Vec::new();
+                for item in items {
+                    let Some(item) = self
+                        .charge(entry_size(depth, None))
+                        .and_then(|()| self.copy(item, depth + 1))
+                    else {
+                        break;
+                    };
+                    copied.push(item);
+                }
+                Some(Value::Array(copied))
+            }
+            Value::Object(map) => {
+                self.charge(container_size(depth))?;
+                let mut copied = Map::new();
+                for (key, item) in map {
+                    let Some(item) = self
+                        .charge(entry_size(depth, Some(key)))
+                        .and_then(|()| self.copy(item, depth + 1))
+                    else {
+                        break;
+                    };
+                    copied.insert(key.clone(), item);
+                }
+                Some(Value::Object(copied))
+            }
+            scalar => {
+                self.charge(scalar_size(scalar))?;
+                Some(scalar.clone())
+            }
+        }
+    }
+}
+
+/// Brackets, and the newline and indent before the closing one.
+fn container_size(depth: usize) -> usize {
+    3 + 2 * depth
+}
+
+/// The comma, newline and indent before an entry, and an object key.
+fn entry_size(depth: usize, key: Option<&str>) -> usize {
+    2 + 2 * (depth + 1) + key.map_or(0, |key| string_size(key) + 2)
+}
+
+fn scalar_size(value: &Value) -> usize {
+    match value {
+        Value::Null | Value::Bool(true) => 4,
+        Value::Bool(false) => 5,
+        Value::Number(n) => n.to_string().len(),
+        Value::String(s) => string_size(s),
+        Value::Array(_) | Value::Object(_) => 0,
+    }
+}
+
+/// The length of `s` as a JSON string literal, quotes included.
+fn string_size(s: &str) -> usize {
+    let escaped: usize = s
+        .bytes()
+        .map(|b| match b {
+            b'"' | b'\\' | b'\x08' | b'\x0c' | b'\n' | b'\r' | b'\t' => 2,
+            0..=0x1f => 6,
+            _ => 1,
+        })
+        .sum();
+    escaped + 2
+}
+
 fn sample_string(schema: &Value) -> &'static str {
     match schema.get("format").and_then(Value::as_str) {
         Some("date-time") => "2024-01-01T00:00:00Z",
@@ -170,5 +308,29 @@ fn sample_string(schema: &Value) -> &'static str {
         Some("ipv6") => "2001:db8::1",
         Some("binary" | "byte") => "",
         _ => "string",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn charged_bytes_cover_the_pretty_output() {
+        let value = json!({
+            "text": "quote \" slash \\ tab \t nul \u{0} é",
+            "numbers": [0, -12, 3.5, 1e300],
+            "flags": [true, false, null],
+            "empty": {"list": [], "map": {}},
+            "nested": [[{"k\n": [1, [2, {"deep": "x"}]]}]]
+        });
+        let mut bytes = Bytes::new();
+        assert_eq!(bytes.copy(&value, 0), Some(value.clone()));
+        let charged = MAX_BODY_BYTES - bytes.left;
+        let actual = serde_json::to_string_pretty(&value).unwrap().len();
+        assert!(charged >= actual, "{charged} < {actual}");
+        assert!(charged - actual < 64, "{charged} vs {actual}");
     }
 }
