@@ -1615,8 +1615,9 @@ mod tests {
             Some(Uuid::new_v4()),
         );
 
+        let shared = shared_base();
         let variables = collections[0]
-            .layers(Some(environment_id), &shared_base())
+            .layers(Some(environment_id), &shared)
             .variables();
         assert_eq!(variables.get("host"), Some("own-host"));
         assert_eq!(variables.get("region"), Some("us"));

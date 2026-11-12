@@ -9,8 +9,8 @@ use super::{
     auth::effective_auth,
     collection::Collection,
     environment::{self, Environment},
-    request::{Auth, Request},
-    variables::Variables,
+    request::{Auth, KeyValue, Request},
+    variables::{Lookup, Variables, first_value},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -44,21 +44,32 @@ impl<'a> Layers<'a> {
         }
     }
 
-    pub fn variables(&self) -> Variables {
-        match *self {
+    /// The variable rows of each layer, first one winning.
+    fn sources(&self) -> impl Iterator<Item = &'a [KeyValue]> + use<'a> {
+        let layers = match *self {
             Self::Collection {
                 collection,
                 environment,
                 base,
-            } => Variables::layered(
-                environment
-                    .into_iter()
-                    .chain(base)
-                    .map(|env| env.variables.as_slice())
-                    .chain([collection.variables.as_slice()]),
-            ),
-            Self::Shared(environment) => Variables::layered([environment.variables.as_slice()]),
-        }
+            } => [
+                environment.map(|env| env.variables.as_slice()),
+                base.map(|env| env.variables.as_slice()),
+                Some(collection.variables.as_slice()),
+            ],
+            Self::Shared(environment) => [Some(environment.variables.as_slice()), None, None],
+        };
+        layers.into_iter().flatten()
+    }
+
+    pub fn variables(&self) -> Variables<'a> {
+        Variables::layered(self.sources())
+    }
+}
+
+/// Looks names up layer by layer, without building a map.
+impl Lookup for Layers<'_> {
+    fn value(&self, name: &str) -> Option<&str> {
+        first_value(self.sources(), name)
     }
 }
 
@@ -79,15 +90,14 @@ impl Request {
     /// in first-seen order; without layers, every name.
     pub fn unresolved_variables_with(&self, layers: Option<&Layers>) -> Vec<String> {
         let auth = effective_auth(&self.auth, layers).auth;
-        let variables = layers.map(Layers::variables).unwrap_or_default();
-        self.unresolved_variables_with_auth(auth, &variables)
+        self.unresolved_variables_with_auth(auth, &layers)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{Body, KeyValue, RawKind, RawText};
+    use crate::request::{Body, RawKind, RawText};
 
     fn row(key: &str, value: &str) -> KeyValue {
         KeyValue {
@@ -240,5 +250,84 @@ mod tests {
             };
             assert!(RawText::ptr_eq(sent_text, &text));
         }
+    }
+
+    fn with(enabled: bool, key: &str, value: &str) -> KeyValue {
+        KeyValue {
+            enabled,
+            ..row(key, value)
+        }
+    }
+
+    #[test]
+    fn lookup_matches_the_merged_variables() {
+        let mut collection = Collection::new("API");
+        collection.variables = vec![
+            row("a", "collection"),
+            row("b", "collection"),
+            row("c", "collection"),
+            row(" d ", "collection"),
+            with(false, "e", "disabled"),
+        ];
+        let mut base = Environment::new("Shared");
+        base.variables = vec![
+            row("b", "base"),
+            with(false, "c", "disabled"),
+            row("  ", "blank"),
+        ];
+        let mut environment = Environment::new("Staging");
+        environment.variables = vec![
+            with(false, "a", "disabled"),
+            row(" a", "environment"),
+            row("a", "second"),
+        ];
+        let layers = Layers::Collection {
+            collection: &collection,
+            environment: Some(&environment),
+            base: Some(&base),
+        };
+        let variables = layers.variables();
+        for name in ["a", "b", "c", "d", "e", " d ", "", "missing"] {
+            assert_eq!(layers.value(name), variables.get(name), "{name:?}");
+        }
+        assert_eq!(layers.value("a"), Some("environment"));
+        assert_eq!(layers.value("b"), Some("base"));
+        assert_eq!(layers.value("c"), Some("collection"));
+        assert_eq!(layers.value("d"), Some("collection"));
+        assert_eq!(layers.value("e"), None);
+        assert_eq!(Layers::Shared(&base).value("b"), Some("base"));
+        assert_eq!(Layers::Shared(&base).value("a"), None);
+    }
+
+    #[test]
+    fn unresolved_names_keep_first_seen_order_across_layers() {
+        let mut collection = Collection::new("API");
+        collection.variables = vec![row(" known ", "k"), with(false, "off", "x")];
+        let mut environment = Environment::new("Staging");
+        environment.variables = vec![with(false, "known", "x"), row("env", "e")];
+        let request = Request {
+            url: "{{z}}/{{known}}/{{off}}".into(),
+            headers: vec![row("X-A", "{{env}} {{a}} {{z}}")],
+            body: raw("{{off}} {{b}} {{a}}"),
+            auth: bearer("{{c}} {{env}}"),
+            ..Request::default()
+        };
+        let layers = Layers::Collection {
+            collection: &collection,
+            environment: Some(&environment),
+            base: None,
+        };
+        assert_eq!(
+            request.unresolved_variables_with(Some(&layers)),
+            ["z", "off", "a", "b", "c"]
+        );
+        assert_eq!(
+            request.unresolved_variables_with(Some(&layers)),
+            request.unresolved_variables(&layers.variables())
+        );
+        assert_eq!(
+            request.unresolved_variables_with(None),
+            ["z", "known", "off", "env", "a", "b", "c"]
+        );
     }
 }

@@ -288,12 +288,12 @@ mod tests {
         }
     }
 
-    fn editor_variables(
+    fn editor_variables<'a>(
         content: EditorContent,
         selection: &EnvironmentSelection,
-        collections: &[Arc<Collection>],
-        shared: &[Arc<Environment>],
-    ) -> Option<Variables> {
+        collections: &'a [Arc<Collection>],
+        shared: &'a [Arc<Environment>],
+    ) -> Option<Variables<'a>> {
         editor_layers(content, selection, collections, shared)
             .as_ref()
             .map(Layers::variables)
@@ -413,8 +413,9 @@ mod tests {
         let mut selection = none();
         selection.set_active_environment(own.id, Some(staging));
 
+        let shared = [dev];
         let variables =
-            editor_variables(saved_in(own.id), &selection, &collections, &[dev]).unwrap();
+            editor_variables(saved_in(own.id), &selection, &collections, &shared).unwrap();
         assert_eq!(variables.get("base"), Some("https://staging"));
         assert_eq!(variables.get("id"), Some("2"));
     }

@@ -2,7 +2,10 @@
 //! use. A layer is used in several combinations, so a name counts as defined
 //! if any of them defines it.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use uuid::Uuid;
 
@@ -10,16 +13,23 @@ use super::{
     collection::Collection,
     environment::{self, Environment},
     request::{Auth, KeyValue},
-    variables::Variables,
+    variables::{collect_undefined, defined_key},
 };
 
-/// The variable names defined somewhere a layer's auth resolves.
+/// The variable names defined somewhere a layer's auth resolves. Names
+/// only: values aren't needed to tell what's defined.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct DefinedNames(Variables);
+pub struct DefinedNames(HashSet<String>);
 
 impl DefinedNames {
     fn from_sources<'a>(sources: impl IntoIterator<Item = &'a [KeyValue]>) -> Self {
-        Self(Variables::layered(sources))
+        let mut names = HashSet::new();
+        for key in sources.into_iter().flatten().filter_map(defined_key) {
+            if !names.contains(key) {
+                names.insert(key.to_string());
+            }
+        }
+        Self(names)
     }
 
     /// The collection, or any of its environments and their bases.
@@ -97,7 +107,7 @@ impl DefinedNames {
     pub fn unresolved(&self, auth: &Auth) -> Vec<String> {
         let mut unresolved = Vec::new();
         for text in auth.texts() {
-            self.0.collect_unresolved(text, &mut unresolved);
+            collect_undefined(text, &mut unresolved, |name| self.0.contains(name));
         }
         unresolved
     }
@@ -273,5 +283,26 @@ mod tests {
         assert!(defined.unresolved(&Auth::None).is_empty());
         assert!(defined.unresolved(&Auth::Inherit).is_empty());
         assert_eq!(defined.unresolved(&basic("{{a}}", "{{b}}")), ["a", "b"]);
+    }
+
+    #[test]
+    fn a_name_disabled_in_one_layer_is_defined_by_another() {
+        let mut staging = environment("Staging", &[" region"]);
+        staging.variables.push(KeyValue {
+            enabled: false,
+            key: "token".into(),
+            value: "v".into(),
+        });
+        let collection = collection(&["token "], vec![staging.clone()]);
+        let defined = DefinedNames::collection_environment(&collection, &staging, &[]);
+        assert!(
+            defined
+                .unresolved(&bearer("{{token}}{{ region }}"))
+                .is_empty()
+        );
+        assert_eq!(
+            defined.unresolved(&basic("{{b}} {{ region}} {{a}}", "{{a}} {{c}} {{b}}")),
+            ["b", "a", "c"]
+        );
     }
 }

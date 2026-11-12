@@ -46,43 +46,18 @@ fn next_reference(text: &str, mut from: usize) -> Option<Reference<'_>> {
     }
 }
 
-/// Variable values by name, merged from sources in priority order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Variables {
-    values: HashMap<String, String>,
-}
-
-impl Variables {
-    #[cfg(test)]
-    pub fn from_rows(rows: &[KeyValue]) -> Self {
-        Self::layered([rows])
-    }
-
-    /// The first source wins for a name defined in several; within a source,
-    /// the first enabled row wins. Keys are trimmed.
-    pub fn layered<'a>(sources: impl IntoIterator<Item = &'a [KeyValue]>) -> Self {
-        let mut values = HashMap::new();
-        for row in sources.into_iter().flatten() {
-            let key = row.key.trim();
-            if row.enabled && !key.is_empty() && !values.contains_key(key) {
-                values.insert(key.to_string(), row.value.clone());
-            }
-        }
-        Self { values }
-    }
-
-    pub fn get(&self, name: &str) -> Option<&str> {
-        self.values.get(name).map(String::as_str)
-    }
+/// Where `{{name}}` references get their values.
+pub trait Lookup {
+    fn value(&self, name: &str) -> Option<&str>;
 
     /// Replaces resolvable references in one pass (values aren't scanned
     /// again). Others stay as written and their names are added to
     /// `unresolved` unless already there.
-    pub fn substitute<'t>(&self, text: &'t str, unresolved: &mut Vec<String>) -> Cow<'t, str> {
+    fn substitute<'t>(&self, text: &'t str, unresolved: &mut Vec<String>) -> Cow<'t, str> {
         let mut out: Option<String> = None;
         let mut copied = 0;
         for reference in references(text) {
-            match self.get(reference.name) {
+            match self.value(reference.name) {
                 Some(value) => {
                     let out = out.get_or_insert_with(|| String::with_capacity(text.len()));
                     out.push_str(&text[copied..reference.range.start]);
@@ -101,11 +76,89 @@ impl Variables {
         }
     }
 
-    pub(super) fn collect_unresolved(&self, text: &str, unresolved: &mut Vec<String>) {
-        for reference in references(text) {
-            if self.get(reference.name).is_none() {
-                note(unresolved, reference.name);
+    fn collect_unresolved(&self, text: &str, unresolved: &mut Vec<String>) {
+        collect_undefined(text, unresolved, |name| self.value(name).is_some());
+    }
+}
+
+impl<L: Lookup + ?Sized> Lookup for &L {
+    fn value(&self, name: &str) -> Option<&str> {
+        (**self).value(name)
+    }
+}
+
+/// `None` defines nothing.
+impl<L: Lookup> Lookup for Option<L> {
+    fn value(&self, name: &str) -> Option<&str> {
+        self.as_ref()?.value(name)
+    }
+}
+
+/// The trimmed key `row` defines, unless it's disabled or blank.
+pub(crate) fn defined_key(row: &KeyValue) -> Option<&str> {
+    let key = row.key.trim();
+    (row.enabled && !key.is_empty()).then_some(key)
+}
+
+/// `name`'s value in sources in priority order, as [`Variables::layered`]
+/// would have it, without building a map.
+pub(crate) fn first_value<'a>(
+    sources: impl IntoIterator<Item = &'a [KeyValue]>,
+    name: &str,
+) -> Option<&'a str> {
+    sources
+        .into_iter()
+        .flatten()
+        .find(|row| defined_key(row) == Some(name))
+        .map(|row| row.value.as_str())
+}
+
+/// Variable values by name, merged from sources in priority order. Borrows
+/// the rows it's built from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Variables<'a> {
+    values: HashMap<&'a str, &'a str>,
+}
+
+impl<'a> Variables<'a> {
+    #[cfg(test)]
+    pub fn from_rows(rows: &[KeyValue]) -> Variables<'static> {
+        Variables::layered([&*rows.to_vec().leak()])
+    }
+
+    /// The first source wins for a name defined in several; within a source,
+    /// the first enabled row wins. Keys are trimmed.
+    pub fn layered(sources: impl IntoIterator<Item = &'a [KeyValue]>) -> Self {
+        let mut values = HashMap::new();
+        for row in sources.into_iter().flatten() {
+            if let Some(key) = defined_key(row) {
+                values.entry(key).or_insert(row.value.as_str());
             }
+        }
+        Self { values }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&'a str> {
+        self.values.get(name).copied()
+    }
+}
+
+impl Lookup for Variables<'_> {
+    fn value(&self, name: &str) -> Option<&str> {
+        self.get(name)
+    }
+}
+
+/// Adds the names referenced in `text` that `defined` rejects to
+/// `unresolved`, unless already there.
+pub(crate) fn collect_undefined(
+    text: &str,
+    unresolved: &mut Vec<String>,
+    defined: impl Fn(&str) -> bool,
+) {
+    for reference in references(text) {
+        if !defined(reference.name) {
+            note(unresolved, reference.name);
         }
     }
 }
@@ -116,9 +169,9 @@ fn note(unresolved: &mut Vec<String>, name: &str) {
     }
 }
 
-struct Substitution<'v>(&'v Variables);
+struct Substitution<'v, L: ?Sized>(&'v L);
 
-impl Substitution<'_> {
+impl<L: Lookup + ?Sized> Substitution<'_, L> {
     fn text(&self, text: &str) -> String {
         self.0.substitute(text, &mut Vec::new()).into_owned()
     }
@@ -192,7 +245,7 @@ impl Substitution<'_> {
 impl Request {
     /// Variables substituted (method untouched). Text without references is
     /// kept as it is, not copied.
-    pub(super) fn with_variables_substituted(self, variables: &Variables) -> Request {
+    pub(super) fn with_variables_substituted(self, variables: &impl Lookup) -> Request {
         let s = Substitution(variables);
         Request {
             method: self.method,
@@ -213,7 +266,7 @@ impl Request {
     }
 
     #[cfg(test)]
-    pub fn unresolved_variables(&self, variables: &Variables) -> Vec<String> {
+    pub fn unresolved_variables(&self, variables: &Variables<'_>) -> Vec<String> {
         self.unresolved_variables_with_auth(&self.auth, variables)
     }
 
@@ -223,7 +276,7 @@ impl Request {
     pub(super) fn unresolved_variables_with_auth(
         &self,
         auth: &Auth,
-        variables: &Variables,
+        variables: &impl Lookup,
     ) -> Vec<String> {
         // Only keys and auth decide what is sent; the URL and raw text always are.
         let s = Substitution(variables);
@@ -270,7 +323,7 @@ impl Request {
         }
         if let Body::Raw { text, .. } = &self.body {
             for name in text.reference_names() {
-                if variables.get(name).is_none() {
+                if variables.value(name).is_none() {
                     note(&mut unresolved, name);
                 }
             }
@@ -297,12 +350,12 @@ mod tests {
         }
     }
 
-    fn vars(rows: &[(&str, &str)]) -> Variables {
+    fn vars(rows: &[(&str, &str)]) -> Variables<'static> {
         let rows: Vec<_> = rows.iter().map(|(k, v)| row(true, k, v)).collect();
         Variables::from_rows(&rows)
     }
 
-    fn sub(variables: &Variables, text: &str) -> (String, Vec<String>) {
+    fn sub(variables: &Variables<'_>, text: &str) -> (String, Vec<String>) {
         let mut unresolved = Vec::new();
         let out = variables.substitute(text, &mut unresolved).into_owned();
         (out, unresolved)
