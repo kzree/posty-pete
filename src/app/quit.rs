@@ -92,7 +92,7 @@ impl Workspace {
     /// asks first.
     fn close(&mut self, close: Close, window: &mut Window, cx: &mut Context<Self>) {
         self.closing = true;
-        self.flush_pending_variables(cx);
+        self.flush_pending_edits(cx);
         let saved = future::join(
             self.collections.read(cx).flushed(),
             self.shared_environments.read(cx).flushed(),

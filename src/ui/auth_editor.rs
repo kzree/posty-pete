@@ -13,12 +13,23 @@ use gpui_component::{
     v_flex,
 };
 
-use super::Edited;
 use crate::domain::request::{ApiKeyLocation, Auth};
 
-#[derive(Clone, Copy, Default, PartialEq)]
+/// What the editor offers and says, depending on whose auth it edits.
+#[derive(Clone, Copy)]
+pub struct AuthEditorOptions {
+    /// The line shown for "Inherit"; `None` doesn't offer it.
+    pub inherit: Option<&'static str>,
+    /// The line shown for "No auth".
+    pub none: &'static str,
+}
+
+pub enum AuthEditorEvent {
+    Changed,
+}
+
+#[derive(Clone, Copy, PartialEq)]
 enum AuthKind {
-    #[default]
     Inherit,
     None,
     ApiKey,
@@ -62,6 +73,7 @@ impl SearchableListItem for AuthKindItem {
 }
 
 pub struct AuthEditor {
+    options: AuthEditorOptions,
     kind: AuthKind,
     kind_select: Entity<SelectState<Vec<AuthKindItem>>>,
     api_key_name: Entity<InputState>,
@@ -73,11 +85,15 @@ pub struct AuthEditor {
     _subscriptions: Vec<Subscription>,
 }
 
-impl EventEmitter<Edited> for AuthEditor {}
+impl EventEmitter<AuthEditorEvent> for AuthEditor {}
 
 impl AuthEditor {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let items = AuthKind::ALL.into_iter().map(AuthKindItem).collect();
+    pub fn new(options: AuthEditorOptions, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let items = AuthKind::ALL
+            .into_iter()
+            .filter(|kind| options.inherit.is_some() || *kind != AuthKind::Inherit)
+            .map(AuthKindItem)
+            .collect();
         let kind_select = cx.new(|cx| SelectState::new(items, Some(IndexPath::new(0)), window, cx));
 
         let api_key_name = cx.new(|cx| InputState::new(window, cx).placeholder("Key"));
@@ -99,7 +115,7 @@ impl AuthEditor {
             |this, _, event: &SelectEvent<Vec<AuthKindItem>>, cx| {
                 if let SelectEvent::Confirm(Some(kind)) = event {
                     this.kind = *kind;
-                    cx.emit(Edited);
+                    cx.emit(AuthEditorEvent::Changed);
                     cx.notify();
                 }
             },
@@ -108,13 +124,14 @@ impl AuthEditor {
         for input in [&api_key_name, &api_key_value, &username, &password, &token] {
             subscriptions.push(cx.subscribe(input, |_, _, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
-                    cx.emit(Edited);
+                    cx.emit(AuthEditorEvent::Changed);
                 }
             }));
         }
 
         Self {
-            kind: AuthKind::default(),
+            kind: Self::default_kind(options),
+            options,
             kind_select,
             api_key_name,
             api_key_value,
@@ -126,11 +143,27 @@ impl AuthEditor {
         }
     }
 
-    /// Inputs of the auth kinds `auth` doesn't use are cleared.
+    fn default_kind(options: AuthEditorOptions) -> AuthKind {
+        if options.inherit.is_some() {
+            AuthKind::Inherit
+        } else {
+            AuthKind::None
+        }
+    }
+
+    /// Inputs of the auth kinds `auth` doesn't use are cleared. Inherit
+    /// shows as "No auth" where it isn't offered.
     pub fn set_auth(&mut self, auth: &Auth, window: &mut Window, cx: &mut Context<Self>) {
         let empty = String::new();
         let (kind, api_key_name, api_key_value, username, password, token) = match auth {
-            Auth::Inherit => (AuthKind::Inherit, &empty, &empty, &empty, &empty, &empty),
+            Auth::Inherit => (
+                Self::default_kind(self.options),
+                &empty,
+                &empty,
+                &empty,
+                &empty,
+                &empty,
+            ),
             Auth::None => (AuthKind::None, &empty, &empty, &empty, &empty, &empty),
             Auth::ApiKey { key, value, .. } => {
                 (AuthKind::ApiKey, key, value, &empty, &empty, &empty)
@@ -201,12 +234,12 @@ impl Render for AuthEditor {
             AuthKind::Inherit => div()
                 .text_sm()
                 .text_color(muted)
-                .child("Uses the auth from the environment or collection.")
+                .child(self.options.inherit.unwrap_or_default())
                 .into_any_element(),
             AuthKind::None => div()
                 .text_sm()
                 .text_color(muted)
-                .child("This request doesn't use authorization.")
+                .child(self.options.none)
                 .into_any_element(),
             AuthKind::ApiKey => v_form()
                 .child(
@@ -235,7 +268,7 @@ impl Render for AuthEditor {
                                     let location = ApiKeyLocation::ALL[*ix];
                                     if location != this.api_key_location {
                                         this.api_key_location = location;
-                                        cx.emit(Edited);
+                                        cx.emit(AuthEditorEvent::Changed);
                                         cx.notify();
                                     }
                                 }))

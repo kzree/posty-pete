@@ -1,4 +1,5 @@
-pub mod auto_saved_variables;
+pub mod auth_editor;
+pub mod auto_saved;
 pub mod clipboard;
 pub mod color_swatches;
 pub mod confirm_dialog;

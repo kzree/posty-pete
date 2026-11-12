@@ -243,7 +243,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.flush_pending_variables(cx);
+        self.flush_pending_edits(cx);
         let route = self.current_route();
         // The focused element may not exist on the new route, which would drop workspace keybindings.
         // Request routes share their element, so focus (e.g. in the library tree) stays put.

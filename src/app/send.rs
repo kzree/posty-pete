@@ -68,7 +68,7 @@ impl Workspace {
     /// The request the editor's `request` sends, with the variables and
     /// inherited auth as they are now.
     fn resolve_editor_request(&mut self, request: Request, cx: &mut Context<Self>) -> Request {
-        self.flush_pending_variables(cx);
+        self.flush_pending_edits(cx);
         request.resolved_with(self.editor_layers(cx).as_ref())
     }
 
@@ -243,7 +243,7 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        collection::{add_environment, set_environment_base, set_environment_variables},
+        collection::{add_environment, set_auth, set_environment_base, set_environment_variables},
         request::{Auth, KeyValue},
         variables::Variables,
     };
@@ -477,5 +477,23 @@ mod tests {
 
         let layers = editor_layers(EditorContent::Draft, &selection, &collections, &[]);
         assert_eq!(inherit.resolved_with(layers.as_ref()).auth, Auth::None);
+    }
+
+    #[test]
+    fn inherit_sends_the_collection_auth_as_just_edited() {
+        let mut collections = [collection(vec![row(true, "token", "t1")])];
+        let id = collections[0].id;
+        let inherit = Request::default();
+        let bearer = Auth::Bearer {
+            token: "{{token}}".into(),
+        };
+
+        assert!(set_auth(&mut collections, id, bearer));
+
+        let layers = editor_layers(saved_in(id), &none(), &collections, &[]);
+        assert_eq!(
+            inherit.resolved_with(layers.as_ref()).auth,
+            Auth::Bearer { token: "t1".into() }
+        );
     }
 }

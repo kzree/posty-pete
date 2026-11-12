@@ -1,4 +1,3 @@
-mod auth_editor;
 mod body_editor;
 mod method_item;
 mod tabs;
@@ -19,13 +18,20 @@ use gpui_component::{
 
 use crate::{
     domain::request::Request,
-    ui::key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+    ui::{
+        auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
+        key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+    },
 };
-use auth_editor::AuthEditor;
 use body_editor::BodyEditor;
 use method_item::MethodItem;
 use tabs::RequestTab;
 use unresolved_hint::unresolved_hint;
+
+const AUTH_OPTIONS: AuthEditorOptions = AuthEditorOptions {
+    inherit: Some("Uses the auth from the environment or collection."),
+    none: "This request doesn't use authorization.",
+};
 
 pub enum RequestEditorEvent {
     SendRequested(Request),
@@ -37,7 +43,7 @@ pub enum RequestEditorEvent {
     Edited,
 }
 
-/// Emitted by the body and auth editors when their content changes.
+/// Emitted by the body editor when its content changes.
 struct Edited;
 
 pub struct RequestEditor {
@@ -87,7 +93,7 @@ impl RequestEditor {
         let params = cx.new(|cx| KeyValueEditor::new("parameter", window, cx));
         let headers = cx.new(|cx| KeyValueEditor::new("header", window, cx));
         let body = cx.new(|cx| BodyEditor::new(window, cx));
-        let auth = cx.new(|cx| AuthEditor::new(window, cx));
+        let auth = cx.new(|cx| AuthEditor::new(AUTH_OPTIONS, window, cx));
 
         let method_sub = cx.subscribe(&method, |_, _, _: &SelectEvent<Vec<MethodItem>>, cx| {
             cx.emit(RequestEditorEvent::Edited)
@@ -103,7 +109,7 @@ impl RequestEditor {
         subscriptions.push(cx.subscribe(&body, |_, _, _: &Edited, cx| {
             cx.emit(RequestEditorEvent::Edited)
         }));
-        subscriptions.push(cx.subscribe(&auth, |_, _, _: &Edited, cx| {
+        subscriptions.push(cx.subscribe(&auth, |_, _, _: &AuthEditorEvent, cx| {
             cx.emit(RequestEditorEvent::Edited)
         }));
 

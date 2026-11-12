@@ -22,7 +22,7 @@ use crate::{
         request::KeyValue,
     },
     ui::{
-        auto_saved_variables::{AutoSavedVariables, SAVE_DELAY},
+        auto_saved::{AutoSavedVariables, SAVE_DELAY},
         confirm_dialog::open_confirm_dialog,
         key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
         rename_dialog::open_rename_dialog,
@@ -204,7 +204,8 @@ impl EnvironmentsEditor {
             self.emit_pending(cx);
         }
         let environment = id.and_then(|id| find(&self.environments, id));
-        let stored = environment.map_or(&[][..], |env| env.variables.as_slice());
+        let empty = Vec::new();
+        let stored = environment.map_or(&empty, |env| &env.variables);
         self.variables.load(id, stored, window, cx);
     }
 

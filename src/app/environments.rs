@@ -107,7 +107,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.flush_pending_variables(cx);
+        self.flush_pending_edits(cx);
         let id = self.collections.update(cx, |collections, cx| {
             collections.duplicate_environment(collection_id, environment_id, cx)
         });
@@ -264,7 +264,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.flush_pending_variables(cx);
+        self.flush_pending_edits(cx);
         let copy = self
             .shared_environments
             .update(cx, |environments, cx| environments.duplicate(id, cx));

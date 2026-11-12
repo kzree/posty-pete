@@ -18,9 +18,14 @@ use gpui_component::{
 use uuid::Uuid;
 
 use crate::{
-    domain::{collection::Collection, environment::Environment, request::KeyValue},
+    domain::{
+        collection::Collection,
+        environment::Environment,
+        request::{Auth, KeyValue},
+    },
     ui::{
-        auto_saved_variables::{AutoSavedVariables, SAVE_DELAY},
+        auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
+        auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
         environments_editor::{
             BaseOptions, EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
         },
@@ -36,6 +41,11 @@ const ENVIRONMENTS_OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOption
         group: "Shared",
         manage_label: "Manage shared environments…",
     }),
+};
+
+const AUTH_OPTIONS: AuthEditorOptions = AuthEditorOptions {
+    inherit: None,
+    none: "This collection doesn't set authorization.",
 };
 
 /// The stored variables an editor edits.
@@ -56,6 +66,10 @@ pub enum CollectionViewEvent {
     VariablesChanged {
         set: VariableSet,
         variables: Vec<KeyValue>,
+    },
+    AuthChanged {
+        collection_id: Uuid,
+        auth: Auth,
     },
     AddEnvironment {
         collection_id: Uuid,
@@ -93,16 +107,23 @@ pub enum CollectionViewEvent {
 enum CollectionTab {
     Settings,
     Variables,
+    Authorization,
     Environments,
 }
 
 impl CollectionTab {
-    const ALL: [CollectionTab; 3] = [Self::Settings, Self::Variables, Self::Environments];
+    const ALL: [CollectionTab; 4] = [
+        Self::Settings,
+        Self::Variables,
+        Self::Authorization,
+        Self::Environments,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::Settings => "Settings",
             Self::Variables => "Variables",
+            Self::Authorization => "Authorization",
             Self::Environments => "Environments",
         }
     }
@@ -119,6 +140,8 @@ pub struct CollectionView {
     active_tab: CollectionTab,
     name: Entity<InputState>,
     variables: AutoSavedVariables<VariableSet>,
+    /// Keyed by the collection id.
+    auth: AutoSavedAuth<Uuid>,
     environments: Entity<EnvironmentsEditor>,
     _subscriptions: Vec<Subscription>,
 }
@@ -142,6 +165,13 @@ impl CollectionView {
                 this.variables.schedule(save);
             }
         });
+        let auth = cx.new(|cx| AuthEditor::new(AUTH_OPTIONS, window, cx));
+        let auth_sub = cx.subscribe(&auth, |this, _, event, cx| match event {
+            AuthEditorEvent::Changed => {
+                let save = this.save_after_delay(cx);
+                this.auth.schedule(save);
+            }
+        });
         let environments = cx.new(|cx| EnvironmentsEditor::new(ENVIRONMENTS_OPTIONS, window, cx));
         let environments_sub = cx.subscribe(&environments, |this, _, event, cx| {
             this.on_environments_event(event, cx)
@@ -152,8 +182,9 @@ impl CollectionView {
             active_tab: CollectionTab::Settings,
             name,
             variables: AutoSavedVariables::new(variables),
+            auth: AutoSavedAuth::new(auth),
             environments,
-            _subscriptions: vec![name_sub, variables_sub, environments_sub],
+            _subscriptions: vec![name_sub, variables_sub, auth_sub, environments_sub],
         }
     }
 
@@ -164,8 +195,8 @@ impl CollectionView {
     /// Shows `collection` (`None` if `id` doesn't exist) with
     /// `active_environment` marked; its environments can be based on `shared`.
     /// For the collection already shown, an unsaved edit of the name and
-    /// variables being edited are kept.
-    /// Switching collection emits pending variables edits first.
+    /// variables and auth being edited are kept.
+    /// Switching collection emits pending edits first.
     pub fn show(
         &mut self,
         id: Uuid,
@@ -188,7 +219,7 @@ impl CollectionView {
         };
         if self.id != Some(id) {
             self.active_tab = CollectionTab::Settings;
-            self.emit_pending_variables(cx);
+            self.emit_pending(cx);
             self.environments
                 .update(cx, |environments, _| environments.clear_selection());
         }
@@ -197,11 +228,13 @@ impl CollectionView {
             self.name
                 .update(cx, |input, cx| input.set_value(value, window, cx));
         }
-        let stored = collection
-            .as_ref()
-            .map_or(&[][..], |c| c.variables.as_slice());
+        let no_variables = Vec::new();
+        let stored = collection.as_ref().map_or(&no_variables, |c| &c.variables);
         self.variables
             .load(Some(VariableSet::Collection(id)), stored, window, cx);
+        let no_auth = Auth::None;
+        let stored_auth = collection.as_ref().map_or(&no_auth, |c| &c.auth);
+        self.auth.load(Some(id), stored_auth, window, cx);
 
         let environments = collection
             .as_ref()
@@ -268,6 +301,11 @@ impl CollectionView {
         pending
     }
 
+    /// Takes the collection auth edit waiting for its save delay.
+    pub fn take_pending_auth(&mut self, cx: &App) -> Option<(Uuid, Auth)> {
+        self.auth.take_pending(cx)
+    }
+
     fn on_environments_event(&mut self, event: &EnvironmentsEditorEvent, cx: &mut Context<Self>) {
         let Some(collection_id) = self.id else {
             return;
@@ -317,23 +355,28 @@ impl CollectionView {
         cx.emit(event);
     }
 
-    /// The timer of a collection variables edit.
+    /// The timer of a collection variables or auth edit.
     fn save_after_delay(&mut self, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DELAY).await;
-            this.update(cx, |this, cx| this.emit_pending_variables(cx))
-                .ok();
+            this.update(cx, |this, cx| this.emit_pending(cx)).ok();
         })
     }
 
-    fn emit_pending_variables(&mut self, cx: &mut Context<Self>) {
+    fn emit_pending(&mut self, cx: &mut Context<Self>) {
         for (set, variables) in self.take_pending_variables(cx) {
             cx.emit(CollectionViewEvent::VariablesChanged { set, variables });
+        }
+        if let Some((collection_id, auth)) = self.take_pending_auth(cx) {
+            cx.emit(CollectionViewEvent::AuthChanged {
+                collection_id,
+                auth,
+            });
         }
     }
 
     fn select_tab(&mut self, tab: CollectionTab, cx: &mut Context<Self>) {
-        self.emit_pending_variables(cx);
+        self.emit_pending(cx);
         self.active_tab = tab;
         cx.notify();
     }
@@ -355,6 +398,28 @@ impl CollectionView {
                     .min_h_0()
                     .overflow_y_scrollbar()
                     .child(self.variables.editor().clone()),
+            )
+    }
+
+    fn render_auth(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .gap_3()
+            .child(
+                v_flex()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Requests set to Inherit use this unless their environment sets its own.",
+                    )
+                    .child("Changes save automatically."),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .child(self.auth.editor().clone()),
             )
     }
 
@@ -449,6 +514,7 @@ impl Render for CollectionView {
         let content = match self.active_tab {
             CollectionTab::Settings => content.child(self.render_settings(cx)),
             CollectionTab::Variables => content.child(self.render_variables(cx)),
+            CollectionTab::Authorization => content.child(self.render_auth(cx)),
             CollectionTab::Environments => content.child(self.environments.clone()),
         };
 

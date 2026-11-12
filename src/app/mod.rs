@@ -306,7 +306,7 @@ impl Workspace {
             cx.on_app_quit(|this, cx| {
                 this.save_navigation_now(cx);
                 // Best effort: gpui waits only briefly for quit handlers.
-                this.flush_pending_variables(cx);
+                this.flush_pending_edits(cx);
                 let saved = futures::future::join(
                     this.collections.read(cx).flushed(),
                     this.shared_environments.read(cx).flushed(),

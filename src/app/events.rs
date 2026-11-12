@@ -1,5 +1,6 @@
 use gpui::{Context, Window};
 use gpui_component::{WindowExt, notification::Notification};
+use uuid::Uuid;
 
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
         history::{self, OpenMode},
         palette::Target,
         recents::Recent,
-        request::KeyValue,
+        request::{Auth, KeyValue},
     },
     history::HistoryEvent,
     request_editor::RequestEditorEvent,
@@ -224,6 +225,10 @@ impl Workspace {
             CollectionViewEvent::VariablesChanged { set, variables } => {
                 self.save_variables(*set, variables.clone(), cx)
             }
+            CollectionViewEvent::AuthChanged {
+                collection_id,
+                auth,
+            } => self.save_collection_auth(*collection_id, auth.clone(), cx),
             CollectionViewEvent::AddEnvironment { collection_id } => {
                 self.add_environment(*collection_id, window, cx)
             }
@@ -285,18 +290,27 @@ impl Workspace {
         });
     }
 
-    /// Saves the collection and shared environment variables edits still
-    /// waiting for their save delay. Returns whether there were any.
-    pub(super) fn flush_pending_variables(&mut self, cx: &mut Context<Self>) -> bool {
-        let pending = self
-            .collection_view
-            .update(cx, |view, cx| view.take_pending_variables(cx));
+    fn save_collection_auth(&mut self, collection_id: Uuid, auth: Auth, cx: &mut Context<Self>) {
+        self.collections.update(cx, |collections, cx| {
+            collections.set_auth(collection_id, auth, cx)
+        });
+    }
+
+    /// Saves the collection and shared environment variables and auth edits
+    /// still waiting for their save delay. Returns whether there were any.
+    pub(super) fn flush_pending_edits(&mut self, cx: &mut Context<Self>) -> bool {
+        let (pending, auth) = self.collection_view.update(cx, |view, cx| {
+            (view.take_pending_variables(cx), view.take_pending_auth(cx))
+        });
         let shared = self
             .shared_environments_view
             .update(cx, |view, cx| view.take_pending_variables(cx));
-        let flushed = !pending.is_empty() || shared.is_some();
+        let flushed = !pending.is_empty() || auth.is_some() || shared.is_some();
         for (set, variables) in pending {
             self.save_variables(set, variables, cx);
+        }
+        if let Some((collection_id, auth)) = auth {
+            self.save_collection_auth(collection_id, auth, cx);
         }
         if let Some((id, variables)) = shared {
             self.shared_environments.update(cx, |environments, cx| {

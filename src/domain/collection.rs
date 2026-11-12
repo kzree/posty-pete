@@ -129,6 +129,25 @@ pub fn set_variables(
         })
 }
 
+/// Replaces the collection's auth; Inherit is stored as `None`. Returns
+/// `false`, changing (and copying) nothing, if there's no such collection or
+/// it's the same.
+pub fn set_auth(collections: &mut [Arc<Collection>], collection_id: Uuid, auth: Auth) -> bool {
+    let auth = match auth {
+        Auth::Inherit => Auth::None,
+        auth => auth,
+    };
+    let unchanged = collections
+        .iter()
+        .find(|collection| collection.id == collection_id)
+        .is_none_or(|collection| collection.auth == auth);
+    !unchanged
+        && modify(collections, collection_id, |collection| {
+            collection.auth = auth;
+            true
+        })
+}
+
 /// Adds an environment named [`NEW_ENVIRONMENT_NAME`], numbered if that's
 /// taken. Returns its id, or `None` if there's no such collection.
 pub fn add_environment(collections: &mut [Arc<Collection>], collection_id: Uuid) -> Option<Uuid> {
@@ -1073,6 +1092,63 @@ mod tests {
             vec![variable("host", "example.com")]
         ));
         assert!(collections[0].variables.is_empty());
+    }
+
+    #[test]
+    fn set_auth_replaces_it_and_copies_a_shared_collection() {
+        let mut collections = vec![Arc::new(Collection::new("API"))];
+        let id = collections[0].id;
+        let held = collections.clone();
+        let auth = Auth::Bearer {
+            token: "{{token}}".into(),
+        };
+
+        assert!(set_auth(&mut collections, id, auth.clone()));
+
+        assert_eq!(collections[0].auth, auth);
+        assert_eq!(held[0].auth, Auth::None);
+    }
+
+    #[test]
+    fn set_auth_to_the_same_changes_nothing() {
+        let mut collection = Collection::new("API");
+        collection.auth = Auth::Bearer { token: "t".into() };
+        let mut collections = vec![Arc::new(collection)];
+        let id = collections[0].id;
+        let held = collections.clone();
+
+        assert!(!set_auth(
+            &mut collections,
+            id,
+            Auth::Bearer { token: "t".into() }
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+    }
+
+    #[test]
+    fn set_auth_stores_inherit_as_none() {
+        let mut collection = Collection::new("API");
+        collection.auth = Auth::Bearer { token: "t".into() };
+        let mut collections = vec![Arc::new(collection)];
+        let id = collections[0].id;
+
+        assert!(set_auth(&mut collections, id, Auth::Inherit));
+        assert_eq!(collections[0].auth, Auth::None);
+
+        let held = collections.clone();
+        assert!(!set_auth(&mut collections, id, Auth::Inherit));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+    }
+
+    #[test]
+    fn set_auth_of_a_missing_collection_does_nothing() {
+        let mut collections = vec![Arc::new(Collection::new("API"))];
+        assert!(!set_auth(
+            &mut collections,
+            Uuid::new_v4(),
+            Auth::Bearer { token: "t".into() }
+        ));
+        assert_eq!(collections[0].auth, Auth::None);
     }
 
     fn with_environment(variables: Vec<KeyValue>) -> (Vec<Arc<Collection>>, Uuid, Uuid) {

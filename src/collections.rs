@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     collection::{self, Collection, Folder, Item, Location, SavedRequest},
-    request::{KeyValue, Request},
+    request::{Auth, KeyValue, Request},
     store::{
         self,
         collection::CollectionStore,
@@ -211,6 +211,12 @@ impl Collections {
         cx: &mut Context<Self>,
     ) {
         if collection::set_variables(&mut self.collections, collection_id, variables) {
+            self.changed(collection_id, cx);
+        }
+    }
+
+    pub fn set_auth(&mut self, collection_id: Uuid, auth: Auth, cx: &mut Context<Self>) {
+        if collection::set_auth(&mut self.collections, collection_id, auth) {
             self.changed(collection_id, cx);
         }
     }
