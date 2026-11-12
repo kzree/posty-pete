@@ -138,6 +138,13 @@ impl BodyEditor {
         cx.notify();
     }
 
+    fn set_mode(&mut self, mode: BodyMode, cx: &mut Context<Self>) {
+        self.mode = mode;
+        self.schedule_json_check(Duration::ZERO, cx);
+        self.edited(cx);
+        cx.notify();
+    }
+
     fn edited(&mut self, cx: &mut Context<Self>) {
         self.snapshot.invalidate();
         if self.note.take().is_some() {
@@ -238,14 +245,19 @@ impl BodyEditor {
             raw.set_highlighter(editor_language(kind), cx);
             raw.set_value(text, window, cx);
         });
+        self.seed_if_loaded(body, cx);
+        self.schedule_json_check(Duration::ZERO, cx);
+        cx.notify();
+    }
+
+    /// Shares a raw `body` as the snapshot when the editor holds it unchanged.
+    fn seed_if_loaded(&mut self, body: &Body, cx: &App) {
         if let Body::Raw { kind, text } = body
             && *self.raw.read(cx).text() == text.as_str()
             && self.raw_kind.read(cx).selected_value() == Some(kind)
         {
             self.snapshot.seed(body.clone());
         }
-        self.schedule_json_check(Duration::ZERO, cx);
-        cx.notify();
     }
 
     /// Built once per revision of the body; clones share a raw body's text.
@@ -354,10 +366,7 @@ impl Render for BodyEditor {
                         .small()
                         .selected_index(self.mode.index())
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.mode = BodyMode::ALL[*ix];
-                            this.schedule_json_check(Duration::ZERO, cx);
-                            this.edited(cx);
-                            cx.notify();
+                            this.set_mode(BodyMode::ALL[*ix], cx)
                         }))
                         .children(BodyMode::ALL.map(BodyMode::label)),
                 ),
@@ -565,5 +574,235 @@ mod tests {
         snapshot.invalidate();
         let edited = snapshot.get_or_build(|| raw("{}"));
         assert_eq!(edited, raw("{}"));
+    }
+
+    mod views {
+        use domain::request::KeyValue;
+        use gpui::{Entity, TestAppContext, VisualTestContext};
+
+        use super::{raw, raw_text};
+        use crate::request_editor::body_editor::*;
+        use crate::test_support::{open_view, type_into};
+
+        fn editor(cx: &mut TestAppContext) -> (Entity<BodyEditor>, &mut VisualTestContext) {
+            open_view(cx, BodyEditor::new)
+        }
+
+        fn body(editor: &Entity<BodyEditor>, cx: &mut VisualTestContext) -> Body {
+            editor.read_with(cx, |editor, cx| editor.body(cx))
+        }
+
+        fn type_raw(editor: &Entity<BodyEditor>, text: &str, cx: &mut VisualTestContext) {
+            let raw = editor.read_with(cx, |editor, _| editor.raw.clone());
+            raw.update_in(cx, |raw, window, cx| {
+                raw.replace_all(text.to_string(), window, cx)
+            });
+        }
+
+        /// What the kind dropdown does when a kind is picked.
+        fn pick_kind(editor: &Entity<BodyEditor>, kind: RawKind, cx: &mut VisualTestContext) {
+            let select = editor.read_with(cx, |editor, _| editor.raw_kind.clone());
+            select.update_in(cx, |select, window, cx| {
+                select.set_selected_value(&kind, window, cx);
+                cx.emit(SelectEvent::Confirm(Some(kind)));
+            });
+        }
+
+        fn set_mode(editor: &Entity<BodyEditor>, mode: BodyMode, cx: &mut VisualTestContext) {
+            editor.update(cx, |editor, cx| editor.set_mode(mode, cx));
+        }
+
+        fn load(editor: &Entity<BodyEditor>, body: &Body, cx: &mut VisualTestContext) {
+            editor.update_in(cx, |editor, window, cx| editor.set_body(body, window, cx));
+        }
+
+        fn json_error(editor: &Entity<BodyEditor>, cx: &mut VisualTestContext) -> Option<String> {
+            editor.read_with(cx, |editor, _| {
+                editor.json_check.error.as_ref().map(|e| e.to_string())
+            })
+        }
+
+        fn row(enabled: bool, key: &str, value: &str) -> KeyValue {
+            KeyValue {
+                enabled,
+                key: key.into(),
+                value: value.into(),
+            }
+        }
+
+        #[gpui::test]
+        fn typing_in_the_raw_body_builds_a_new_snapshot(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            set_mode(&editor, BodyMode::Raw, cx);
+            let before = body(&editor, cx);
+            assert_eq!(before, raw(""));
+
+            type_raw(&editor, "{\"a\": 1}", cx);
+            let typed = body(&editor, cx);
+            assert_eq!(typed, raw("{\"a\": 1}"));
+            assert!(!RawText::ptr_eq(raw_text(&before), raw_text(&typed)));
+
+            let again = body(&editor, cx);
+            assert!(RawText::ptr_eq(raw_text(&typed), raw_text(&again)));
+        }
+
+        #[gpui::test]
+        fn changing_the_raw_kind_builds_a_new_snapshot(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            set_mode(&editor, BodyMode::Raw, cx);
+            type_raw(&editor, "<p>", cx);
+            let json = body(&editor, cx);
+
+            pick_kind(&editor, RawKind::Html, cx);
+            let html = body(&editor, cx);
+            assert_eq!(
+                html,
+                Body::Raw {
+                    kind: RawKind::Html,
+                    text: "<p>".into()
+                }
+            );
+            assert!(!RawText::ptr_eq(raw_text(&json), raw_text(&html)));
+        }
+
+        #[gpui::test]
+        fn switching_mode_builds_a_new_snapshot(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            assert_eq!(body(&editor, cx), Body::None);
+            set_mode(&editor, BodyMode::FormData, cx);
+            assert_eq!(body(&editor, cx), Body::FormData(Vec::new()));
+            set_mode(&editor, BodyMode::UrlEncoded, cx);
+            assert_eq!(body(&editor, cx), Body::UrlEncoded(Vec::new()));
+            set_mode(&editor, BodyMode::Raw, cx);
+            assert_eq!(body(&editor, cx), raw(""));
+            set_mode(&editor, BodyMode::None, cx);
+            assert_eq!(body(&editor, cx), Body::None);
+        }
+
+        #[gpui::test]
+        fn form_row_changes_build_a_new_snapshot(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            set_mode(&editor, BodyMode::FormData, cx);
+            let form = editor.read_with(cx, |editor, _| editor.form_fields.clone());
+
+            let (key, value) = form.read_with(cx, |form, _| form.row_inputs(0));
+            type_into(&key, "a", cx);
+            assert_eq!(body(&editor, cx), Body::FormData(vec![row(true, "a", "")]));
+            type_into(&value, "1", cx);
+            assert_eq!(body(&editor, cx), Body::FormData(vec![row(true, "a", "1")]));
+
+            form.update(cx, |form, cx| form.toggle_row(0, false, cx));
+            assert_eq!(
+                body(&editor, cx),
+                Body::FormData(vec![row(false, "a", "1")])
+            );
+
+            form.update(cx, |form, cx| form.remove_row_at(0, cx));
+            assert_eq!(body(&editor, cx), Body::FormData(Vec::new()));
+        }
+
+        #[gpui::test]
+        fn a_loaded_raw_body_is_the_snapshot_until_an_edit(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            let loaded = raw("{\"name\": \"posty\"}");
+            load(&editor, &loaded, cx);
+            let shown = body(&editor, cx);
+            assert!(RawText::ptr_eq(raw_text(&shown), raw_text(&loaded)));
+
+            type_raw(&editor, "{\"name\": \"pete\"}", cx);
+            let edited = body(&editor, cx);
+            assert_eq!(edited, raw("{\"name\": \"pete\"}"));
+            assert!(!RawText::ptr_eq(raw_text(&edited), raw_text(&loaded)));
+        }
+
+        #[gpui::test]
+        fn a_body_the_editor_doesnt_hold_isnt_seeded(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            load(&editor, &raw("{}"), cx);
+            let other_text = raw("[]");
+            editor.update(cx, |editor, cx| {
+                editor.snapshot.invalidate();
+                editor.seed_if_loaded(&other_text, cx);
+            });
+            assert_eq!(body(&editor, cx), raw("{}"));
+
+            let other_kind = Body::Raw {
+                kind: RawKind::Text,
+                text: "{}".into(),
+            };
+            editor.update(cx, |editor, cx| {
+                editor.snapshot.invalidate();
+                editor.seed_if_loaded(&other_kind, cx);
+            });
+            let built = body(&editor, cx);
+            assert_eq!(built, raw("{}"));
+            assert!(!RawText::ptr_eq(raw_text(&built), raw_text(&other_kind)));
+        }
+
+        #[gpui::test]
+        fn an_invalid_edit_shows_its_error_after_the_delay(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            load(&editor, &raw("{}"), cx);
+            cx.run_until_parked();
+            assert_eq!(json_error(&editor, cx), None);
+
+            type_raw(&editor, "[1 2]", cx);
+            cx.executor().advance_clock(JSON_CHECK_DELAY / 2);
+            assert_eq!(json_error(&editor, cx), None);
+            cx.executor().advance_clock(JSON_CHECK_DELAY);
+            let error = json_error(&editor, cx).expect("error shown");
+            assert!(error.starts_with("Invalid JSON"), "{error}");
+
+            type_raw(&editor, "[1, 2]", cx);
+            cx.executor().advance_clock(JSON_CHECK_DELAY / 2);
+            assert_eq!(json_error(&editor, cx).as_ref(), Some(&error));
+            cx.executor().advance_clock(JSON_CHECK_DELAY);
+            assert_eq!(json_error(&editor, cx), None);
+        }
+
+        #[gpui::test]
+        fn a_check_finishing_after_a_change_is_dropped(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            load(&editor, &raw("{}"), cx);
+            type_raw(&editor, "[1 2]", cx);
+            cx.run_until_parked();
+
+            let scheduler = cx.dispatcher.scheduler().clone();
+            scheduler.clock().advance(JSON_CHECK_DELAY);
+            // The timer wakes the check on the UI thread, which hands the
+            // text to a background task.
+            let mut woken = false;
+            loop {
+                let (foreground, background) = scheduler.pending_task_counts();
+                woken |= foreground > 0;
+                if woken && foreground == 0 && background > 0 {
+                    break;
+                }
+                assert!(scheduler.tick(), "the check never left the UI thread");
+            }
+            // A change that schedules no check of its own.
+            let form = editor.read_with(cx, |editor, _| editor.form_fields.clone());
+            let (key, _) = form.read_with(cx, |form, _| form.row_inputs(0));
+            type_into(&key, "a", cx);
+            cx.run_until_parked();
+            assert_eq!(json_error(&editor, cx), None);
+        }
+
+        #[gpui::test]
+        fn only_the_last_of_quick_edits_is_checked(cx: &mut TestAppContext) {
+            let (editor, cx) = editor(cx);
+            load(&editor, &raw("{}"), cx);
+            cx.run_until_parked();
+
+            type_raw(&editor, "[1 2]", cx);
+            cx.executor().advance_clock(JSON_CHECK_DELAY / 3);
+            type_raw(&editor, "{\n  \"a\": 1,\n}", cx);
+            cx.executor().advance_clock(JSON_CHECK_DELAY * 2 / 3);
+            assert_eq!(json_error(&editor, cx), None, "the first edit's check ran");
+
+            cx.executor().advance_clock(JSON_CHECK_DELAY);
+            let expected = error_note(json_body::validate("{\n  \"a\": 1,\n}").unwrap());
+            assert_eq!(json_error(&editor, cx), Some(expected.to_string()));
+        }
     }
 }

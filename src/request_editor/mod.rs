@@ -288,6 +288,21 @@ impl RequestEditor {
     }
 }
 
+#[cfg(test)]
+impl RequestEditor {
+    pub fn name_input(&self) -> &Entity<InputState> {
+        &self.name
+    }
+
+    pub fn url_input(&self) -> &Entity<InputState> {
+        &self.url
+    }
+
+    pub fn headers_editor(&self) -> &Entity<KeyValueEditor> {
+        &self.headers
+    }
+}
+
 impl Render for RequestEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let content = match self.active_tab {
@@ -334,5 +349,53 @@ impl Render for RequestEditor {
             )
             .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().child(content))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use domain::request::{Body, HttpMethod, RawKind, RawText};
+    use gpui::{TestAppContext, VisualTestContext};
+
+    use super::*;
+    use crate::test_support::{open_view, type_into};
+
+    fn raw_text(request: &Request) -> &RawText {
+        match &request.body {
+            Body::Raw { text, .. } => text,
+            _ => panic!("not a raw body"),
+        }
+    }
+
+    #[gpui::test]
+    fn editing_the_name_or_url_keeps_the_loaded_body(cx: &mut TestAppContext) {
+        let (editor, cx) = open_view(cx, RequestEditor::new);
+        let stored = Request {
+            method: HttpMethod::Post,
+            url: "https://example.com/users".into(),
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: format!("{{\"name\": \"{}\"}}", "x".repeat(1024)).into(),
+            },
+            ..Default::default()
+        };
+        editor.update_in(cx, |editor, window, cx| {
+            editor.load_request(&stored, Some("Create user".into()), window, cx)
+        });
+        let build = |cx: &mut VisualTestContext| editor.read_with(cx, |e, cx| e.build_request(cx));
+        assert!(RawText::ptr_eq(raw_text(&build(cx)), raw_text(&stored)));
+
+        let (name, url) = editor.read_with(cx, |e, _| (e.name.clone(), e.url.clone()));
+        type_into(&url, "https://example.com/people", cx);
+        let edited = build(cx);
+        assert_eq!(edited.url, "https://example.com/people");
+        assert!(RawText::ptr_eq(raw_text(&edited), raw_text(&stored)));
+
+        type_into(&name, "Add user", cx);
+        assert_eq!(
+            editor.read_with(cx, |e, cx| e.name(cx)).as_deref(),
+            Some("Add user")
+        );
+        assert!(RawText::ptr_eq(raw_text(&build(cx)), raw_text(&stored)));
     }
 }

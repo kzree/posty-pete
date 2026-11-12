@@ -26,6 +26,16 @@ impl AppSettings {
     /// Loads `settings.json` on this thread, so call it before opening a window.
     pub fn init(cx: &mut App) {
         let (writer, settings) = open();
+        Self::init_with(writer, settings, cx);
+    }
+
+    /// Default settings that are never saved.
+    #[cfg(test)]
+    pub fn init_for_tests(cx: &mut App) {
+        Self::init_with(None, Settings::default(), cx);
+    }
+
+    fn init_with(writer: Option<SettingsWriter>, settings: Settings, cx: &mut App) {
         let saver = cx.new(|cx| SettingsSaver::new(writer, cx));
         cx.set_global(Self { settings, saver });
     }

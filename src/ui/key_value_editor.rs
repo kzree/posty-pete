@@ -167,10 +167,41 @@ impl KeyValueEditor {
         self.rows.iter_mut().find(|row| row.id == id)
     }
 
+    fn set_enabled(&mut self, id: usize, enabled: bool, cx: &mut Context<Self>) {
+        if let Some(row) = self.row_mut(id) {
+            row.enabled = enabled;
+            cx.emit(KeyValueEditorEvent::Changed);
+            cx.notify();
+        }
+    }
+
+    fn remove_row(&mut self, id: usize, cx: &mut Context<Self>) {
+        self.rows.retain(|row| row.id != id);
+        cx.emit(KeyValueEditorEvent::Changed);
+        cx.notify();
+    }
+
     fn ensure_trailing_empty_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.rows.last().is_none_or(|row| !row.is_empty(cx)) {
             self.add_row(window, cx);
         }
+    }
+}
+
+/// Drives rows the way their inputs, checkbox and remove button do.
+#[cfg(test)]
+impl KeyValueEditor {
+    pub fn row_inputs(&self, ix: usize) -> (Entity<InputState>, Entity<InputState>) {
+        let row = &self.rows[ix];
+        (row.key.clone(), row.value.clone())
+    }
+
+    pub fn toggle_row(&mut self, ix: usize, enabled: bool, cx: &mut Context<Self>) {
+        self.set_enabled(self.rows[ix].id, enabled, cx);
+    }
+
+    pub fn remove_row_at(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.remove_row(self.rows[ix].id, cx);
     }
 }
 
@@ -210,11 +241,7 @@ impl Render for KeyValueEditor {
                                 .checked(row.enabled)
                                 .accessibility_label(format!("Enable {item}"))
                                 .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                                    if let Some(row) = this.row_mut(id) {
-                                        row.enabled = *checked;
-                                        cx.emit(KeyValueEditorEvent::Changed);
-                                        cx.notify();
-                                    }
+                                    this.set_enabled(id, *checked, cx)
                                 })),
                         )
                     }))
@@ -228,11 +255,9 @@ impl Render for KeyValueEditor {
                                 .icon(IconName::Close)
                                 .tooltip("Remove")
                                 .accessibility_label(format!("Remove {item}"))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.rows.retain(|row| row.id != id);
-                                    cx.emit(KeyValueEditorEvent::Changed);
-                                    cx.notify();
-                                })),
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.remove_row(id, cx)),
+                                ),
                         )
                     }))
             })

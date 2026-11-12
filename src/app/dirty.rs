@@ -299,4 +299,69 @@ mod tests {
         assert!(!check.is_pending());
         assert!(check.request());
     }
+
+    mod views {
+        use std::{cell::Cell, rc::Rc};
+
+        use gpui::{TestAppContext, VisualTestContext};
+
+        use super::*;
+        use crate::{
+            request_editor::{RequestEditor, RequestEditorEvent},
+            test_support::{open_view, type_into},
+        };
+
+        #[gpui::test]
+        fn the_dirty_state_follows_edits_and_their_undoing(cx: &mut TestAppContext) {
+            let (editor, cx) = open_view(cx, RequestEditor::new);
+            let saved = saved();
+            editor.update_in(cx, |editor, window, cx| {
+                editor.load_request(&saved.request, Some(saved.name.clone()), window, cx)
+            });
+            let build = |cx: &mut VisualTestContext| {
+                editor.read_with(cx, |editor, cx| (editor.build_request(cx), editor.name(cx)))
+            };
+            let baseline = Baseline::new(saved.request.clone(), build(cx).0);
+            let edits = Rc::new(Cell::new(0));
+            let counted = edits.clone();
+            cx.update(|_, cx| {
+                cx.subscribe(&editor, move |_, event, _| {
+                    if let RequestEditorEvent::Edited = event {
+                        counted.set(counted.get() + 1);
+                    }
+                })
+                .detach()
+            });
+            let dirty = |cx: &mut VisualTestContext| {
+                let (request, name) = build(cx);
+                baseline.is_dirty(&saved, &request, name.as_deref())
+            };
+            assert!(!dirty(cx));
+
+            let (name, url, headers) = editor.read_with(cx, |editor, _| {
+                (
+                    editor.name_input().clone(),
+                    editor.url_input().clone(),
+                    editor.headers_editor().clone(),
+                )
+            });
+            type_into(&url, "example.com/users", cx);
+            assert!(dirty(cx));
+            type_into(&url, "example.com", cx);
+            assert!(!dirty(cx));
+
+            type_into(&name, "List users", cx);
+            assert!(dirty(cx));
+            type_into(&name, " Get users ", cx);
+            assert!(!dirty(cx));
+
+            let (key, _) = headers.read_with(cx, |headers, _| headers.row_inputs(0));
+            type_into(&key, "Accept", cx);
+            assert!(dirty(cx));
+            type_into(&key, "", cx);
+            assert!(!dirty(cx));
+
+            assert_eq!(edits.get(), 6);
+        }
+    }
 }

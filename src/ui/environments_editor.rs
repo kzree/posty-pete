@@ -701,19 +701,29 @@ impl EnvironmentsEditor {
         )
     }
 
+    /// Whether each inherited row is overridden by an enabled own variable.
+    fn overridden_rows(&self, inherited: &InheritedRows, cx: &gpui::App) -> Vec<bool> {
+        let own: Vec<_> = self.variables.editor().read(cx).keys(cx).collect();
+        let overridden =
+            environment::overridden_names(own.iter().map(|(enabled, key)| (*enabled, &**key)));
+        inherited
+            .rows
+            .iter()
+            .map(|row| overridden.contains(&*row.name))
+            .collect()
+    }
+
     fn render_inherited(
         &self,
         inherited: &InheritedRows,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let own: Vec<_> = self.variables.editor().read(cx).keys(cx).collect();
-        let overridden =
-            environment::overridden_names(own.iter().map(|(enabled, key)| (*enabled, &**key)));
         let rows: Vec<_> = inherited
             .rows
             .iter()
+            .zip(self.overridden_rows(inherited, cx))
             .enumerate()
-            .map(|(ix, row)| inherited_row(ix, row, overridden.contains(&*row.name)))
+            .map(|(ix, (row, overridden))| inherited_row(ix, row, overridden))
             .collect();
         let muted = cx.theme().muted_foreground;
         let body = if rows.is_empty() {
@@ -1121,5 +1131,282 @@ mod tests {
             "“Staging” and its variables will be deleted. It's used by 3 environments, \
              which keep their own values. This can't be undone."
         );
+    }
+
+    mod views {
+        use std::{cell::Cell, rc::Rc};
+
+        use gpui::{Entity, TestAppContext, VisualTestContext};
+        use gpui_component::input::InputState;
+
+        use super::*;
+        use crate::{
+            test_support::{open_view, type_into},
+            ui::auth_editor::AuthEditorOptions,
+        };
+
+        const OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOptions {
+            usable: true,
+            empty_text: "No environments.",
+            hint: "",
+            auth_hint: "",
+            auth: AuthEditorOptions {
+                inherit: Some("Inherits."),
+                none: "No auth.",
+            },
+            bases: Some(BASES),
+        };
+
+        struct Harness<'a> {
+            editor: Entity<EnvironmentsEditor>,
+            cx: &'a mut VisualTestContext,
+            notified: Rc<Cell<usize>>,
+        }
+
+        impl<'a> Harness<'a> {
+            fn open(cx: &'a mut TestAppContext) -> Self {
+                let (editor, cx) = open_view(cx, |window, cx| {
+                    EnvironmentsEditor::new(OPTIONS, window, cx)
+                });
+                let notified = Rc::new(Cell::new(0));
+                let counter = notified.clone();
+                cx.update(|_, cx| {
+                    cx.observe(&editor, move |_, _| counter.set(counter.get() + 1))
+                        .detach()
+                });
+                Self {
+                    editor,
+                    cx,
+                    notified,
+                }
+            }
+
+            fn show(&mut self, environments: EnvironmentList, bases: Vec<Arc<Environment>>) {
+                self.editor.update_in(self.cx, |editor, window, cx| {
+                    editor.show(
+                        environments,
+                        None,
+                        HashMap::new(),
+                        bases,
+                        HashMap::new(),
+                        window,
+                        cx,
+                    )
+                });
+            }
+
+            fn select(&mut self, id: Uuid) {
+                self.editor
+                    .update_in(self.cx, |editor, window, cx| editor.select(id, window, cx));
+            }
+
+            fn selected(&mut self) -> Option<Uuid> {
+                self.editor
+                    .read_with(self.cx, |editor, _| editor.selected())
+            }
+
+            /// Takes the count of notifications since the last call.
+            fn notifications(&mut self) -> usize {
+                self.notified.replace(0)
+            }
+
+            fn variables(&mut self) -> Entity<KeyValueEditor> {
+                self.editor
+                    .read_with(self.cx, |editor, _| editor.variables.editor().clone())
+            }
+
+            fn variable_inputs(&mut self, ix: usize) -> (Entity<InputState>, Entity<InputState>) {
+                let variables = self.variables();
+                variables.read_with(self.cx, |variables, _| variables.row_inputs(ix))
+            }
+
+            fn shown_variables(&mut self) -> Vec<KeyValue> {
+                let variables = self.variables();
+                variables.read_with(self.cx, |variables, cx| variables.values(cx))
+            }
+
+            fn type_into(&mut self, input: &Entity<InputState>, text: &str) {
+                type_into(input, text, self.cx);
+            }
+
+            /// The cached inherited rows' storage and base, as of the last render.
+            fn inherited(&mut self) -> Option<(*const InheritedRow, Arc<Environment>)> {
+                self.editor.read_with(self.cx, |editor, _| {
+                    let inherited = editor.inherited.as_ref()?;
+                    Some((inherited.rows.as_ptr(), inherited.base.clone()))
+                })
+            }
+
+            fn inherited_names(&mut self) -> Vec<String> {
+                self.editor.read_with(self.cx, |editor, _| {
+                    editor.inherited.as_ref().map_or(Vec::new(), |inherited| {
+                        inherited
+                            .rows
+                            .iter()
+                            .map(|row| row.name.to_string())
+                            .collect()
+                    })
+                })
+            }
+
+            fn overridden(&mut self) -> Vec<bool> {
+                self.editor.read_with(self.cx, |editor, cx| {
+                    let inherited = editor.inherited.as_ref().expect("inherited rows");
+                    editor.overridden_rows(inherited, cx)
+                })
+            }
+        }
+
+        fn two_environments() -> (Vec<Arc<Collection>>, Uuid, Uuid, Uuid) {
+            let (mut collections, _, collection_id, staging) = collections();
+            let production = Environment::new("Production");
+            let production_id = production.id;
+            assert!(collection::modify(&mut collections, collection_id, |c| {
+                c.environments.push(production);
+                true
+            }));
+            (collections, collection_id, staging, production_id)
+        }
+
+        #[gpui::test]
+        fn an_unrelated_change_keeps_the_selection_and_the_edit(cx: &mut TestAppContext) {
+            let mut h = Harness::open(cx);
+            let (mut collections, id, staging, production) = two_environments();
+            h.show(current(&collections), Vec::new());
+            assert_eq!(h.selected(), Some(staging));
+            h.select(production);
+            let (key, _) = h.variable_inputs(0);
+            h.type_into(&key, "host");
+            h.notifications();
+
+            assert!(collection::modify(&mut collections, id, |c| {
+                c.items.clear();
+                true
+            }));
+            h.show(current(&collections), Vec::new());
+            assert_eq!(h.notifications(), 0, "the editor reloaded");
+            assert_eq!(h.selected(), Some(production));
+            assert_eq!(key.read_with(h.cx, |key, _| key.value()), "host");
+            let pending = h
+                .editor
+                .update(h.cx, |editor, cx| editor.take_pending_variables(cx));
+            assert_eq!(pending, Some((production, vec![variable("host", "")])));
+        }
+
+        #[gpui::test]
+        fn a_changed_environment_reloads_keeping_the_selection(cx: &mut TestAppContext) {
+            let mut h = Harness::open(cx);
+            let (mut collections, id, _, production) = two_environments();
+            h.show(current(&collections), Vec::new());
+            h.select(production);
+            h.notifications();
+
+            let variables = vec![variable("host", "example.com")];
+            assert!(collection::set_environment_variables(
+                &mut collections,
+                id,
+                production,
+                variables.clone(),
+            ));
+            h.show(current(&collections), Vec::new());
+            assert!(h.notifications() > 0);
+            assert_eq!(h.selected(), Some(production));
+            assert_eq!(h.shown_variables(), variables);
+        }
+
+        #[gpui::test]
+        fn an_edited_shared_environment_reloads(cx: &mut TestAppContext) {
+            let mut h = Harness::open(cx);
+            let (shown, _, second) = environments();
+            let EnvironmentList::Shared(mut stored) = shown.clone() else {
+                unreachable!()
+            };
+            h.show(shown, Vec::new());
+            h.select(second);
+            h.notifications();
+
+            h.show(EnvironmentList::Shared(stored.clone()), Vec::new());
+            assert_eq!(h.notifications(), 0);
+
+            let variables = vec![variable("host", "example.com")];
+            assert!(environment::set_variables(
+                &mut stored,
+                second,
+                variables.clone()
+            ));
+            h.show(EnvironmentList::Shared(stored), Vec::new());
+            assert!(h.notifications() > 0);
+            assert_eq!(h.selected(), Some(second));
+            assert_eq!(h.shown_variables(), variables);
+        }
+
+        fn based_environment() -> (EnvironmentList, Vec<Arc<Environment>>) {
+            let mut base = Environment::new("Shared staging");
+            base.variables = vec![variable("host", "staging"), variable("token", "t")];
+            let mut environment = Environment::new("Staging");
+            environment.base = Some(base.id);
+            (
+                EnvironmentList::Shared(vec![Arc::new(environment)]),
+                vec![Arc::new(base)],
+            )
+        }
+
+        #[gpui::test]
+        fn typing_an_own_value_keeps_the_inherited_rows(cx: &mut TestAppContext) {
+            let mut h = Harness::open(cx);
+            let (list, bases) = based_environment();
+            h.show(list, bases.clone());
+            let (rows, base) = h.inherited().expect("inherited rows");
+            assert!(Arc::ptr_eq(&base, &bases[0]));
+            assert_eq!(h.inherited_names(), ["host", "token"]);
+
+            let (key, value) = h.variable_inputs(0);
+            h.type_into(&key, "host");
+            h.type_into(&value, "localhost");
+            assert!(h.notifications() > 0);
+            assert_eq!(h.inherited().map(|(rows, _)| rows), Some(rows));
+        }
+
+        #[gpui::test]
+        fn own_keys_matching_a_base_name_override_it(cx: &mut TestAppContext) {
+            let mut h = Harness::open(cx);
+            let (list, bases) = based_environment();
+            h.show(list, bases);
+            assert_eq!(h.overridden(), [false, false]);
+
+            let (key, _) = h.variable_inputs(0);
+            h.type_into(&key, "token");
+            assert_eq!(h.overridden(), [false, true]);
+
+            let variables = h.variables();
+            variables.update(h.cx, |variables, cx| variables.toggle_row(0, false, cx));
+            assert_eq!(h.overridden(), [false, false]);
+            variables.update(h.cx, |variables, cx| variables.toggle_row(0, true, cx));
+            assert_eq!(h.overridden(), [false, true]);
+
+            let (key, _) = h.variable_inputs(1);
+            h.type_into(&key, "host");
+            assert_eq!(h.overridden(), [true, true]);
+        }
+
+        #[gpui::test]
+        fn a_new_base_snapshot_rebuilds_the_rows(cx: &mut TestAppContext) {
+            let mut h = Harness::open(cx);
+            let (list, mut bases) = based_environment();
+            h.show(list.clone(), bases.clone());
+            let (rows, _) = h.inherited().expect("inherited rows");
+
+            let base_id = bases[0].id;
+            assert!(environment::set_variables(
+                &mut bases,
+                base_id,
+                vec![variable("region", "eu")],
+            ));
+            h.show(list, bases.clone());
+            let (new_rows, base) = h.inherited().expect("inherited rows");
+            assert!(Arc::ptr_eq(&base, &bases[0]));
+            assert_ne!(new_rows, rows);
+            assert_eq!(h.inherited_names(), ["region"]);
+        }
     }
 }

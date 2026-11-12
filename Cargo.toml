@@ -40,3 +40,4 @@ tracing-subscriber = "0.3"
 
 [dev-dependencies]
 domain = { package = "posty-domain", path = "crates/domain", features = ["test-support"] }
+gpui = { package = "gpui-pre", version = "=0.3.11", features = ["test-support"] }
