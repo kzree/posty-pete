@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
@@ -11,9 +10,11 @@ use domain::{
     store::{
         self,
         environment::EnvironmentStore,
-        jobs::{FailedWrites, StoreJob, WriteFailure},
+        jobs::{self, SaveQueue},
     },
 };
+
+use crate::save_queue;
 
 pub enum SharedEnvironmentsEvent {
     Changed,
@@ -25,45 +26,32 @@ pub enum SharedEnvironmentsEvent {
 }
 
 /// Owns the shared environments: loads them off the UI thread and saves
-/// every change in the background, one store job at a time and in order.
+/// every change in the background, one store job at a time, keeping only the
+/// newest pending save or delete of each environment.
 pub struct SharedEnvironments {
     /// Sorted by name, case-insensitively.
     environments: Vec<Arc<Environment>>,
     loaded: bool,
-    jobs: mpsc::UnboundedSender<Job>,
+    jobs: SaveQueue<EnvironmentStore>,
 }
-
-type Job = StoreJob<EnvironmentStore>;
 
 impl EventEmitter<SharedEnvironmentsEvent> for SharedEnvironments {}
 
 impl SharedEnvironments {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let (jobs, mut queued) = mpsc::unbounded::<Job>();
+        let (jobs, queued) = jobs::save_queue();
         cx.spawn(async move |this, cx| {
             let opened = cx.background_spawn(async { open_and_load() }).await;
-            let Ok(mut store) = this.update(cx, |this, cx| this.finish_loading(opened, cx)) else {
+            let Ok(store) = this.update(cx, |this, cx| this.finish_loading(opened, cx)) else {
                 return;
             };
-            let mut failed = FailedWrites::default();
-            while let Some(job) = queued.next().await {
-                let failure;
-                (store, failed, failure) = cx
-                    .background_spawn(async move {
-                        let failure = failed.run(store.as_ref(), job);
-                        (store, failed, failure)
-                    })
-                    .await;
-                if let Some(WriteFailure { title, error }) = failure
-                    && this
-                        .update(cx, |_, cx| {
-                            cx.emit(SharedEnvironmentsEvent::Failed { title, error })
-                        })
-                        .is_err()
-                {
-                    break;
-                }
-            }
+            save_queue::run(this, cx, store, queued, |failure, cx| {
+                cx.emit(SharedEnvironmentsEvent::Failed {
+                    title: failure.title,
+                    error: failure.error,
+                })
+            })
+            .await;
         })
         .detach();
 
@@ -93,9 +81,7 @@ impl SharedEnvironments {
     /// Resolves once every save requested so far has finished or failed, with
     /// the environments whose last save or delete failed.
     pub fn flushed(&self) -> impl Future<Output = Vec<Uuid>> + use<> {
-        let (job, flushed) = Job::flush();
-        // If the queue is gone, the job is dropped and `flushed` resolves too.
-        self.jobs.unbounded_send(job).ok();
+        let flushed = self.jobs.flush();
         async move { flushed.await.unwrap_or_default() }
     }
 
@@ -185,8 +171,7 @@ impl SharedEnvironments {
         cx: &mut Context<Self>,
         work: impl FnOnce(&EnvironmentStore) -> anyhow::Result<()> + Send + 'static,
     ) {
-        let job = Job::write(id, title, work);
-        if self.jobs.unbounded_send(job).is_err() {
+        if !self.jobs.write(id, title, work) {
             cx.emit(SharedEnvironmentsEvent::Failed {
                 title,
                 error: anyhow!("shared environments are unavailable"),

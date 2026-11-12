@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
@@ -12,9 +11,11 @@ use domain::{
     store::{
         self,
         collection::CollectionStore,
-        jobs::{FailedWrites, StoreJob, WriteFailure},
+        jobs::{self, SaveQueue},
     },
 };
+
+use crate::save_queue;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoadState {
@@ -37,46 +38,33 @@ pub enum CollectionsEvent {
 /// Owns the saved collections: loads them off the UI thread and saves every
 /// change in the background.
 ///
-/// Store jobs run one at a time, in the order they were requested, starting
-/// with the initial load. So saves of a collection can't land out of order.
+/// Store jobs run one at a time, starting with the initial load, and only the
+/// newest pending save or delete of a collection is kept. So saves of a
+/// collection can't land out of order.
 pub struct Collections {
     /// Sorted by name, case-insensitively.
     collections: Vec<Arc<Collection>>,
     load_state: LoadState,
-    jobs: mpsc::UnboundedSender<Job>,
+    jobs: SaveQueue<CollectionStore>,
 }
-
-type Job = StoreJob<CollectionStore>;
 
 impl EventEmitter<CollectionsEvent> for Collections {}
 
 impl Collections {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let (jobs, mut queued) = mpsc::unbounded::<Job>();
+        let (jobs, queued) = jobs::save_queue();
         cx.spawn(async move |this, cx| {
             let opened = cx.background_spawn(async { open_and_load() }).await;
-            let Ok(mut store) = this.update(cx, |this, cx| this.finish_loading(opened, cx)) else {
+            let Ok(store) = this.update(cx, |this, cx| this.finish_loading(opened, cx)) else {
                 return;
             };
-            let mut failed = FailedWrites::default();
-            while let Some(job) = queued.next().await {
-                let failure;
-                (store, failed, failure) = cx
-                    .background_spawn(async move {
-                        let failure = failed.run(store.as_ref(), job);
-                        (store, failed, failure)
-                    })
-                    .await;
-                if let Some(WriteFailure { title, error }) = failure
-                    && this
-                        .update(cx, |_, cx| {
-                            cx.emit(CollectionsEvent::Failed { title, error })
-                        })
-                        .is_err()
-                {
-                    break;
-                }
-            }
+            save_queue::run(this, cx, store, queued, |failure, cx| {
+                cx.emit(CollectionsEvent::Failed {
+                    title: failure.title,
+                    error: failure.error,
+                })
+            })
+            .await;
         })
         .detach();
 
@@ -391,9 +379,7 @@ impl Collections {
     /// Resolves once every save requested so far has finished or failed, with
     /// the collections whose last save or delete failed.
     pub fn flushed(&self) -> impl Future<Output = Vec<Uuid>> + use<> {
-        let (job, flushed) = Job::flush();
-        // If the queue is gone, the job is dropped and `flushed` resolves too.
-        self.jobs.unbounded_send(job).ok();
+        let flushed = self.jobs.flush();
         async move { flushed.await.unwrap_or_default() }
     }
 
@@ -442,8 +428,7 @@ impl Collections {
         cx: &mut Context<Self>,
         work: impl FnOnce(&CollectionStore) -> anyhow::Result<()> + Send + 'static,
     ) {
-        let job = Job::write(collection_id, title, work);
-        if self.jobs.unbounded_send(job).is_err() {
+        if !self.jobs.write(collection_id, title, work) {
             cx.emit(CollectionsEvent::Failed {
                 title,
                 error: anyhow!("collections are unavailable"),

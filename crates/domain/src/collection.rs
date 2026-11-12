@@ -706,8 +706,42 @@ mod tests {
     use super::*;
     use crate::{
         environment,
-        request::{Body, HttpMethod, KeyValue},
+        request::{Body, HttpMethod, KeyValue, RawKind, RawText},
     };
+
+    fn raw_text(collection: &Collection, request_id: Uuid) -> &RawText {
+        match &collection.find_request(request_id).unwrap().request.body {
+            Body::Raw { text, .. } => text,
+            body => panic!("expected a raw body, got {body:?}"),
+        }
+    }
+
+    #[test]
+    fn a_small_edit_shares_large_bodies_with_a_held_snapshot() {
+        let mut collections = Vec::new();
+        let request = Request {
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: RawText::from("x".repeat(1 << 20)),
+            },
+            ..Request::default()
+        };
+        let (collection_id, request_id) =
+            add_request_at(&mut collections, Location::NewCollection, "Big", request).unwrap();
+        let snapshot = collections.clone();
+
+        assert!(modify(&mut collections, collection_id, |collection| {
+            collection.name = "Renamed".into();
+            true
+        }));
+
+        assert!(!Arc::ptr_eq(&collections[0], &snapshot[0]));
+        assert_eq!(snapshot[0].name, NEW_COLLECTION_NAME);
+        assert!(RawText::ptr_eq(
+            raw_text(&collections[0], request_id),
+            raw_text(&snapshot[0], request_id),
+        ));
+    }
 
     #[test]
     fn new_requests_inherit_auth() {

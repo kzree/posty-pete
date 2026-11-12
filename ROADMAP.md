@@ -19,7 +19,6 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## Collections
 
 - [ ] **Revisit library empty rows.** The muted "No collections yet" / "No environments yet" rows replaced "Your library is empty." Revisit the empty state later, e.g. make the rows actionable ("Create a collection") or bring back a first-run message.
-- [ ] **One save queue for stores.** `SharedEnvironments` copies the ordered save queue from `Collections`; extract a shared helper if a third store appears.
 - [ ] **Environment colours.** Mark an environment (e.g. red for Prod) in the picker and title bar so sending to production is hard to miss.
 - [ ] **Truncate long names in the environment menu.** `PopupMenuItem` wraps long labels; needs a custom element item or an upstream change.
 - [ ] **Variable autocomplete and highlighting.** Suggest names after typing `{{` and highlight references (resolved vs unresolved) in the URL, key/value and body inputs. `domain::variables::references` returns byte ranges for this.
@@ -58,6 +57,5 @@ Functionality that's planned but not built yet. Add items here when they come up
 ## Quality
 
 - [ ] **Upgrade gpui-component for the NumberInput focus fix.** Focusing a `NumberInput` (the Settings number fields, including via their −/+ buttons) panics in debug builds when an accessibility client is active: "set_focus called more than once in a single frame" (gpui-kit #3873, fixed by PR #3875 on main, not released as of gpui-component/gpui-base 0.9.1). Release builds only log a warning. Upgrade once a release includes it; this also moves gpui-pre past `=0.3.11`, so update `Cargo.toml` and AGENTS.md together.
-- [ ] **Coalesce queued saves.** The collection and shared-environment save queues are unbounded and write every revision in full. Keep only the newest pending save per id (never let an old save recreate a deleted item), and copy less on `Arc::make_mut` if measurements show it matters. Coordinate with the save-failure handling from task 76.
 - [ ] **Palette and library at scale.** Opening the palette rebuilds every entry, each keystroke sorts all matches, and a collection change refreshes every projection (library rows twice, hidden pages, environment clones). Benchmark with thousands of requests/environments/history entries before adding caches or narrower change events.
 - [ ] **Presentation copies at scale.** The Headers tab clones every header name and value on each render, and the import and spec-update dialogs rebuild non-virtualized preview rows (copying warning and row strings). Build display strings once per response or plan, and virtualize long previews; benchmark with large responses and specs with thousands of operations first (findings.md F14).

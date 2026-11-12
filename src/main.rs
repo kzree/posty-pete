@@ -15,6 +15,7 @@ mod menus;
 mod request_editor;
 mod response_view;
 mod save_as_dialog;
+mod save_queue;
 mod settings;
 mod settings_page;
 mod shared_environments;
