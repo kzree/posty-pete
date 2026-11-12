@@ -28,6 +28,15 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Manage requests in collections.** Duplicate and move requests (and move folders) in the library tree, including drag and drop.
 - [ ] **Unsaved changes on Dock Quit / logout.** cmd+Q, the Quit menu item and closing the window ask before discarding edits, but Dock "Quit", logout and shutdown bypass the app's Quit action (gpui-macos 0.3.11 doesn't implement `applicationShouldTerminate:`), so edits are dropped without asking. Relatedly, a collection-variables edit made in the last half second before a Dock quit may not be written: gpui waits only 200 ms for quit handlers.
 - [ ] **Unsaved collection name edits.** `CollectionView::show` keeps a typed but unsaved name when you leave a collection and come back to it. Decide whether it should be discarded instead.
+- [ ] **OpenAPI: more of the spec.** Follow external `$ref`s (other files or URLs) and honour per-operation `servers` (every request uses `baseUrl` now).
+- [ ] **OpenAPI: authenticated spec URLs.** Let the import/update fetch send headers or auth (bearer token, API key) for specs behind a login.
+- [ ] **OpenAPI: drop a spec file on the window** to open the import dialog with it chosen.
+- [ ] **OpenAPI: filter the file picker** to .json/.yaml/.yml once gpui's `PathPromptOptions` supports extension filters (0.3.11 has none).
+- [ ] **OpenAPI: check for spec changes automatically.** On startup or on a timer, and by watching a local spec file.
+- [ ] **OpenAPI: skip added operations in the update preview**, so an imported request you deleted doesn't come back on every update.
+- [ ] **OpenAPI: update command.** A palette command and File menu item to update the current collection from its spec.
+- [ ] **Export a collection as OpenAPI.**
+- [ ] **Import Postman collections.**
 
 ## App
 
