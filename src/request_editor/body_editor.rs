@@ -236,8 +236,14 @@ impl BodyEditor {
         });
         self.raw.update(cx, |raw, cx| {
             raw.set_highlighter(editor_language(kind), cx);
-            raw.set_value(text.to_string(), window, cx);
+            raw.set_value(text, window, cx);
         });
+        if let Body::Raw { kind, text } = body
+            && *self.raw.read(cx).text() == text.as_str()
+            && self.raw_kind.read(cx).selected_value() == Some(kind)
+        {
+            self.snapshot.seed(body.clone());
+        }
         self.schedule_json_check(Duration::ZERO, cx);
         cx.notify();
     }
@@ -314,6 +320,11 @@ impl BodySnapshot {
     /// Called on every change to the raw text, its kind, the form rows or the mode.
     fn invalidate(&mut self) {
         self.revision += 1;
+    }
+
+    /// Takes `body` as the current revision's build, so it shares its storage.
+    fn seed(&mut self, body: Body) {
+        *self.built.get_mut() = Some((self.revision, body));
     }
 
     fn get_or_build(&self, build: impl FnOnce() -> Body) -> Body {
@@ -540,5 +551,19 @@ mod tests {
 
         snapshot.invalidate();
         assert_eq!(snapshot.get_or_build(|| Body::None), Body::None);
+    }
+
+    #[test]
+    fn a_seeded_snapshot_shares_the_loaded_body_until_a_change() {
+        let mut snapshot = BodySnapshot::default();
+        let loaded = raw(&"x".repeat(1024 * 1024));
+        snapshot.invalidate();
+        snapshot.seed(loaded.clone());
+        let built = snapshot.get_or_build(|| panic!("seeded body was rebuilt"));
+        assert!(RawText::ptr_eq(raw_text(&built), raw_text(&loaded)));
+
+        snapshot.invalidate();
+        let edited = snapshot.get_or_build(|| raw("{}"));
+        assert_eq!(edited, raw("{}"));
     }
 }

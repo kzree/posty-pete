@@ -120,7 +120,7 @@ impl Workspace {
             self.responses.copy(self.editor_content, content);
         }
         self.editor_content = content;
-        self.baseline = Some(Baseline::new(request.clone(), request));
+        self.baseline = Some(Baseline::saved(request));
         self.request_editor
             .update(cx, |editor, cx| editor.link(name, window, cx));
     }
@@ -140,7 +140,7 @@ impl Workspace {
             editor.tidy_name(window, cx);
             (editor.build_request(cx), editor.name(cx))
         });
-        let baseline = Baseline::new(request.clone(), request.clone());
+        let baseline = Baseline::saved(request.clone());
         let saved = self.collections.update(cx, |collections, cx| {
             collections.update_request(collection_id, request_id, request, name, cx)
         });

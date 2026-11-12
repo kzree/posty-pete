@@ -1,4 +1,7 @@
-use domain::{collection::SavedRequest, request::Request};
+use domain::{
+    collection::SavedRequest,
+    request::{Body, Request},
+};
 
 /// The stored request the editor was loaded from, and the request the editor
 /// built right after loading it. Inputs normalise what they're given (empty
@@ -7,12 +10,42 @@ use domain::{collection::SavedRequest, request::Request};
 /// request itself.
 pub(super) struct Baseline {
     stored: Request,
-    loaded: Request,
+    /// `None` when the editor built `stored` unchanged.
+    loaded: Option<Request>,
 }
 
 impl Baseline {
-    pub(super) fn new(stored: Request, loaded: Request) -> Self {
-        Self { stored, loaded }
+    /// Equal raw body text is shared, so the baseline holds it once.
+    pub(super) fn new(stored: Request, mut loaded: Request) -> Self {
+        if let (
+            Body::Raw { text, .. },
+            Body::Raw {
+                text: stored_text, ..
+            },
+        ) = (&mut loaded.body, &stored.body)
+            && text == stored_text
+        {
+            *text = stored_text.clone();
+        }
+        if loaded == stored {
+            return Self::saved(stored);
+        }
+        Self {
+            stored,
+            loaded: Some(loaded),
+        }
+    }
+
+    /// The baseline of a request the editor just saved.
+    pub(super) fn saved(request: Request) -> Self {
+        Self {
+            stored: request,
+            loaded: None,
+        }
+    }
+
+    fn loaded(&self) -> &Request {
+        self.loaded.as_ref().unwrap_or(&self.stored)
     }
 
     /// Whether saving `request` and `name` (the editor's trimmed name) would
@@ -26,7 +59,7 @@ impl Baseline {
     ) -> bool {
         // If the stored request changed since loading, the baseline is stale.
         let reference = if saved.request == self.stored {
-            &self.loaded
+            self.loaded()
         } else {
             &saved.request
         };
@@ -55,7 +88,7 @@ impl PendingCheck {
 
 #[cfg(test)]
 mod tests {
-    use domain::request::{Auth, Body, KeyValue, RawKind};
+    use domain::request::{Auth, KeyValue, RawKind, RawText};
 
     use super::*;
 
@@ -169,6 +202,90 @@ mod tests {
             ..loaded()
         };
         assert!(baseline.is_dirty(&saved(), &edited, Some("Get users")));
+    }
+
+    fn large_body() -> Body {
+        Body::Raw {
+            kind: RawKind::Json,
+            text: format!("\"{}\"", "x".repeat(1024 * 1024)).into(),
+        }
+    }
+
+    fn raw_text(body: &Body) -> &RawText {
+        match body {
+            Body::Raw { text, .. } => text,
+            _ => panic!("not a raw body"),
+        }
+    }
+
+    #[test]
+    fn loading_shares_the_body_with_the_editor_snapshot() {
+        let stored = Request {
+            body: large_body(),
+            ..stored()
+        };
+        // The editor's snapshot of a loaded raw body shares the stored text.
+        let snapshot = stored.body.clone();
+        let loaded = Request {
+            params: vec![row("q", "1")],
+            body: snapshot.clone(),
+            ..stored.clone()
+        };
+        let baseline = Baseline::new(stored.clone(), loaded.clone());
+        assert!(RawText::ptr_eq(
+            raw_text(&baseline.stored.body),
+            raw_text(&snapshot)
+        ));
+        assert!(RawText::ptr_eq(
+            raw_text(&baseline.loaded().body),
+            raw_text(&snapshot)
+        ));
+        let saved = SavedRequest::new("Get users", stored);
+        assert!(!baseline.is_dirty(&saved, &loaded, Some("Get users")));
+    }
+
+    #[test]
+    fn equal_body_text_is_held_once() {
+        let stored = Request {
+            body: large_body(),
+            ..stored()
+        };
+        let loaded = Request {
+            params: vec![row("q", "1")],
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: raw_text(&stored.body).to_string().into(),
+            },
+            ..stored.clone()
+        };
+        let baseline = Baseline::new(stored.clone(), loaded.clone());
+        assert!(RawText::ptr_eq(
+            raw_text(&baseline.loaded().body),
+            raw_text(&baseline.stored.body)
+        ));
+
+        let unchanged = Request {
+            body: loaded.body.clone(),
+            ..stored.clone()
+        };
+        let baseline = Baseline::new(stored, unchanged);
+        assert!(baseline.loaded.is_none());
+    }
+
+    #[test]
+    fn saving_shares_the_body_with_the_editor_snapshot() {
+        let request = Request {
+            body: large_body(),
+            ..loaded()
+        };
+        let baseline = Baseline::saved(request.clone());
+        assert!(baseline.loaded.is_none());
+        assert!(RawText::ptr_eq(
+            raw_text(&baseline.loaded().body),
+            raw_text(&request.body)
+        ));
+        let saved = SavedRequest::new("Get users", request.clone());
+        assert!(!baseline.is_dirty(&saved, &request, Some("Get users")));
     }
 
     #[test]
