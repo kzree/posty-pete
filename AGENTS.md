@@ -16,6 +16,7 @@ Status: early. Composing and sending GET-style requests (method, URL, query para
 
 ## Stack
 
+- **Workspace:** the root package is the app (binary `posty-pete`). `crates/domain` is the library `posty-domain`, imported by the app as `domain` (`domain = { package = "posty-domain", path = "crates/domain" }`). Crates both use are declared once in `[workspace.dependencies]`; domain-only crates (reqwest, rusqlite, serde, ...) live in `crates/domain/Cargo.toml`. `default-members` lists both, so plain `cargo test` (and CI) covers the domain too.
 - **UI:** `gpui-component` 0.9 on top of gpui.
   - The gpui crate is **`gpui-pre` =0.3.11, renamed to `gpui`** in `Cargo.toml`, because that's the gpui build `gpui-component` 0.9 depends on. Don't add the crates.io `gpui` (0.2.x) crate; it would pull in a second, incompatible gpui. Look up gpui APIs in `gpui-pre-0.3.11`, not in gpui 0.2 docs.
   - The platform layer is **`gpui-pre-platform` =0.3.11, renamed to `gpui_platform`**, and the app starts with `gpui_platform::application()`. It **must** have the `font-kit` feature enabled, or macOS uses a no-op text system and renders no text.
@@ -27,9 +28,12 @@ Status: early. Composing and sending GET-style requests (method, URL, query para
 
 ## Code organization
 
-Code is organized **by feature**, with all non-UI logic in a gpui-free `domain/` module.
+Code is organized **by feature**, with all non-UI logic in the gpui-free `posty-domain` crate (`crates/domain`).
 
 ```
+Cargo.toml         # workspace + app package
+crates/
+└── domain/        # posty-domain: models, HTTP, persistence, env variables
 src/
 ├── main.rs        # app startup: init, theme, open window
 ├── app.rs         # Workspace: root view, owns the panes, wires up events
@@ -38,19 +42,18 @@ src/
 ├── response_view  # ResponseView: viewing a response
 ├── sidebar.rs     # Sidebar: library, history, settings tabs
 ├── status_bar.rs  # StatusBar
-├── ui/            # reusable, feature-agnostic components (stateless or stateful)
-└── domain/        # pure Rust: models, HTTP, persistence, env variables
+└── ui/            # reusable, feature-agnostic components (stateless or stateful)
 ```
 
 Rules:
 
-- **`domain/` must not import gpui or gpui-component.** It holds request/response models, the HTTP client (reqwest on tokio), the library of saved requests and persistence, and `{{variable}}` substitution. It must be testable with plain `cargo test`. It may later become a separate workspace crate. (It is named `domain` rather than `core` to avoid clashing with Rust's built-in `core` crate.)
+- **`posty-domain` must not depend on gpui or gpui-component.** It holds request/response models, the HTTP client (reqwest on tokio), the library of saved requests and persistence, and `{{variable}}` substitution. It must be testable on its own with `cargo test -p posty-domain`, and `cargo tree -p posty-domain` must show no gpui crates. App code imports it as `domain::…` (named `domain` rather than `core` to avoid clashing with Rust's built-in `core` crate). Test helpers the app's tests need go behind `#[cfg(any(test, feature = "test-support"))]`; the app enables `test-support` from `[dev-dependencies]`.
 - **One feature per module, named after its main type.** The module is the snake_case form of the view or component it contains (`RequestEditor` → `request_editor`, `StatusBar` → `status_bar`), and fields holding it use the same name (`request_editor: Entity<RequestEditor>`). A view's struct, `impl Render`, events (`EventEmitter`) and actions live together in its module. Start as a single file (`request_editor.rs`) and split it into a folder (`request_editor/mod.rs` + sub-files) only when it grows.
-- **Views own UI state; models live in `domain/`.** For example, `RequestEditor` holds `Entity<InputState>`s and builds a `domain::Request` from them. Domain types never depend on widget types.
+- **Views own UI state; models live in `posty-domain`.** For example, `RequestEditor` holds `Entity<InputState>`s and builds a `domain::Request` from them. Domain types never depend on widget types.
 - **Children emit events and parents wire them up.** Sibling views don't reach into each other; `Workspace` (`app.rs`) subscribes to child events and coordinates.
-- **Use `Entity` + `Render` for components with lasting state, and `RenderOnce` or plain functions for presentation.** Components that aren't tied to a feature go in `ui/`, whether they're views or `RenderOnce` (e.g. `ui::key_value_editor::KeyValueEditor`). Anything only one feature uses stays in that feature's folder until a second user shows up. `ui/` must not depend on feature modules (`request_editor`, `response_view`, ...); it may use `domain/` types.
+- **Use `Entity` + `Render` for components with lasting state, and `RenderOnce` or plain functions for presentation.** Components that aren't tied to a feature go in `ui/`, whether they're views or `RenderOnce` (e.g. `ui::key_value_editor::KeyValueEditor`). Anything only one feature uses stays in that feature's folder until a second user shows up. `ui/` must not depend on feature modules (`request_editor`, `response_view`, ...); it may use `domain` types.
 
-When reviewing, flag violations of these rules, especially gpui imports in `domain/`.
+When reviewing, flag violations of these rules, especially gpui imports in `posty-domain`.
 
 ## Agent role
 
