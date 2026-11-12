@@ -10,6 +10,7 @@ mod collections;
 mod command_palette;
 mod environment_picker;
 mod history;
+mod import_dialog;
 mod menus;
 mod request_editor;
 mod response_view;

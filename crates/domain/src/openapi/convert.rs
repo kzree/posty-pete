@@ -812,7 +812,7 @@ impl<'a> Converter<'a> {
 
     /// `baseUrl`, then the auth variables (empty), then the path variables.
     fn variables(&mut self, base_url: String) -> Vec<KeyValue> {
-        let mut variables = vec![row(true, "baseUrl", base_url)];
+        let mut variables = vec![row(true, super::BASE_URL_VARIABLE, base_url)];
         let auth = self
             .auth_variables
             .iter()

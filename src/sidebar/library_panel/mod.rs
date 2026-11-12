@@ -29,6 +29,7 @@ use tree::Section;
 
 pub enum LibraryPanelEvent {
     CreateCollection,
+    ImportOpenApi,
     OpenCollection(Uuid),
     OpenRequest {
         collection_id: Uuid,
@@ -245,7 +246,7 @@ impl LibraryPanel {
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (panel, environment_panel) = (cx.weak_entity(), cx.weak_entity());
+        let panel = cx.weak_entity();
         let new_button = Button::new("library-new")
             .ghost()
             .xsmall()
@@ -253,12 +254,13 @@ impl LibraryPanel {
             .tooltip("New")
             .accessibility_label("New")
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
-                let panel = panel.clone();
+                let (collection_panel, environment_panel, import_panel) =
+                    (panel.clone(), panel.clone(), panel.clone());
                 menu.item(
                     PopupMenuItem::new("Collection")
                         .icon(Icon::new(LucideIcon::FolderPlus))
                         .on_click(move |_, _, cx| {
-                            panel
+                            collection_panel
                                 .update(cx, |panel, cx| {
                                     panel.update_rows(cx, |delegate| {
                                         delegate.expand_section(Section::Collections)
@@ -271,13 +273,20 @@ impl LibraryPanel {
                 .item(
                     PopupMenuItem::new("Environment")
                         .icon(Icon::new(LucideIcon::LayersPlus))
-                        .on_click({
-                            let panel = environment_panel.clone();
-                            move |_, _, cx| {
-                                panel
-                                    .update(cx, |panel, cx| panel.create_shared_environment(cx))
-                                    .ok();
-                            }
+                        .on_click(move |_, _, cx| {
+                            environment_panel
+                                .update(cx, |panel, cx| panel.create_shared_environment(cx))
+                                .ok();
+                        }),
+                )
+                .separator()
+                .item(
+                    PopupMenuItem::new("Import from OpenAPI…")
+                        .icon(Icon::new(LucideIcon::Import))
+                        .on_click(move |_, _, cx| {
+                            import_panel
+                                .update(cx, |_, cx| cx.emit(LibraryPanelEvent::ImportOpenApi))
+                                .ok();
                         }),
                 )
             });

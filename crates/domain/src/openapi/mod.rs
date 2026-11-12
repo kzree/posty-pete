@@ -5,6 +5,7 @@
 mod convert;
 mod document;
 mod example;
+pub mod load;
 mod refs;
 mod warnings;
 
@@ -17,6 +18,9 @@ use crate::collection::{Collection, SourceLocation};
 
 /// The collection name when the spec has no title.
 pub const DEFAULT_NAME: &str = "Imported API";
+
+/// The collection variable that holds the server URL.
+pub const BASE_URL_VARIABLE: &str = "baseUrl";
 
 #[derive(Clone, Debug)]
 pub struct ImportResult {

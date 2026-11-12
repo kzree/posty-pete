@@ -13,9 +13,9 @@ use gpui_component::{ActiveTheme, h_resizable, input::Escape, resizable_panel};
 use super::{LeftPanelState, Workspace, navigation::Direction, routes::AppRoute};
 use crate::{
     actions::{
-        CancelRequest, FocusUrl, GoBack, GoForward, NewRequest, OpenCommandPalette, OpenHistory,
-        OpenLibrary, OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest,
-        SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
+        CancelRequest, FocusUrl, GoBack, GoForward, ImportOpenApi, NewRequest, OpenCommandPalette,
+        OpenHistory, OpenLibrary, OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen,
+        RevertRequest, SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
     },
     sidebar::SidebarTab,
     window_title_bar::WindowTitleBar,
@@ -83,6 +83,9 @@ impl Workspace {
         })
         .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
             this.new_request(window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &ImportOpenApi, window, cx| {
+            this.open_import(window, cx);
         }))
         .when(enabled(Command::FocusUrl), |this| {
             this.on_action(cx.listener(|this, _: &FocusUrl, window, cx| {

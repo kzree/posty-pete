@@ -103,7 +103,11 @@ impl Collections {
     }
 
     pub fn create(&mut self, name: impl Into<String>, cx: &mut Context<Self>) -> Uuid {
-        let collection = Collection::new(name);
+        self.add(Collection::new(name), cx)
+    }
+
+    /// Adds a whole collection, such as an imported one, and saves it.
+    pub fn add(&mut self, collection: Collection, cx: &mut Context<Self>) -> Uuid {
         let id = collection.id;
         self.collections.push(Arc::new(collection));
         self.sort();

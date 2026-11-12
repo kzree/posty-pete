@@ -10,6 +10,7 @@ gpui_kit_assets::icon_assets!(
         FlaskConical,
         FolderPlus,
         House,
+        Import,
         Keyboard,
         Layers,
         LayersPlus,

@@ -2,9 +2,9 @@ use gpui::{App, Menu, MenuItem, OsAction};
 use gpui_component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 
 use crate::actions::{
-    FocusUrl, GoBack, GoForward, Hide, HideOthers, NewRequest, OpenCommandPalette, OpenHistory,
-    OpenLibrary, OpenSettings, OpenSharedEnvironments, QuickOpen, Quit, RevertRequest, SaveRequest,
-    SaveRequestAs, SendRequest, ShowAll, ToggleSidebar,
+    FocusUrl, GoBack, GoForward, Hide, HideOthers, ImportOpenApi, NewRequest, OpenCommandPalette,
+    OpenHistory, OpenLibrary, OpenSettings, OpenSharedEnvironments, QuickOpen, Quit, RevertRequest,
+    SaveRequest, SaveRequestAs, SendRequest, ShowAll, ToggleSidebar,
 };
 
 /// Must run after `actions::bind_keys`: the menus read their shortcuts from the keymap.
@@ -17,6 +17,7 @@ pub fn init(app_name: &str, cx: &mut App) {
         Menu::new(app_name.to_string()).items(app_menu_items(app_name)),
         Menu::new("File").items([
             MenuItem::action("New Request", NewRequest),
+            MenuItem::action("Import from OpenAPI…", ImportOpenApi),
             MenuItem::action("Save", SaveRequest),
             MenuItem::action("Save As…", SaveRequestAs),
             MenuItem::action("Revert Changes…", RevertRequest),

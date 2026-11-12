@@ -1,3 +1,4 @@
+use domain::openapi::ImportResult;
 use domain::{
     collection::NEW_COLLECTION_NAME,
     history::{self, OpenMode},
@@ -5,7 +6,7 @@ use domain::{
     recents::Recent,
     request::{Auth, KeyValue},
 };
-use gpui::{Context, Window};
+use gpui::{Context, SharedString, Window};
 use gpui_component::{WindowExt, notification::Notification};
 
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
@@ -14,8 +15,9 @@ use crate::{
     collections::CollectionsEvent,
     command_palette::CommandPaletteEvent,
     history::HistoryEvent,
+    import_dialog::open_import_dialog,
     request_editor::RequestEditorEvent,
-    sidebar::{history_panel::HistoryPanelEvent, library_panel::LibraryPanelEvent},
+    sidebar::{SidebarTab, history_panel::HistoryPanelEvent, library_panel::LibraryPanelEvent},
     ui::environments_editor::EnvironmentsEditorEvent,
 };
 
@@ -136,6 +138,7 @@ impl Workspace {
     ) {
         match event {
             LibraryPanelEvent::CreateCollection => self.create_collection(window, cx),
+            LibraryPanelEvent::ImportOpenApi => self.open_import(window, cx),
             LibraryPanelEvent::OpenCollection(id) => self.open_collection(*id, window, cx),
             LibraryPanelEvent::OpenRequest {
                 collection_id,
@@ -207,6 +210,37 @@ impl Workspace {
         self.open_collection(id, window, cx);
         self.collection_view
             .update(cx, |view, cx| view.focus_name(window, cx));
+    }
+
+    pub(super) fn open_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.has_active_dialog(cx) {
+            return;
+        }
+        let client = self
+            .client
+            .get()
+            .map_err(|error| SharedString::from(error.to_string()));
+        let workspace = cx.weak_entity();
+        open_import_dialog(
+            client,
+            move |result, window, cx| {
+                workspace
+                    .update(cx, |this, cx| this.add_imported(result, window, cx))
+                    .ok();
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn add_imported(&mut self, result: ImportResult, window: &mut Window, cx: &mut Context<Self>) {
+        let id = self
+            .collections
+            .update(cx, |collections, cx| collections.add(result.collection, cx));
+        self.open_sidebar_tab(SidebarTab::Library, cx);
+        self.library_panel
+            .update(cx, |panel, cx| panel.reveal([id], cx));
+        self.open_collection(id, window, cx);
     }
 
     pub(super) fn on_collection_view_event(

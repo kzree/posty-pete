@@ -11,6 +11,7 @@ actions!(
         SaveRequestAs,
         RevertRequest,
         NewRequest,
+        ImportOpenApi,
         GoBack,
         GoForward,
         ToggleSidebar,
@@ -53,6 +54,7 @@ pub fn action(command: Command) -> Option<Box<dyn Action>> {
         Command::SharedEnvironments => Box::new(OpenSharedEnvironments),
         Command::Settings => Box::new(OpenSettings),
         Command::Quit => Box::new(Quit),
+        Command::ImportOpenApi => Box::new(ImportOpenApi),
         Command::NewCollection | Command::NewEnvironment | Command::NewSharedEnvironment => {
             return None;
         }

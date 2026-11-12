@@ -14,6 +14,7 @@ pub enum Command {
     NewCollection,
     NewEnvironment,
     NewSharedEnvironment,
+    ImportOpenApi,
     Back,
     Forward,
     FocusUrl,
@@ -28,7 +29,7 @@ pub enum Command {
 
 impl Command {
     /// In palette order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::NewRequest,
         Self::Save,
         Self::SaveAs,
@@ -38,6 +39,7 @@ impl Command {
         Self::NewCollection,
         Self::NewEnvironment,
         Self::NewSharedEnvironment,
+        Self::ImportOpenApi,
         Self::Back,
         Self::Forward,
         Self::FocusUrl,
@@ -62,6 +64,7 @@ impl Command {
             Self::NewCollection => "New collection",
             Self::NewEnvironment => "New environment",
             Self::NewSharedEnvironment => "New shared environment",
+            Self::ImportOpenApi => "Import from OpenAPI",
             Self::Back => "Back",
             Self::Forward => "Forward",
             Self::FocusUrl => "Focus URL",
@@ -87,6 +90,15 @@ impl Command {
             Self::NewCollection => &["create", "add"],
             Self::NewEnvironment => &["create", "add", "variables"],
             Self::NewSharedEnvironment => &["create", "add", "variables", "global"],
+            Self::ImportOpenApi => &[
+                "swagger",
+                "spec",
+                "collection",
+                "yaml",
+                "json",
+                "url",
+                "file",
+            ],
             Self::Back => &["go", "previous", "navigate"],
             Self::Forward => &["go", "next", "navigate"],
             Self::FocusUrl => &["address", "location"],
@@ -113,6 +125,7 @@ impl Command {
             Self::NewRequest
             | Self::NewCollection
             | Self::NewSharedEnvironment
+            | Self::ImportOpenApi
             | Self::ToggleSidebar
             | Self::Library
             | Self::History

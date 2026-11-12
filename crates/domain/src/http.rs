@@ -7,6 +7,7 @@ use std::{
 use tokio::{runtime::Runtime, task::JoinHandle};
 
 use anyhow::Context as _;
+pub use reqwest::Client;
 use reqwest::{
     Proxy,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue},
@@ -242,7 +243,7 @@ pub fn client(config: &ClientConfig) -> reqwest::Result<reqwest::Client> {
     builder.build()
 }
 
-fn runtime() -> &'static Runtime {
+pub(crate) fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
