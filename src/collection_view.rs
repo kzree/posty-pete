@@ -37,6 +37,11 @@ const ENVIRONMENTS_OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOption
     usable: true,
     empty_text: "Environments hold different values for the same variables, such as a host for staging and production.",
     hint: "While this environment is active, its values override the collection's variables. Changes save automatically.",
+    auth_hint: "While this environment is active, requests set to Inherit use its auth. Changes save automatically.",
+    auth: AuthEditorOptions {
+        inherit: Some("Uses the collection's auth, if any."),
+        none: "Requests set to Inherit send no auth while this environment is active.",
+    },
     bases: Some(BaseOptions {
         group: "Shared",
         manage_label: "Manage shared environments…",
@@ -48,9 +53,9 @@ const AUTH_OPTIONS: AuthEditorOptions = AuthEditorOptions {
     none: "This collection doesn't set authorization.",
 };
 
-/// The stored variables an editor edits.
+/// The collection or environment whose variables or auth an editor edits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VariableSet {
+pub enum EditTarget {
     Collection(Uuid),
     Environment {
         collection_id: Uuid,
@@ -64,11 +69,11 @@ pub enum CollectionViewEvent {
         name: String,
     },
     VariablesChanged {
-        set: VariableSet,
+        set: EditTarget,
         variables: Vec<KeyValue>,
     },
     AuthChanged {
-        collection_id: Uuid,
+        target: EditTarget,
         auth: Auth,
     },
     AddEnvironment {
@@ -139,7 +144,7 @@ pub struct CollectionView {
     collection: Option<Arc<Collection>>,
     active_tab: CollectionTab,
     name: Entity<InputState>,
-    variables: AutoSavedVariables<VariableSet>,
+    variables: AutoSavedVariables<EditTarget>,
     /// Keyed by the collection id.
     auth: AutoSavedAuth<Uuid>,
     environments: Entity<EnvironmentsEditor>,
@@ -231,7 +236,7 @@ impl CollectionView {
         let no_variables = Vec::new();
         let stored = collection.as_ref().map_or(&no_variables, |c| &c.variables);
         self.variables
-            .load(Some(VariableSet::Collection(id)), stored, window, cx);
+            .load(Some(EditTarget::Collection(id)), stored, window, cx);
         let no_auth = Auth::None;
         let stored_auth = collection.as_ref().map_or(&no_auth, |c| &c.auth);
         self.auth.load(Some(id), stored_auth, window, cx);
@@ -286,13 +291,13 @@ impl CollectionView {
     }
 
     /// Takes the variables edits waiting for their save delay.
-    pub fn take_pending_variables(&mut self, cx: &mut App) -> Vec<(VariableSet, Vec<KeyValue>)> {
+    pub fn take_pending_variables(&mut self, cx: &mut App) -> Vec<(EditTarget, Vec<KeyValue>)> {
         let mut pending: Vec<_> = self.variables.take_pending(cx).into_iter().collect();
-        let environment = self
-            .environments
-            .update(cx, |environments, cx| environments.take_pending(cx));
+        let environment = self.environments.update(cx, |environments, cx| {
+            environments.take_pending_variables(cx)
+        });
         if let (Some(collection_id), Some((environment_id, variables))) = (self.id, environment) {
-            let set = VariableSet::Environment {
+            let set = EditTarget::Environment {
                 collection_id,
                 environment_id,
             };
@@ -301,9 +306,26 @@ impl CollectionView {
         pending
     }
 
-    /// Takes the collection auth edit waiting for its save delay.
-    pub fn take_pending_auth(&mut self, cx: &App) -> Option<(Uuid, Auth)> {
-        self.auth.take_pending(cx)
+    /// Takes the collection and environment auth edits waiting for their
+    /// save delay.
+    pub fn take_pending_auth(&mut self, cx: &mut App) -> Vec<(EditTarget, Auth)> {
+        let mut pending: Vec<_> = self
+            .auth
+            .take_pending(cx)
+            .map(|(id, auth)| (EditTarget::Collection(id), auth))
+            .into_iter()
+            .collect();
+        let environment = self
+            .environments
+            .update(cx, |environments, cx| environments.take_pending_auth(cx));
+        if let (Some(collection_id), Some((environment_id, auth))) = (self.id, environment) {
+            let target = EditTarget::Environment {
+                collection_id,
+                environment_id,
+            };
+            pending.push((target, auth));
+        }
+        pending
     }
 
     fn on_environments_event(&mut self, event: &EnvironmentsEditorEvent, cx: &mut Context<Self>) {
@@ -333,13 +355,20 @@ impl CollectionView {
             },
             EnvironmentsEditorEvent::VariablesChanged { id, variables } => {
                 CollectionViewEvent::VariablesChanged {
-                    set: VariableSet::Environment {
+                    set: EditTarget::Environment {
                         collection_id,
                         environment_id: id,
                     },
                     variables,
                 }
             }
+            EnvironmentsEditorEvent::AuthChanged { id, auth } => CollectionViewEvent::AuthChanged {
+                target: EditTarget::Environment {
+                    collection_id,
+                    environment_id: id,
+                },
+                auth,
+            },
             EnvironmentsEditorEvent::BaseChanged { id, base } => {
                 CollectionViewEvent::SetEnvironmentBase {
                     collection_id,
@@ -367,11 +396,8 @@ impl CollectionView {
         for (set, variables) in self.take_pending_variables(cx) {
             cx.emit(CollectionViewEvent::VariablesChanged { set, variables });
         }
-        if let Some((collection_id, auth)) = self.take_pending_auth(cx) {
-            cx.emit(CollectionViewEvent::AuthChanged {
-                collection_id,
-                auth,
-            });
+        for (target, auth) in self.take_pending_auth(cx) {
+            cx.emit(CollectionViewEvent::AuthChanged { target, auth });
         }
     }
 

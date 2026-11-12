@@ -72,6 +72,21 @@ pub fn inherited_variables(base: &[KeyValue], own: &[KeyValue]) -> Vec<Inherited
         .collect()
 }
 
+/// What an environment based on `base` says about the base's auth: inherited
+/// while `own` is Inherit, else overridden. Names the kind only, never values.
+/// `None` if the base sets no auth.
+pub fn base_auth_note(own: &Auth, base: &Environment) -> Option<String> {
+    if base.auth.is_inherit() {
+        return None;
+    }
+    let (name, label) = (&base.name, base.auth.label());
+    Some(if own.is_inherit() {
+        format!("Inherited from {name}: {label}")
+    } else {
+        format!("Overrides {name}: {label}")
+    })
+}
+
 /// Adds a shared environment named [`NEW_ENVIRONMENT_NAME`], numbered if
 /// that's taken, and returns its id.
 pub fn add(shared: &mut Vec<Arc<Environment>>) -> Uuid {
@@ -126,6 +141,13 @@ pub fn delete(shared: &mut Vec<Arc<Environment>>, id: Uuid) -> bool {
 pub fn set_variables(shared: &mut [Arc<Environment>], id: Uuid, variables: Vec<KeyValue>) -> bool {
     find(shared, id).is_some_and(|env| env.variables != variables)
         && modify(shared, id, |env| env.variables = variables)
+}
+
+/// Replaces the environment's auth. Returns `false`, changing (and copying)
+/// nothing, if there's no such environment or it's the same.
+pub fn set_auth(shared: &mut [Arc<Environment>], id: Uuid, auth: Auth) -> bool {
+    find(shared, id).is_some_and(|env| env.auth != auth)
+        && modify(shared, id, |env| env.auth = auth)
 }
 
 /// Runs `f` on the environment, copying it first if it's shared.
@@ -356,6 +378,73 @@ mod tests {
                 (name, value, overridden)
             );
         }
+    }
+
+    #[test]
+    fn set_auth_only_when_it_changes_and_copies_on_write() {
+        let mut shared = Vec::new();
+        let id = add(&mut shared);
+        let held = shared.clone();
+        let bearer = Auth::Bearer { token: "t".into() };
+
+        assert!(!set_auth(&mut shared, id, Auth::Inherit));
+        assert!(!set_auth(&mut shared, Uuid::new_v4(), bearer.clone()));
+        assert!(Arc::ptr_eq(&shared[0], &held[0]));
+
+        assert!(set_auth(&mut shared, id, bearer.clone()));
+        assert_eq!(shared[0].auth, bearer);
+        assert_eq!(held[0].auth, Auth::Inherit);
+
+        let changed = shared.clone();
+        assert!(!set_auth(&mut shared, id, bearer));
+        assert!(Arc::ptr_eq(&shared[0], &changed[0]));
+
+        assert!(set_auth(&mut shared, id, Auth::Inherit));
+        assert_eq!(shared[0].auth, Auth::Inherit);
+    }
+
+    #[test]
+    fn base_auth_note_names_the_base_and_the_kind_only() {
+        let mut base = Environment::new("Staging");
+        let bearer = Auth::Bearer {
+            token: "secret".into(),
+        };
+        assert_eq!(base_auth_note(&Auth::Inherit, &base), None);
+        assert_eq!(base_auth_note(&bearer, &base), None);
+
+        base.auth = bearer.clone();
+        assert_eq!(
+            base_auth_note(&Auth::Inherit, &base).as_deref(),
+            Some("Inherited from Staging: Bearer token")
+        );
+        assert_eq!(
+            base_auth_note(&Auth::None, &base).as_deref(),
+            Some("Overrides Staging: Bearer token")
+        );
+
+        base.auth = Auth::Basic {
+            username: "user".into(),
+            password: "secret".into(),
+        };
+        let note = base_auth_note(&Auth::Inherit, &base).unwrap();
+        assert_eq!(note, "Inherited from Staging: Basic auth");
+        assert!(!note.contains("secret") && !note.contains("user"));
+
+        base.auth = Auth::None;
+        assert_eq!(
+            base_auth_note(&Auth::Inherit, &base).as_deref(),
+            Some("Inherited from Staging: No auth")
+        );
+
+        base.auth = Auth::ApiKey {
+            key: "X-Key".into(),
+            value: "secret".into(),
+            location: Default::default(),
+        };
+        assert_eq!(
+            base_auth_note(&bearer, &base).as_deref(),
+            Some("Overrides Staging: API key")
+        );
     }
 
     #[test]

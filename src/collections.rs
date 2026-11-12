@@ -282,6 +282,20 @@ impl Collections {
         }
     }
 
+    /// Saves only if `auth` differs from the stored one.
+    pub fn set_environment_auth(
+        &mut self,
+        collection_id: Uuid,
+        environment_id: Uuid,
+        auth: Auth,
+        cx: &mut Context<Self>,
+    ) {
+        let collections = &mut self.collections;
+        if collection::set_environment_auth(collections, collection_id, environment_id, auth) {
+            self.changed(collection_id, cx);
+        }
+    }
+
     /// `base: None` unlinks the environment.
     pub fn set_environment_base(
         &mut self,

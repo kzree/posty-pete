@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::domain::{
     environment::{self, Environment},
-    request::KeyValue,
+    request::{Auth, KeyValue},
     store::{
         self,
         environment::EnvironmentStore,
@@ -144,6 +144,13 @@ impl SharedEnvironments {
     /// Saves only if `variables` differ from the stored ones.
     pub fn set_variables(&mut self, id: Uuid, variables: Vec<KeyValue>, cx: &mut Context<Self>) {
         if environment::set_variables(&mut self.environments, id, variables) {
+            self.changed(id, cx);
+        }
+    }
+
+    /// Saves only if `auth` differs from the stored one.
+    pub fn set_auth(&mut self, id: Uuid, auth: Auth, cx: &mut Context<Self>) {
+        if environment::set_auth(&mut self.environments, id, auth) {
             self.changed(id, cx);
         }
     }

@@ -44,6 +44,17 @@ impl Auth {
     pub fn is_inherit(&self) -> bool {
         *self == Self::Inherit
     }
+
+    /// The kind of auth, never its values.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Inherit => "Inherit",
+            Self::None => "No auth",
+            Self::ApiKey { .. } => "API key",
+            Self::Basic { .. } => "Basic auth",
+            Self::Bearer { .. } => "Bearer token",
+        }
+    }
 }
 
 impl ApiKeyLocation {

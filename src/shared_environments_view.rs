@@ -8,9 +8,15 @@ use gpui_component::{StyledExt, v_flex};
 use uuid::Uuid;
 
 use crate::{
-    domain::{environment::Environment, request::KeyValue},
-    ui::environments_editor::{
-        EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
+    domain::{
+        environment::Environment,
+        request::{Auth, KeyValue},
+    },
+    ui::{
+        auth_editor::AuthEditorOptions,
+        environments_editor::{
+            EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
+        },
     },
 };
 
@@ -18,6 +24,11 @@ const OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOptions {
     usable: false,
     empty_text: "Shared environments hold values, such as a staging host, that environments in any collection can be based on.",
     hint: "Environments based on this one use these values unless they set their own. Changes save automatically.",
+    auth_hint: "Environments based on this one, and drafts using it, use this auth unless they set their own. Changes save automatically.",
+    auth: AuthEditorOptions {
+        inherit: Some("Uses the collection's auth, if any."),
+        none: "Requests set to Inherit send no auth with this environment.",
+    },
     bases: None,
 };
 
@@ -72,7 +83,13 @@ impl SharedEnvironmentsView {
     /// Takes the variables edit waiting for its save delay.
     pub fn take_pending_variables(&mut self, cx: &mut App) -> Option<(Uuid, Vec<KeyValue>)> {
         self.environments
-            .update(cx, |editor, cx| editor.take_pending(cx))
+            .update(cx, |editor, cx| editor.take_pending_variables(cx))
+    }
+
+    /// Takes the auth edit waiting for its save delay.
+    pub fn take_pending_auth(&mut self, cx: &mut App) -> Option<(Uuid, Auth)> {
+        self.environments
+            .update(cx, |editor, cx| editor.take_pending_auth(cx))
     }
 }
 

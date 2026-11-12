@@ -74,6 +74,8 @@ impl SearchableListItem for AuthKindItem {
 
 pub struct AuthEditor {
     options: AuthEditorOptions,
+    /// Replaces the options' Inherit line when set.
+    inherit_note: Option<SharedString>,
     kind: AuthKind,
     kind_select: Entity<SelectState<Vec<AuthKindItem>>>,
     api_key_name: Entity<InputState>,
@@ -132,6 +134,7 @@ impl AuthEditor {
         Self {
             kind: Self::default_kind(options),
             options,
+            inherit_note: None,
             kind_select,
             api_key_name,
             api_key_value,
@@ -195,6 +198,14 @@ impl AuthEditor {
         cx.notify();
     }
 
+    /// Shows `note` for Inherit instead of the options' line; `None` restores it.
+    pub fn set_inherit_note(&mut self, note: Option<SharedString>, cx: &mut Context<Self>) {
+        if self.inherit_note != note {
+            self.inherit_note = note;
+            cx.notify();
+        }
+    }
+
     pub fn auth(&self, cx: &App) -> Auth {
         let text = |input: &Entity<InputState>| input.read(cx).value().to_string();
         match self.kind {
@@ -234,7 +245,11 @@ impl Render for AuthEditor {
             AuthKind::Inherit => div()
                 .text_sm()
                 .text_color(muted)
-                .child(self.options.inherit.unwrap_or_default())
+                .child(
+                    self.inherit_note
+                        .clone()
+                        .unwrap_or_else(|| self.options.inherit.unwrap_or_default().into()),
+                )
                 .into_any_element(),
             AuthKind::None => div()
                 .text_sm()

@@ -232,6 +232,22 @@ pub fn set_environment_variables(
         })
 }
 
+/// Replaces the environment's auth; Inherit means not set. Returns `false`,
+/// changing (and copying) nothing, if there's no such environment or it's the
+/// same.
+pub fn set_environment_auth(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    environment_id: Uuid,
+    auth: Auth,
+) -> bool {
+    find_environment(collections, collection_id, environment_id)
+        .is_some_and(|environment| environment.auth != auth)
+        && modify_environment(collections, collection_id, environment_id, |environment| {
+            environment.auth = auth;
+        })
+}
+
 fn find_environment(
     collections: &[Arc<Collection>],
     collection_id: Uuid,
@@ -1511,5 +1527,74 @@ mod tests {
         assert!(collections[0].environments[0].variables.is_empty());
         assert_eq!(held[0].environments[0].variables, rows);
         assert!(collections[0].variables.is_empty());
+    }
+
+    #[test]
+    fn set_environment_auth_only_when_it_changes_and_copies_on_write() {
+        let (mut collections, collection_id, environment_id) = with_environment(Vec::new());
+        let held = collections.clone();
+        let bearer = Auth::Bearer { token: "t".into() };
+
+        assert!(!set_environment_auth(
+            &mut collections,
+            collection_id,
+            environment_id,
+            Auth::Inherit
+        ));
+        assert!(!set_environment_auth(
+            &mut collections,
+            collection_id,
+            Uuid::new_v4(),
+            bearer.clone()
+        ));
+        assert!(!set_environment_auth(
+            &mut collections,
+            Uuid::new_v4(),
+            environment_id,
+            bearer.clone()
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
+
+        assert!(set_environment_auth(
+            &mut collections,
+            collection_id,
+            environment_id,
+            bearer.clone()
+        ));
+        assert_eq!(collections[0].environments[0].auth, bearer);
+        assert_eq!(held[0].environments[0].auth, Auth::Inherit);
+        assert_eq!(collections[0].auth, Auth::None);
+
+        let changed = collections.clone();
+        assert!(!set_environment_auth(
+            &mut collections,
+            collection_id,
+            environment_id,
+            bearer
+        ));
+        assert!(Arc::ptr_eq(&collections[0], &changed[0]));
+
+        assert!(set_environment_auth(
+            &mut collections,
+            collection_id,
+            environment_id,
+            Auth::Inherit
+        ));
+        assert_eq!(collections[0].environments[0].auth, Auth::Inherit);
+    }
+
+    #[test]
+    fn duplicate_environment_copies_auth() {
+        let (mut collections, collection_id, environment_id) = with_environment(Vec::new());
+        let bearer = Auth::Bearer { token: "t".into() };
+        set_environment_auth(
+            &mut collections,
+            collection_id,
+            environment_id,
+            bearer.clone(),
+        );
+
+        let copy = duplicate_environment(&mut collections, collection_id, environment_id).unwrap();
+        assert_eq!(collections[0].environment(copy).unwrap().auth, bearer);
     }
 }

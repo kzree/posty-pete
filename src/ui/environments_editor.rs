@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
-    AnyElement, AppContext, Context, EventEmitter, IntoElement, ParentElement, Render, Styled,
-    Subscription, WeakEntity, Window, div, prelude::*, px,
+    AnyElement, AppContext, Context, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Sizable,
@@ -11,6 +11,7 @@ use gpui_component::{
     list::ListItem,
     menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
     scroll::ScrollableElement,
+    tab::TabBar,
     tooltip::Tooltip,
     v_flex,
 };
@@ -19,10 +20,11 @@ use uuid::Uuid;
 use crate::{
     domain::{
         environment::{self, Environment, InheritedVariable},
-        request::KeyValue,
+        request::{Auth, KeyValue},
     },
     ui::{
-        auto_saved::{AutoSavedVariables, SAVE_DELAY},
+        auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
+        auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
         confirm_dialog::open_confirm_dialog,
         key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
         rename_dialog::open_rename_dialog,
@@ -43,6 +45,10 @@ pub enum EnvironmentsEditorEvent {
     VariablesChanged {
         id: Uuid,
         variables: Vec<KeyValue>,
+    },
+    AuthChanged {
+        id: Uuid,
+        auth: Auth,
     },
     /// `base: None` unlinks the environment.
     BaseChanged {
@@ -65,6 +71,9 @@ pub struct EnvironmentsEditorOptions {
     pub empty_text: &'static str,
     /// Shown above the selected environment's variables.
     pub hint: &'static str,
+    /// Shown above the selected environment's auth.
+    pub auth_hint: &'static str,
+    pub auth: AuthEditorOptions,
     /// Whether environments can be based on others; `None` hides it.
     pub bases: Option<BaseOptions>,
 }
@@ -78,8 +87,30 @@ pub struct BaseOptions {
     pub manage_label: &'static str,
 }
 
-/// A list of environments with the selected one's variables next to it.
-/// Variables auto-save; everything else is emitted for the parent to apply.
+#[derive(Clone, Copy, PartialEq)]
+enum Pane {
+    Variables,
+    Authorization,
+}
+
+impl Pane {
+    const ALL: [Pane; 2] = [Self::Variables, Self::Authorization];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Variables => "Variables",
+            Self::Authorization => "Authorization",
+        }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|pane| *pane == self).unwrap_or(0)
+    }
+}
+
+/// A list of environments with the selected one's variables or auth next to
+/// it. Variables and auth auto-save; everything else is emitted for the
+/// parent to apply.
 pub struct EnvironmentsEditor {
     options: EnvironmentsEditorOptions,
     environments: Vec<Environment>,
@@ -89,8 +120,10 @@ pub struct EnvironmentsEditor {
     /// The environments others can be based on.
     bases: Vec<Arc<Environment>>,
     selected: Option<Uuid>,
+    pane: Pane,
     variables: AutoSavedVariables<Uuid>,
-    _subscription: Subscription,
+    auth: AutoSavedAuth<Uuid>,
+    _subscriptions: [Subscription; 2],
 }
 
 impl EventEmitter<EnvironmentsEditorEvent> for EnvironmentsEditor {}
@@ -104,14 +137,20 @@ impl EnvironmentsEditor {
         let editor = cx.new(|cx| {
             KeyValueEditor::with_column_labels("variable", "Variable", "Value", window, cx)
         });
-        let subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
+        let variables_sub = cx.subscribe(&editor, |this, _, event, cx| match event {
             KeyValueEditorEvent::Changed => {
-                let save = cx.spawn(async move |this, cx| {
-                    cx.background_executor().timer(SAVE_DELAY).await;
-                    this.update(cx, |this, cx| this.emit_pending(cx)).ok();
-                });
+                let save = this.save_after_delay(cx);
                 this.variables.schedule(save);
                 // The inherited list marks what the rows override.
+                cx.notify();
+            }
+        });
+        let auth = cx.new(|cx| AuthEditor::new(options.auth, window, cx));
+        let auth_sub = cx.subscribe(&auth, |this, _, event, cx| match event {
+            AuthEditorEvent::Changed => {
+                let save = this.save_after_delay(cx);
+                this.auth.schedule(save);
+                // The base's auth reads as inherited or overridden.
                 cx.notify();
             }
         });
@@ -122,8 +161,10 @@ impl EnvironmentsEditor {
             linked: HashMap::new(),
             bases: Vec::new(),
             selected: None,
+            pane: Pane::Variables,
             variables: AutoSavedVariables::new(editor),
-            _subscription: subscription,
+            auth: AutoSavedAuth::new(auth),
+            _subscriptions: [variables_sub, auth_sub],
         }
     }
 
@@ -170,8 +211,9 @@ impl EnvironmentsEditor {
         self.selected
     }
 
-    /// Focuses the first variable of the environment shown.
-    pub fn focus_variables(&self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Shows the variables and focuses the first one.
+    pub fn focus_variables(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_pane(Pane::Variables, cx);
         self.variables
             .editor()
             .update(cx, |editor, cx| editor.focus_first_key(window, cx));
@@ -179,8 +221,29 @@ impl EnvironmentsEditor {
 
     /// Takes the variables edit waiting for its save delay, as the
     /// environment id and its variables.
-    pub fn take_pending(&mut self, cx: &gpui::App) -> Option<(Uuid, Vec<KeyValue>)> {
+    pub fn take_pending_variables(&mut self, cx: &gpui::App) -> Option<(Uuid, Vec<KeyValue>)> {
         self.variables.take_pending(cx)
+    }
+
+    /// Takes the auth edit waiting for its save delay, as the environment id
+    /// and its auth.
+    pub fn take_pending_auth(&mut self, cx: &gpui::App) -> Option<(Uuid, Auth)> {
+        self.auth.take_pending(cx)
+    }
+
+    fn save_after_delay(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SAVE_DELAY).await;
+            this.update(cx, |this, cx| this.emit_pending(cx)).ok();
+        })
+    }
+
+    fn select_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        if self.pane != pane {
+            self.emit_pending(cx);
+            self.pane = pane;
+            cx.notify();
+        }
     }
 
     fn emit_selected_if_changed(&self, previous: Option<Uuid>, cx: &mut Context<Self>) {
@@ -190,23 +253,37 @@ impl EnvironmentsEditor {
     }
 
     fn emit_pending(&mut self, cx: &mut Context<Self>) {
-        if let Some((id, variables)) = self.take_pending(cx) {
+        if let Some((id, variables)) = self.take_pending_variables(cx) {
             cx.emit(EnvironmentsEditorEvent::VariablesChanged { id, variables });
+        }
+        if let Some((id, auth)) = self.take_pending_auth(cx) {
+            cx.emit(EnvironmentsEditorEvent::AuthChanged { id, auth });
         }
     }
 
     /// Keeps the selection on an existing environment and loads its
-    /// variables, emitting a pending edit of the one shown before.
+    /// variables and auth, emitting pending edits of the one shown before.
     fn sync_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let id = environment_to_select(&self.environments, self.selected, self.active);
         self.selected = id;
-        if id != self.variables.set() {
+        if id != self.variables.set() || id != self.auth.set() {
             self.emit_pending(cx);
         }
+        let inherit_note = id
+            .and_then(|id| find(&self.environments, id))
+            .and_then(|env| self.base_of(env))
+            .and_then(|(_, base)| environment::base_auth_note(&Auth::Inherit, base))
+            .map(SharedString::from);
         let environment = id.and_then(|id| find(&self.environments, id));
         let empty = Vec::new();
         let stored = environment.map_or(&empty, |env| &env.variables);
         self.variables.load(id, stored, window, cx);
+        let inherit = Auth::Inherit;
+        let stored = environment.map_or(&inherit, |env| &env.auth);
+        self.auth.load(id, stored, window, cx);
+        self.auth
+            .editor()
+            .update(cx, |editor, cx| editor.set_inherit_note(inherit_note, cx));
     }
 
     /// The existing base of `environment`, when bases are shown.
@@ -348,7 +425,7 @@ impl EnvironmentsEditor {
             .into_any_element()
     }
 
-    fn render_variables(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_details(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.selected.and_then(|id| find(&self.environments, id));
         let base_select = selected
             .zip(self.options.bases)
@@ -356,30 +433,78 @@ impl EnvironmentsEditor {
                 self.render_base_select(environment, options, cx)
                     .into_any_element()
             });
-        let inherited = selected
-            .and_then(|environment| self.base_of(environment))
-            .map(|(options, base)| self.render_inherited(options, base, cx).into_any_element());
+        let tabs = TabBar::new("environment-pane")
+            .segmented()
+            .small()
+            .selected_index(self.pane.index())
+            .on_click(cx.listener(|this, ix: &usize, _, cx| this.select_pane(Pane::ALL[*ix], cx)))
+            .children(Pane::ALL.map(Pane::label));
+        let (hint, content) = match self.pane {
+            Pane::Variables => (
+                self.options.hint,
+                self.render_variables(selected, cx).into_any_element(),
+            ),
+            Pane::Authorization => (
+                self.options.auth_hint,
+                self.render_auth(selected, cx).into_any_element(),
+            ),
+        };
         v_flex()
             .flex_1()
             .min_w_0()
             .h_full()
             .gap_2()
+            .child(h_flex().child(tabs))
             .child(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(self.options.hint),
+                    .child(hint),
             )
             .children(base_select)
-            .child(
-                v_flex()
-                    .id("environment-variables")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scrollbar()
-                    .child(self.variables.editor().clone())
-                    .children(inherited),
-            )
+            .child(content)
+    }
+
+    fn render_variables(
+        &self,
+        selected: Option<&Environment>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let inherited = selected
+            .and_then(|environment| self.base_of(environment))
+            .map(|(options, base)| self.render_inherited(options, base, cx).into_any_element());
+        v_flex()
+            .id("environment-variables")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scrollbar()
+            .child(self.variables.editor().clone())
+            .children(inherited)
+    }
+
+    fn render_auth(
+        &self,
+        selected: Option<&Environment>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let own = self.auth.editor().read(cx).auth(cx);
+        let overridden = selected
+            .and_then(|environment| self.base_of(environment))
+            .filter(|_| !own.is_inherit())
+            .and_then(|(_, base)| environment::base_auth_note(&own, base));
+        v_flex()
+            .id("environment-auth")
+            .flex_1()
+            .min_h_0()
+            .gap_3()
+            .overflow_y_scrollbar()
+            .children(overridden.map(|note| {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(note)
+            }))
+            .child(self.auth.editor().clone())
     }
 
     fn render_base_select(
@@ -460,7 +585,7 @@ impl Render for EnvironmentsEditor {
             .items_start()
             .gap_4()
             .child(self.render_list(cx))
-            .child(self.render_variables(cx))
+            .child(self.render_details(cx))
             .into_any_element()
     }
 }

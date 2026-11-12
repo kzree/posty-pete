@@ -1,10 +1,9 @@
 use gpui::{Context, Window};
 use gpui_component::{WindowExt, notification::Notification};
-use uuid::Uuid;
 
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
-    collection_view::{CollectionViewEvent, VariableSet},
+    collection_view::{CollectionViewEvent, EditTarget},
     collections::CollectionsEvent,
     command_palette::CommandPaletteEvent,
     domain::{
@@ -225,10 +224,9 @@ impl Workspace {
             CollectionViewEvent::VariablesChanged { set, variables } => {
                 self.save_variables(*set, variables.clone(), cx)
             }
-            CollectionViewEvent::AuthChanged {
-                collection_id,
-                auth,
-            } => self.save_collection_auth(*collection_id, auth.clone(), cx),
+            CollectionViewEvent::AuthChanged { target, auth } => {
+                self.save_auth(*target, auth.clone(), cx)
+            }
             CollectionViewEvent::AddEnvironment { collection_id } => {
                 self.add_environment(*collection_id, window, cx)
             }
@@ -275,13 +273,13 @@ impl Workspace {
 
     fn save_variables(
         &mut self,
-        set: VariableSet,
+        set: EditTarget,
         variables: Vec<KeyValue>,
         cx: &mut Context<Self>,
     ) {
         self.collections.update(cx, |collections, cx| match set {
-            VariableSet::Collection(id) => collections.set_variables(id, variables, cx),
-            VariableSet::Environment {
+            EditTarget::Collection(id) => collections.set_variables(id, variables, cx),
+            EditTarget::Environment {
                 collection_id,
                 environment_id,
             } => {
@@ -290,9 +288,13 @@ impl Workspace {
         });
     }
 
-    fn save_collection_auth(&mut self, collection_id: Uuid, auth: Auth, cx: &mut Context<Self>) {
-        self.collections.update(cx, |collections, cx| {
-            collections.set_auth(collection_id, auth, cx)
+    fn save_auth(&mut self, target: EditTarget, auth: Auth, cx: &mut Context<Self>) {
+        self.collections.update(cx, |collections, cx| match target {
+            EditTarget::Collection(id) => collections.set_auth(id, auth, cx),
+            EditTarget::Environment {
+                collection_id,
+                environment_id,
+            } => collections.set_environment_auth(collection_id, environment_id, auth, cx),
         });
     }
 
@@ -302,20 +304,25 @@ impl Workspace {
         let (pending, auth) = self.collection_view.update(cx, |view, cx| {
             (view.take_pending_variables(cx), view.take_pending_auth(cx))
         });
-        let shared = self
-            .shared_environments_view
-            .update(cx, |view, cx| view.take_pending_variables(cx));
-        let flushed = !pending.is_empty() || auth.is_some() || shared.is_some();
-        for (set, variables) in pending {
-            self.save_variables(set, variables, cx);
+        let (shared, shared_auth) = self.shared_environments_view.update(cx, |view, cx| {
+            (view.take_pending_variables(cx), view.take_pending_auth(cx))
+        });
+        let flushed =
+            !pending.is_empty() || !auth.is_empty() || shared.is_some() || shared_auth.is_some();
+        for (target, variables) in pending {
+            self.save_variables(target, variables, cx);
         }
-        if let Some((collection_id, auth)) = auth {
-            self.save_collection_auth(collection_id, auth, cx);
+        for (target, auth) in auth {
+            self.save_auth(target, auth, cx);
         }
         if let Some((id, variables)) = shared {
             self.shared_environments.update(cx, |environments, cx| {
                 environments.set_variables(id, variables, cx)
             });
+        }
+        if let Some((id, auth)) = shared_auth {
+            self.shared_environments
+                .update(cx, |environments, cx| environments.set_auth(id, auth, cx));
         }
         flushed
     }
@@ -345,6 +352,9 @@ impl Workspace {
                     environments.set_variables(id, variables, cx)
                 })
             }
+            EnvironmentsEditorEvent::AuthChanged { id, auth } => self
+                .shared_environments
+                .update(cx, |environments, cx| environments.set_auth(id, auth, cx)),
         }
     }
 
