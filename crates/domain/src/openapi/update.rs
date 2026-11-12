@@ -203,7 +203,7 @@ pub fn apply(current: &Collection, fresh: &Collection, choices: &Choices) -> Col
     for entry in &analysis.entries {
         match entry {
             Entry::Added { fresh: saved, tag } => {
-                let key = ItemKey::Request(origin_key(saved).to_owned());
+                let key = ItemKey::Request(origin_key(saved));
                 let item = Item::Request((*saved).clone());
                 insert(&mut updated, item, &key, *tag, fresh, &orders);
             }
@@ -225,7 +225,7 @@ pub fn apply(current: &Collection, fresh: &Collection, choices: &Choices) -> Col
                 if matched.moves
                     && let Some(item) = updated.remove(id)
                 {
-                    let key = ItemKey::Request(origin_key(matched.fresh).to_owned());
+                    let key = ItemKey::Request(origin_key(matched.fresh));
                     insert(&mut updated, item, &key, matched.fresh_tag, fresh, &orders);
                 }
             }
@@ -580,41 +580,38 @@ fn moves_to(tag: Option<&str>, fresh: &Collection) -> String {
 }
 
 /// An imported request or folder, by what it came from in the spec.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum ItemKey {
-    Request(String),
-    Folder(String),
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ItemKey<'a> {
+    Request(&'a str),
+    Folder(&'a str),
 }
 
-fn item_key(item: &Item) -> Option<ItemKey> {
+fn item_key(item: &Item) -> Option<ItemKey<'_>> {
     match item {
         Item::Request(saved) => saved
             .origin
             .as_ref()
-            .map(|origin| ItemKey::Request(origin.key.clone())),
+            .map(|origin| ItemKey::Request(&origin.key)),
         Item::Folder(folder) => folder
             .origin
             .as_ref()
-            .map(|origin| ItemKey::Folder(origin.key.clone())),
+            .map(|origin| ItemKey::Folder(&origin.key)),
     }
 }
 
 /// The order of each container's imported items in the spec: the top level
 /// under `None`, a tag folder under its tag.
-fn sibling_orders(fresh: &Collection) -> HashMap<Option<String>, Vec<ItemKey>> {
-    fn walk(
-        items: &[Item],
-        container: Option<String>,
-        orders: &mut HashMap<Option<String>, Vec<ItemKey>>,
+fn sibling_orders(fresh: &Collection) -> HashMap<Option<&str>, Vec<ItemKey<'_>>> {
+    fn walk<'a>(
+        items: &'a [Item],
+        container: Option<&'a str>,
+        orders: &mut HashMap<Option<&'a str>, Vec<ItemKey<'a>>>,
     ) {
-        orders.insert(
-            container.clone(),
-            items.iter().filter_map(item_key).collect(),
-        );
+        orders.insert(container, items.iter().filter_map(item_key).collect());
         for item in items {
             if let Item::Folder(folder) = item {
-                let inner = folder.origin.as_ref().map(|origin| origin.key.clone());
-                walk(&folder.items, inner.or(container.clone()), orders);
+                let inner = folder.origin.as_ref().map(|origin| origin.key.as_str());
+                walk(&folder.items, inner.or(container), orders);
             }
         }
     }
@@ -646,14 +643,9 @@ fn insert(
     key: &ItemKey,
     tag: Option<&str>,
     fresh: &Collection,
-    orders: &HashMap<Option<String>, Vec<ItemKey>>,
+    orders: &HashMap<Option<&str>, Vec<ItemKey>>,
 ) {
-    let no_order = Vec::new();
-    let order = |container: Option<&str>| {
-        orders
-            .get(&container.map(str::to_owned))
-            .unwrap_or(&no_order)
-    };
+    let order = |container| sibling_order(orders, container);
     let Some(tag) = tag else {
         insert_ordered(&mut collection.items, item, key, order(None));
         return;
@@ -665,10 +657,14 @@ fn insert(
                 insert_ordered(&mut collection.items, item, key, order(None));
                 return;
             };
-            let mut folder = template.clone();
-            folder.items.clear();
+            let folder = Folder {
+                id: template.id,
+                name: template.name.clone(),
+                items: Vec::new(),
+                origin: template.origin.clone(),
+            };
             let id = folder.id;
-            let folder_key = ItemKey::Folder(tag.to_owned());
+            let folder_key = ItemKey::Folder(tag);
             insert_ordered(
                 &mut collection.items,
                 Item::Folder(folder),
@@ -684,13 +680,20 @@ fn insert(
     }
 }
 
+fn sibling_order<'o>(
+    orders: &'o HashMap<Option<&'o str>, Vec<ItemKey<'o>>>,
+    container: Option<&'o str>,
+) -> &'o [ItemKey<'o>] {
+    orders.get(&container).map_or(&[], Vec::as_slice)
+}
+
 /// Inserts after the nearest earlier spec sibling present, else before the
 /// nearest later one, else at the end.
 fn insert_ordered(items: &mut Vec<Item>, item: Item, key: &ItemKey, order: &[ItemKey]) {
     let index_of = |wanted: &ItemKey| {
         items
             .iter()
-            .position(|item| item_key(item).as_ref() == Some(wanted))
+            .position(|item| item_key(item) == Some(*wanted))
     };
     let position = order
         .iter()

@@ -270,6 +270,46 @@ fn added_operations_go_into_their_tag_folder_at_the_spec_position() {
 }
 
 #[test]
+fn a_new_tag_folder_matches_the_spec_folder() {
+    let current = base();
+    let mut paths = base_paths();
+    let body = |name: &str| {
+        json!({"content": {"application/json": {
+            "example": {"name": name, "notes": "x".repeat(4096)},
+        }}})
+    };
+    paths["/owners"] = json!({
+        "get": {"operationId": "listOwners", "summary": "List owners", "tags": ["owners"]},
+        "post": {"operationId": "addOwner", "summary": "Add owner", "tags": ["owners"],
+            "requestBody": body("owner")},
+    });
+    paths["/owners/{id}"] = json!({
+        "put": {"operationId": "replaceOwner", "summary": "Replace owner", "tags": ["owners"],
+            "requestBody": body("replaced")},
+        "delete": {"operationId": "deleteOwner", "summary": "Delete owner", "tags": ["owners"]},
+    });
+    let mut new_spec = spec(paths);
+    new_spec["tags"] = json!([{"name": "pets"}, {"name": "stores"}, {"name": "owners"}]);
+    let fresh = convert(&new_spec);
+
+    let (_, updated) = update(&current, &fresh);
+    let owners = folder_named(&updated, "owners");
+    assert_eq!(
+        names(&owners.items),
+        ["List owners", "Add owner", "Replace owner", "Delete owner"]
+    );
+    assert_eq!(
+        serde_json::to_value(owners).unwrap(),
+        serde_json::to_value(folder_named(&fresh, "owners")).unwrap()
+    );
+    assert_eq!(
+        names(&updated.items),
+        ["pets/", "stores/", "owners/", "Health"]
+    );
+    assert_up_to_date(&updated, &new_spec);
+}
+
+#[test]
 fn added_operations_find_their_folder_after_the_user_renamed_it() {
     let mut current = base();
     let pets = folder_named(&current, "pets").id;

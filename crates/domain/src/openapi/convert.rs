@@ -453,7 +453,7 @@ impl<'a> Converter<'a> {
                 let Some(param) = self.spec.resolve(param) else {
                     continue;
                 };
-                let key = |p: &Value| (p.get("name").cloned(), p.get("in").cloned());
+                let key = |p: &'a Value| (p.get("name"), p.get("in"));
                 match merged.iter_mut().find(|seen| key(seen) == key(param)) {
                     Some(seen) => *seen = param,
                     None => merged.push(param),
