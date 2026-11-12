@@ -2,7 +2,7 @@ use std::{fs, io, path::PathBuf};
 
 use anyhow::{Context as _, bail};
 
-use crate::navigation::SavedNavigation;
+use crate::navigation::{NavigationFile, SavedNavigation};
 
 /// The navigation state in a single JSON file.
 pub struct NavigationStore {
@@ -29,11 +29,11 @@ impl NavigationStore {
         Ok(Some(saved))
     }
 
-    pub fn save(&self, saved: &SavedNavigation) -> anyhow::Result<()> {
+    pub fn save<'a>(&self, saved: impl Into<NavigationFile<'a>>) -> anyhow::Result<()> {
         if let Some(dir) = self.path.parent() {
             fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         }
-        super::write_json_atomically(&self.path, saved)
+        super::write_json_atomically(&self.path, &saved.into())
     }
 }
 

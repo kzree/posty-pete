@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, mem, sync::Arc};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::{
@@ -24,24 +24,73 @@ pub enum NavEntry {
 }
 
 /// The back/forward history and the unsaved draft, kept across restarts.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(from = "StoredNavigation")]
 pub struct SavedNavigation {
     pub entries: Vec<NavEntry>,
     /// Index of the current entry in `entries`.
     pub index: usize,
-    #[serde(default)]
     pub draft: Option<Request>,
     /// Each collection's active environment, by collection id.
-    #[serde(default)]
     pub active_environments: HashMap<Uuid, Uuid>,
-    #[serde(default, skip_serializing_if = "DraftSource::is_none")]
     pub draft_source: DraftSource,
     /// What the palette lists as recent.
-    #[serde(default, skip_serializing_if = "Recents::is_empty")]
     pub recents: Recents,
-    #[serde(default)]
     pub layout: Layout,
+}
+
+/// How [`SavedNavigation`] is written, borrowing the session part from
+/// wherever it is kept.
+#[derive(Serialize)]
+pub struct NavigationFile<'a> {
+    entries: &'a [NavEntry],
+    index: usize,
+    draft: Option<&'a Request>,
+    active_environments: &'a HashMap<Uuid, Uuid>,
+    #[serde(skip_serializing_if = "DraftSource::is_none")]
+    draft_source: &'a DraftSource,
+    #[serde(skip_serializing_if = "Recents::is_empty")]
+    recents: &'a Recents,
+    layout: &'a Layout,
+}
+
+impl<'a> NavigationFile<'a> {
+    fn new(preferences: &'a SavedNavigation, session: &'a Session) -> Self {
+        Self {
+            entries: &session.entries,
+            index: session.index,
+            draft: session.draft.as_ref(),
+            ..Self::from(preferences)
+        }
+    }
+}
+
+impl<'a> From<&'a SavedNavigation> for NavigationFile<'a> {
+    fn from(saved: &'a SavedNavigation) -> Self {
+        Self {
+            entries: &saved.entries,
+            index: saved.index,
+            draft: saved.draft.as_ref(),
+            active_environments: &saved.active_environments,
+            draft_source: &saved.draft_source,
+            recents: &saved.recents,
+            layout: &saved.layout,
+        }
+    }
+}
+
+impl Serialize for SavedNavigation {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        NavigationFile::from(self).serialize(serializer)
+    }
+}
+
+/// The route, back/forward history and draft of a [`SavedNavigation`].
+#[derive(Debug, PartialEq)]
+pub struct Session {
+    entries: Vec<NavEntry>,
+    index: usize,
+    draft: Option<Request>,
 }
 
 /// [`SavedNavigation`] as read, also accepting the `draft_collection` that
@@ -98,23 +147,14 @@ impl SavedNavigation {
                 .is_none_or(|draft| *draft == Request::default())
     }
 
-    /// `self` with the route, back/forward history and draft of `session`.
-    fn with_session_of(self, session: &SavedNavigation) -> Self {
-        Self {
-            entries: session.entries.clone(),
-            index: session.index,
-            draft: session.draft.clone(),
-            ..self
-        }
-    }
-
-    fn without_session(self) -> Self {
-        Self {
-            entries: vec![NavEntry::Draft],
-            index: 0,
-            draft: None,
-            ..self
-        }
+    /// `self` with a blank session, and the session it had.
+    fn split_session(mut self) -> (Self, Session) {
+        let session = Session {
+            entries: mem::replace(&mut self.entries, vec![NavEntry::Draft]),
+            index: mem::take(&mut self.index),
+            draft: self.draft.take(),
+        };
+        (self, session)
     }
 }
 
@@ -130,10 +170,13 @@ pub struct Startup {
 impl Startup {
     pub fn new(stored: Option<SavedNavigation>, restore_session: bool) -> Self {
         match stored {
-            Some(stored) if !restore_session && !stored.has_blank_session() => Self {
-                restore: Some(stored.clone().without_session()),
-                kept: KeptSession(Some(Box::new(stored))),
-            },
+            Some(stored) if !restore_session && !stored.has_blank_session() => {
+                let (restore, session) = stored.split_session();
+                Self {
+                    restore: Some(restore),
+                    kept: KeptSession(Some(Arc::new(session))),
+                }
+            }
             restore => Self {
                 restore,
                 kept: KeptSession(None),
@@ -145,17 +188,33 @@ impl Startup {
 /// A stored session that wasn't restored. It stays on disk until the user
 /// leaves the blank start, so turning restoring back on still finds it.
 #[derive(Debug, Default, PartialEq)]
-pub struct KeptSession(Option<Box<SavedNavigation>>);
+pub struct KeptSession(Option<Arc<Session>>);
 
 impl KeptSession {
     /// What to write instead of `current`.
-    pub fn apply(&mut self, current: SavedNavigation) -> SavedNavigation {
-        match &self.0 {
-            Some(kept) if current.has_blank_session() => current.with_session_of(kept),
+    pub fn apply(&mut self, current: SavedNavigation) -> NavigationToSave {
+        let kept = match &self.0 {
+            Some(kept) if current.has_blank_session() => Some(kept.clone()),
             _ => {
                 self.0 = None;
-                current
+                None
             }
+        };
+        NavigationToSave { current, kept }
+    }
+}
+
+/// `current`, or its preferences with a kept session that it shares.
+pub struct NavigationToSave {
+    current: SavedNavigation,
+    kept: Option<Arc<Session>>,
+}
+
+impl<'a> From<&'a NavigationToSave> for NavigationFile<'a> {
+    fn from(to_save: &'a NavigationToSave) -> Self {
+        match &to_save.kept {
+            Some(kept) => NavigationFile::new(&to_save.current, kept),
+            None => NavigationFile::from(&to_save.current),
         }
     }
 }
@@ -190,6 +249,16 @@ mod tests {
             url: "https://example.com".into(),
             ..Request::default()
         }
+    }
+
+    fn kept(stored: &SavedNavigation) -> KeptSession {
+        KeptSession(Some(Arc::new(stored.clone().split_session().1)))
+    }
+
+    /// What `to_save` writes, as read back.
+    fn read_back(to_save: &NavigationToSave) -> SavedNavigation {
+        serde_json::from_value(serde_json::to_value(NavigationFile::from(to_save)).unwrap())
+            .unwrap()
     }
 
     fn with_preferences(mut saved: SavedNavigation) -> SavedNavigation {
@@ -239,7 +308,7 @@ mod tests {
         assert_eq!(restore.active_environments, stored.active_environments);
         assert_eq!(restore.draft_source, stored.draft_source);
         assert_eq!(restore.recents, stored.recents);
-        assert_eq!(startup.kept, KeptSession(Some(Box::new(stored))));
+        assert_eq!(startup.kept, kept(&stored));
     }
 
     #[test]
@@ -266,7 +335,7 @@ mod tests {
         let mut kept = Startup::new(Some(stored.clone()), false).kept;
 
         let current = with_preferences(blank());
-        let written = kept.apply(current.clone());
+        let written = read_back(&kept.apply(current.clone()));
         assert_eq!(written.entries, stored.entries);
         assert_eq!(written.index, stored.index);
         assert_eq!(written.draft, stored.draft);
@@ -277,8 +346,39 @@ mod tests {
             vec![NavEntry::Draft, NavEntry::Collection { id: Uuid::new_v4() }],
             None,
         );
-        assert_eq!(kept.apply(moved_on.clone()), moved_on);
-        assert_eq!(kept.apply(blank()), blank());
+        assert_eq!(read_back(&kept.apply(moved_on.clone())), moved_on);
+        assert_eq!(read_back(&kept.apply(blank())), blank());
+    }
+
+    #[test]
+    fn saves_share_the_kept_session() {
+        let stored = session(
+            vec![NavEntry::Draft, NavEntry::Settings],
+            Some(edited_draft()),
+        );
+        let mut kept = Startup::new(Some(stored), false).kept;
+        let first = kept.apply(blank());
+        let second = kept.apply(with_preferences(blank()));
+        let shared = kept.0.as_ref().unwrap();
+        assert!(Arc::ptr_eq(first.kept.as_ref().unwrap(), shared));
+        assert!(Arc::ptr_eq(second.kept.as_ref().unwrap(), shared));
+    }
+
+    #[test]
+    fn kept_session_is_written_like_the_whole_navigation() {
+        let stored = with_preferences(session(
+            vec![NavEntry::Draft, NavEntry::Settings],
+            Some(edited_draft()),
+        ));
+        let mut kept = kept(&stored);
+        let mut current = blank();
+        current.active_environments = stored.active_environments.clone();
+        current.draft_source = stored.draft_source;
+        current.recents = stored.recents.clone();
+        assert_eq!(
+            serde_json::to_string(&NavigationFile::from(&kept.apply(current))).unwrap(),
+            serde_json::to_string(&stored).unwrap()
+        );
     }
 
     #[test]
@@ -390,7 +490,10 @@ mod tests {
         let mut kept = startup.kept;
         let mut current = blank();
         current.layout.request_split = Some(0.3);
-        assert_eq!(kept.apply(current.clone()).layout, current.layout);
+        assert_eq!(
+            read_back(&kept.apply(current.clone())).layout,
+            current.layout
+        );
     }
 
     #[test]
