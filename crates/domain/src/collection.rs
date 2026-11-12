@@ -1,5 +1,6 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -22,6 +23,9 @@ pub struct Collection {
     /// Inherit means the same as `None` here: there's nothing to inherit from.
     #[serde(default = "no_auth", skip_serializing_if = "sets_no_auth")]
     pub auth: Auth,
+    /// The spec the collection was imported from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<CollectionSource>,
 }
 
 fn no_auth() -> Auth {
@@ -44,6 +48,10 @@ pub struct Folder {
     pub id: Uuid,
     pub name: String,
     pub items: Vec<Item>,
+    /// Set on a folder an import created: the tag as key, and
+    /// [`Folder::content_hash`] as imported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -51,6 +59,92 @@ pub struct SavedRequest {
     pub id: Uuid,
     pub name: String,
     pub request: Request,
+    /// Set on a request an import created: the operation key, and
+    /// [`SavedRequest::content_hash`] as imported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<Origin>,
+}
+
+/// Where an imported collection came from, and what the import owns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionSource {
+    pub kind: SourceKind,
+    pub location: SourceLocation,
+    /// The spec's `info.title` and `info.version`.
+    pub title: String,
+    pub version: String,
+    #[serde(with = "rfc3339")]
+    pub imported_at: DateTime<Utc>,
+    /// The collection variables the import added: the name as key, and
+    /// [`value_hash`] of the value as imported.
+    #[serde(default)]
+    pub variables: Vec<Origin>,
+    /// [`auth_hash`] of the collection's auth as imported.
+    pub auth_hash: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceKind {
+    OpenApi,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceLocation {
+    Url(String),
+    File(PathBuf),
+}
+
+/// What an imported item came from, and a hash of it as imported, which
+/// tells whether it changed since.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origin {
+    pub key: String,
+    pub hash: String,
+}
+
+mod rfc3339 {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S: Serializer>(
+        time: &DateTime<Utc>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&time.to_rfc3339())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<DateTime<Utc>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        DateTime::parse_from_rfc3339(&text)
+            .map(|time| time.with_timezone(&Utc))
+            .map_err(D::Error::custom)
+    }
+}
+
+/// 64-bit FNV-1a, as 16 hex digits. Unlike `DefaultHasher`, stable across
+/// Rust versions and runs, so it can be stored.
+pub fn fnv1a(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, &byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+/// The hash a collection variable's value is stored with in [`CollectionSource`].
+pub fn value_hash(value: &str) -> String {
+    fnv1a(value.as_bytes())
+}
+
+/// The hash collection auth is stored with in [`CollectionSource`]; Inherit
+/// hashes as `None`, which it means on a collection.
+pub fn auth_hash(auth: &Auth) -> String {
+    let auth = match auth {
+        Auth::Inherit => &Auth::None,
+        auth => auth,
+    };
+    fnv1a(&serde_json::to_vec(auth).expect("auth serializes"))
 }
 
 pub const NEW_COLLECTION_NAME: &str = "New Collection";
@@ -380,6 +474,7 @@ impl Collection {
             variables: Vec::new(),
             environments: Vec::new(),
             auth: Auth::None,
+            source: None,
         }
     }
 
@@ -478,7 +573,13 @@ impl Folder {
             id: Uuid::new_v4(),
             name: name.into(),
             items: Vec::new(),
+            origin: None,
         }
+    }
+
+    /// A hash of the name, for [`Origin::hash`].
+    pub fn content_hash(&self) -> String {
+        fnv1a(self.name.as_bytes())
     }
 }
 
@@ -488,7 +589,16 @@ impl SavedRequest {
             id: Uuid::new_v4(),
             name: name.into(),
             request,
+            origin: None,
         }
+    }
+
+    /// A hash of the name and request, for [`Origin::hash`]. Ids and the
+    /// origin aren't part of it.
+    pub fn content_hash(&self) -> String {
+        let canonical =
+            serde_json::to_vec(&(&self.name, &self.request)).expect("request serializes");
+        fnv1a(&canonical)
     }
 }
 
@@ -717,6 +827,122 @@ mod tests {
         let value = serde_json::to_value(&loaded).unwrap();
         let reloaded: Collection = serde_json::from_value(value).unwrap();
         assert_eq!(reloaded.auth, loaded.auth);
+    }
+
+    #[test]
+    fn old_json_saves_back_byte_identical() {
+        let json = r#"{
+  "id": "6f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f",
+  "name": "Old",
+  "items": [
+    {
+      "type": "folder",
+      "id": "9f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f",
+      "name": "F",
+      "items": [
+        {
+          "type": "request",
+          "id": "7f1c1f9e-4a5b-4c3d-9e8f-0a1b2c3d4e5f",
+          "name": "R",
+          "request": {
+            "method": "Get",
+            "url": "x",
+            "params": [],
+            "headers": [],
+            "body": "None",
+            "auth": "Inherit"
+          }
+        }
+      ]
+    }
+  ],
+  "variables": [],
+  "environments": []
+}"#;
+        let loaded: Collection = serde_json::from_str(json).unwrap();
+        assert!(loaded.source.is_none());
+        assert!(folder(&loaded, &[0]).origin.is_none());
+        assert_eq!(serde_json::to_string_pretty(&loaded).unwrap(), json);
+    }
+
+    fn imported_fixture() -> Collection {
+        let mut collection = Collection::new("Pets");
+        let mut folder = Folder::new("pets");
+        folder.origin = Some(Origin {
+            key: "pets".into(),
+            hash: folder.content_hash(),
+        });
+        let mut saved = SavedRequest::new("List pets", request("{{baseUrl}}/pets"));
+        saved.origin = Some(Origin {
+            key: "listPets".into(),
+            hash: saved.content_hash(),
+        });
+        folder.items.push(Item::Request(saved));
+        collection.items.push(Item::Folder(folder));
+        collection.source = Some(CollectionSource {
+            kind: SourceKind::OpenApi,
+            location: SourceLocation::Url("https://example.com/openapi.json".into()),
+            title: "Pets".into(),
+            version: "1.0.0".into(),
+            imported_at: DateTime::parse_from_rfc3339("2026-11-12T10:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            variables: vec![Origin {
+                key: "baseUrl".into(),
+                hash: value_hash("https://example.com"),
+            }],
+            auth_hash: auth_hash(&Auth::None),
+        });
+        collection
+    }
+
+    #[test]
+    fn source_and_origins_round_trip() {
+        let collection = imported_fixture();
+        let value = serde_json::to_value(&collection).unwrap();
+        assert_eq!(value["source"]["kind"], "OpenApi");
+        assert_eq!(
+            value["source"]["location"]["Url"],
+            "https://example.com/openapi.json"
+        );
+        assert_eq!(value["source"]["imported_at"], "2026-11-12T10:00:00+00:00");
+        assert_eq!(value["items"][0]["origin"]["key"], "pets");
+        assert_eq!(value["items"][0]["items"][0]["origin"]["key"], "listPets");
+
+        let loaded: Collection = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(loaded.source, collection.source);
+        assert_eq!(serde_json::to_value(&loaded).unwrap(), value);
+
+        let file = SourceLocation::File("/specs/pets.yaml".into());
+        let value = serde_json::to_value(&file).unwrap();
+        assert_eq!(value, serde_json::json!({"File": "/specs/pets.yaml"}));
+    }
+
+    #[test]
+    fn content_hashes_are_stable() {
+        assert_eq!(fnv1a(b""), "cbf29ce484222325");
+        assert_eq!(fnv1a(b"a"), "af63dc4c8601ec8c");
+        let saved = SavedRequest::new("List pets", request("{{baseUrl}}/pets"));
+        assert_eq!(saved.content_hash(), "154f5fe5c10aa76b");
+        assert_eq!(Folder::new("pets").content_hash(), fnv1a(b"pets"));
+        assert_eq!(auth_hash(&Auth::Inherit), auth_hash(&Auth::None));
+        assert_eq!(auth_hash(&Auth::None), fnv1a(b"\"None\""));
+    }
+
+    #[test]
+    fn content_hash_ignores_ids_and_origin_and_tracks_edits() {
+        let saved = SavedRequest::new("R", request("example.com"));
+        let mut copy = SavedRequest::new("R", request("example.com"));
+        copy.origin = Some(Origin {
+            key: "k".into(),
+            hash: "h".into(),
+        });
+        assert_eq!(saved.content_hash(), copy.content_hash());
+        copy.request.url.push('/');
+        assert_ne!(saved.content_hash(), copy.content_hash());
+        copy.request.url.pop();
+        copy.name.push('!');
+        assert_ne!(saved.content_hash(), copy.content_hash());
     }
 
     #[test]

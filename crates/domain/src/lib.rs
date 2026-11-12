@@ -15,6 +15,7 @@ pub mod layers;
 pub mod layout;
 pub mod mcp;
 pub mod navigation;
+pub mod openapi;
 pub mod palette;
 pub mod recents;
 pub mod request;
