@@ -96,8 +96,13 @@ impl<L: Lookup> Lookup for Option<L> {
 
 /// The trimmed key `row` defines, unless it's disabled or blank.
 pub(crate) fn defined_key(row: &KeyValue) -> Option<&str> {
-    let key = row.key.trim();
-    (row.enabled && !key.is_empty()).then_some(key)
+    defined_name(row.enabled, &row.key)
+}
+
+/// [`defined_key`] of a row given by its parts.
+pub(crate) fn defined_name(enabled: bool, key: &str) -> Option<&str> {
+    let key = key.trim();
+    (enabled && !key.is_empty()).then_some(key)
 }
 
 /// `name`'s value in sources in priority order, as [`Variables::layered`]

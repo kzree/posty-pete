@@ -1,8 +1,8 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use gpui::{
-    AnyElement, AppContext, Context, EventEmitter, IntoElement, ParentElement, Render, Styled,
-    Subscription, Task, WeakEntity, Window, div, prelude::*, px,
+    AnyElement, AppContext, Context, EventEmitter, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Sizable,
@@ -21,7 +21,7 @@ use domain::{
     auth::InheritNote,
     collection::Collection,
     defined_names::DefinedNames,
-    environment::{self, Environment, InheritedVariable},
+    environment::{self, Environment},
     request::{Auth, KeyValue},
 };
 
@@ -157,6 +157,65 @@ fn same_arcs(a: &[Arc<Environment>], b: &[Arc<Environment>]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Arc::ptr_eq(a, b))
 }
 
+/// Accessible names stop after this many characters of a name or value.
+const LABEL_MAX_CHARS: usize = 100;
+/// Shown text stops after this many characters; it's truncated to the
+/// width well before that.
+const DISPLAY_MAX_CHARS: usize = 500;
+
+/// A base's variables ready to show, built once per base snapshot.
+struct InheritedRows {
+    base: Arc<Environment>,
+    title: SharedString,
+    rows: Vec<InheritedRow>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct InheritedRow {
+    name: SharedString,
+    shown_name: SharedString,
+    value: SharedString,
+    label: SharedString,
+    overridden_label: SharedString,
+}
+
+impl InheritedRows {
+    fn new(base: Arc<Environment>, options: BaseOptions) -> Self {
+        let title = format!("From {} › {}", options.group, base.name).into();
+        let rows = environment::inherited_variables(&base.variables)
+            .into_iter()
+            .map(|row| {
+                let label = format!(
+                    "{}: {}",
+                    capped(row.name, LABEL_MAX_CHARS),
+                    capped(row.value, LABEL_MAX_CHARS)
+                );
+                let name = SharedString::from(row.name.to_string());
+                let shown_name = match capped(row.name, DISPLAY_MAX_CHARS) {
+                    Cow::Borrowed(_) => name.clone(),
+                    Cow::Owned(shown) => shown.into(),
+                };
+                InheritedRow {
+                    name,
+                    shown_name,
+                    value: capped(row.value, DISPLAY_MAX_CHARS).into_owned().into(),
+                    overridden_label: format!("{label}, overridden").into(),
+                    label: label.into(),
+                }
+            })
+            .collect();
+        Self { base, title, rows }
+    }
+}
+
+/// `text` up to `max_chars` characters, with an ellipsis if it's longer.
+fn capped(text: &str, max_chars: usize) -> Cow<'_, str> {
+    match text.char_indices().nth(max_chars) {
+        Some((end, _)) => Cow::Owned(format!("{}…", &text[..end])),
+        None => Cow::Borrowed(text),
+    }
+}
+
 /// A list of environments with the selected one's variables or auth next to
 /// it. Variables and auth auto-save; everything else is emitted for the
 /// parent to apply.
@@ -173,6 +232,8 @@ pub struct EnvironmentsEditor {
     selected: Option<Uuid>,
     pane: Pane,
     variables: AutoSavedVariables<Uuid>,
+    /// The selected environment's base variables, while it has a base.
+    inherited: Option<InheritedRows>,
     auth: AutoSavedAuth<Uuid>,
     _subscriptions: [Subscription; 2],
 }
@@ -216,6 +277,7 @@ impl EnvironmentsEditor {
             selected: None,
             pane: Pane::Variables,
             variables: AutoSavedVariables::new(editor),
+            inherited: None,
             auth: AutoSavedAuth::new(auth),
             _subscriptions: [variables_sub, auth_sub],
         }
@@ -363,9 +425,36 @@ impl EnvironmentsEditor {
 
     /// The existing base of `environment`, when bases are shown.
     fn base_of(&self, environment: &Environment) -> Option<(BaseOptions, &Environment)> {
+        self.base_snapshot(environment)
+            .map(|(options, base)| (options, &**base))
+    }
+
+    fn base_snapshot(&self, environment: &Environment) -> Option<(BaseOptions, &Arc<Environment>)> {
         let options = self.options.bases?;
-        let base = environment::find(&self.bases, environment.base?)?;
+        let id = environment.base?;
+        let base = self.bases.iter().find(|base| base.id == id)?;
         Some((options, base))
+    }
+
+    /// Rebuilds the inherited rows only when the selected environment's base
+    /// snapshot changed.
+    fn refresh_inherited(&mut self) {
+        let base = self
+            .selected
+            .and_then(|id| self.environments.find(id))
+            .and_then(|environment| self.base_snapshot(environment));
+        self.inherited = match base {
+            None => None,
+            Some((_, base))
+                if self
+                    .inherited
+                    .as_ref()
+                    .is_some_and(|inherited| Arc::ptr_eq(&inherited.base, base)) =>
+            {
+                return;
+            }
+            Some((options, base)) => Some(InheritedRows::new(base.clone(), options)),
+        };
     }
 
     fn rename(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
@@ -546,8 +635,8 @@ impl EnvironmentsEditor {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let inherited = selected
-            .and_then(|environment| self.base_of(environment))
-            .map(|(options, base)| self.render_inherited(options, base, cx).into_any_element());
+            .and(self.inherited.as_ref())
+            .map(|inherited| self.render_inherited(inherited, cx).into_any_element());
         v_flex()
             .id("environment-variables")
             .flex_1()
@@ -614,41 +703,40 @@ impl EnvironmentsEditor {
 
     fn render_inherited(
         &self,
-        options: BaseOptions,
-        base: &Environment,
+        inherited: &InheritedRows,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let own = self.variables.editor().read(cx).values(cx);
-        let rows = environment::inherited_variables(&base.variables, &own);
+        let own: Vec<_> = self.variables.editor().read(cx).keys(cx).collect();
+        let overridden =
+            environment::overridden_names(own.iter().map(|(enabled, key)| (*enabled, &**key)));
+        let rows: Vec<_> = inherited
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(ix, row)| inherited_row(ix, row, overridden.contains(&*row.name)))
+            .collect();
         let muted = cx.theme().muted_foreground;
         let body = if rows.is_empty() {
             div().child("No variables.").into_any_element()
         } else {
-            v_flex()
-                .gap_1()
-                .children(rows.into_iter().enumerate().map(inherited_row))
-                .into_any_element()
+            v_flex().gap_1().children(rows).into_any_element()
         };
         v_flex()
             .id("environment-inherited")
             .role(gpui::Role::Group)
-            .aria_label(format!("From {} › {}", options.group, base.name))
+            .aria_label(inherited.title.clone())
             .pt_4()
             .gap_2()
             .text_sm()
             .text_color(muted)
-            .child(
-                div()
-                    .text_xs()
-                    .truncate()
-                    .child(format!("From {} › {}", options.group, base.name)),
-            )
+            .child(div().text_xs().truncate().child(inherited.title.clone()))
             .child(body)
     }
 }
 
 impl Render for EnvironmentsEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_inherited();
         if self.environments.is_empty() {
             return div()
                 .size_full()
@@ -766,28 +854,29 @@ fn base_items(
     )
 }
 
-fn inherited_row((ix, row): (usize, InheritedVariable)) -> impl IntoElement {
-    let InheritedVariable {
-        name,
-        value,
-        overridden,
-    } = row;
+fn inherited_row(ix: usize, row: &InheritedRow, overridden: bool) -> impl IntoElement {
     let label = if overridden {
-        format!("{name}: {value}, overridden")
+        &row.overridden_label
     } else {
-        format!("{name}: {value}")
+        &row.label
     };
     h_flex()
         .id(("environment-inherited-row", ix))
-        .aria_label(label)
+        .aria_label(label.clone())
         .gap_4()
         .when(overridden, |row| {
             row.line_through().tooltip(|window, cx| {
                 Tooltip::new("Overridden by this environment").build(window, cx)
             })
         })
-        .child(div().flex_1().min_w_0().truncate().child(name))
-        .child(div().flex_1().min_w_0().truncate().child(value))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .child(row.shown_name.clone()),
+        )
+        .child(div().flex_1().min_w_0().truncate().child(row.value.clone()))
 }
 
 /// The environment to show: `current` if it still exists, else the active
@@ -955,6 +1044,65 @@ mod tests {
             environment_to_select(&EnvironmentList::None, None, None),
             None
         );
+    }
+
+    const BASES: BaseOptions = BaseOptions {
+        group: "Shared",
+        manage_label: "Manage shared environments…",
+    };
+
+    #[test]
+    fn inherited_rows_are_named_once_and_labelled() {
+        let mut base = Environment::new("Staging");
+        let mut disabled = variable("token", "t");
+        disabled.enabled = false;
+        base.variables = vec![
+            variable(" host ", "staging"),
+            disabled,
+            variable("host", "duplicate"),
+        ];
+        let inherited = InheritedRows::new(Arc::new(base), BASES);
+        assert_eq!(inherited.title, "From Shared › Staging");
+        assert_eq!(
+            inherited.rows,
+            [InheritedRow {
+                name: "host".into(),
+                shown_name: "host".into(),
+                value: "staging".into(),
+                label: "host: staging".into(),
+                overridden_label: "host: staging, overridden".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn long_inherited_values_are_capped() {
+        let mut base = Environment::new("Staging");
+        let long = "é".repeat(DISPLAY_MAX_CHARS * 2);
+        base.variables = vec![variable("token", &long)];
+        let inherited = InheritedRows::new(Arc::new(base), BASES);
+        let row = &inherited.rows[0];
+        let label_value = format!("{}…", "é".repeat(LABEL_MAX_CHARS));
+        assert_eq!(row.label, format!("token: {label_value}"));
+        assert_eq!(
+            row.overridden_label,
+            format!("token: {label_value}, overridden")
+        );
+        assert_eq!(row.value.chars().count(), DISPLAY_MAX_CHARS + 1);
+        assert!(row.value.ends_with('…'));
+
+        let mut base = Environment::new("Staging");
+        base.variables = vec![variable(&long, "v")];
+        let inherited = InheritedRows::new(Arc::new(base), BASES);
+        let row = &inherited.rows[0];
+        assert_eq!(row.name, long);
+        assert_eq!(row.shown_name.chars().count(), DISPLAY_MAX_CHARS + 1);
+    }
+
+    #[test]
+    fn capped_keeps_short_text() {
+        assert!(matches!(capped("host", 4), Cow::Borrowed("host")));
+        assert_eq!(capped("hosts", 4), "host…");
     }
 
     #[test]

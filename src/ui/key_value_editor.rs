@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
     Subscription, Window, div, prelude::FluentBuilder,
@@ -25,7 +27,7 @@ impl Row {
     fn is_empty(&self, cx: &App) -> bool {
         [&self.key, &self.value]
             .iter()
-            .all(|input| input.read(cx).value().is_empty())
+            .all(|input| input.read(cx).text().len() == 0)
     }
 
     fn to_key_value(&self, cx: &App) -> KeyValue {
@@ -83,6 +85,18 @@ impl KeyValueEditor {
             .filter(|row| !row.is_empty(cx))
             .map(|row| row.to_key_value(cx))
             .collect()
+    }
+
+    /// Each row's key with whether it's enabled, without reading values.
+    /// Keys are borrowed unless the input holds them in pieces.
+    pub fn keys<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = (bool, Cow<'a, str>)> {
+        self.rows.iter().map(|row| {
+            let text = row.key.read(cx).text();
+            let key = text
+                .as_str()
+                .map_or_else(|| Cow::Owned(text.to_string()), Cow::Borrowed);
+            (row.enabled, key)
+        })
     }
 
     /// Replaces all rows. Row ids keep counting up so element ids stay unique.

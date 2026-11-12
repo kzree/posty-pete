@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use super::{
     request::{Auth, KeyValue},
-    variables::Variables,
+    variables::{defined_key, defined_name},
 };
 
 pub const NEW_ENVIRONMENT_NAME: &str = "New environment";
@@ -45,30 +45,34 @@ pub fn find(shared: &[Arc<Environment>], id: Uuid) -> Option<&Environment> {
     shared.iter().find(|env| env.id == id).map(|env| &**env)
 }
 
-/// A base environment's variable as seen from an environment based on it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InheritedVariable {
-    pub name: String,
-    pub value: String,
-    /// The environment sets its own value for `name`.
-    pub overridden: bool,
+/// A base environment's variable, borrowed from its row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InheritedVariable<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
 }
 
-/// The base's enabled, named rows as they apply under `own`: once per
-/// trimmed name (the first wins), in order.
-pub fn inherited_variables(base: &[KeyValue], own: &[KeyValue]) -> Vec<InheritedVariable> {
-    let own = Variables::layered([own]);
+/// The base's enabled, named rows: once per trimmed name (the first wins),
+/// in order.
+pub fn inherited_variables(base: &[KeyValue]) -> Vec<InheritedVariable<'_>> {
     let mut seen = HashSet::new();
     base.iter()
-        .filter(|row| row.enabled)
         .filter_map(|row| {
-            let name = row.key.trim();
-            (!name.is_empty() && seen.insert(name)).then(|| InheritedVariable {
-                name: name.to_string(),
-                value: row.value.clone(),
-                overridden: own.get(name).is_some(),
+            let name = defined_key(row)?;
+            seen.insert(name).then_some(InheritedVariable {
+                name,
+                value: &row.value,
             })
         })
+        .collect()
+}
+
+/// The names an environment's own rows, given as `(enabled, key)`, set:
+/// inherited variables with these names are overridden. Keys only, so
+/// values aren't read.
+pub fn overridden_names<'a>(own: impl IntoIterator<Item = (bool, &'a str)>) -> HashSet<&'a str> {
+    own.into_iter()
+        .filter_map(|(enabled, key)| defined_name(enabled, key))
         .collect()
 }
 
@@ -354,6 +358,19 @@ mod tests {
         assert_eq!(variables.get("token"), None);
     }
 
+    fn own_keys(own: &[KeyValue]) -> HashSet<&str> {
+        overridden_names(own.iter().map(|row| (row.enabled, row.key.as_str())))
+    }
+
+    /// Each inherited variable as `(name, value, overridden)`.
+    fn inherited<'a>(base: &'a [KeyValue], own: &[KeyValue]) -> Vec<(&'a str, &'a str, bool)> {
+        let overridden = own_keys(own);
+        inherited_variables(base)
+            .into_iter()
+            .map(|row| (row.name, row.value, overridden.contains(row.name)))
+            .collect()
+    }
+
     #[test]
     fn inherited_variables_mark_the_names_set_own() {
         let mut disabled = variable("token", "base token");
@@ -369,15 +386,55 @@ mod tests {
         own_disabled.enabled = false;
         let own = [variable("host ", "local"), own_disabled];
 
-        let inherited = inherited_variables(&base, &own);
-        let expected = [("host", "staging", true), ("port", "443", false)];
-        assert_eq!(inherited.len(), expected.len());
-        for (row, (name, value, overridden)) in inherited.iter().zip(expected) {
-            assert_eq!(
-                (row.name.as_str(), row.value.as_str(), row.overridden),
-                (name, value, overridden)
-            );
-        }
+        assert_eq!(
+            inherited(&base, &own),
+            [("host", "staging", true), ("port", "443", false)]
+        );
+    }
+
+    #[test]
+    fn a_duplicate_own_key_overrides_if_any_copy_is_enabled() {
+        let base = [variable("host", "staging")];
+        let mut first = variable("host", "a");
+        first.enabled = false;
+        let own = [first, variable(" host", "b")];
+        assert_eq!(inherited(&base, &own), [("host", "staging", true)]);
+
+        let mut second = variable("host", "b");
+        second.enabled = false;
+        let own = [own[0].clone(), second];
+        assert_eq!(inherited(&base, &own), [("host", "staging", false)]);
+    }
+
+    #[test]
+    fn a_renamed_own_key_overrides_the_new_name_only() {
+        let base = [variable("host", "staging"), variable("hostname", "api")];
+        assert_eq!(
+            inherited(&base, &[variable("host", "local")]),
+            [("host", "staging", true), ("hostname", "api", false)]
+        );
+        assert_eq!(
+            inherited(&base, &[variable("hostname", "local")]),
+            [("host", "staging", false), ("hostname", "api", true)]
+        );
+    }
+
+    #[test]
+    fn a_disabled_own_row_does_not_override() {
+        let base = [variable("host", "staging")];
+        let mut own = variable("host", "local");
+        own.enabled = false;
+        assert_eq!(
+            inherited(&base, &[own.clone()]),
+            [("host", "staging", false)]
+        );
+        own.enabled = true;
+        assert_eq!(inherited(&base, &[own]), [("host", "staging", true)]);
+    }
+
+    #[test]
+    fn blank_own_keys_override_nothing() {
+        assert!(own_keys(&[variable("  ", "x"), variable("", "y")]).is_empty());
     }
 
     #[test]
@@ -449,6 +506,6 @@ mod tests {
 
     #[test]
     fn inherited_variables_of_an_empty_base_are_empty() {
-        assert!(inherited_variables(&[], &[variable("host", "local")]).is_empty());
+        assert!(inherited_variables(&[]).is_empty());
     }
 }
