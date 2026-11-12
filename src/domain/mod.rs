@@ -4,6 +4,7 @@ pub mod body_format;
 pub mod collection;
 pub mod command;
 pub mod curl;
+pub mod defined_names;
 pub mod environment;
 pub mod environment_menu;
 pub mod environment_selection;

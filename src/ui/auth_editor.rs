@@ -14,9 +14,13 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::domain::{
-    auth::{AuthSourceLink, InheritNote},
-    request::{ApiKeyLocation, Auth},
+use crate::{
+    domain::{
+        auth::{AuthSourceLink, InheritNote},
+        defined_names::DefinedNames,
+        request::{ApiKeyLocation, Auth},
+    },
+    ui::unresolved_hint::{UnresolvedHint, unresolved_hint},
 };
 
 /// What the editor offers and says, depending on whose auth it edits.
@@ -82,6 +86,8 @@ pub struct AuthEditor {
     options: AuthEditorOptions,
     /// Replaces the options' Inherit line when set.
     inherit_note: Option<InheritNote>,
+    /// What the values can reference; `None` shows no unresolved warning.
+    defined: Option<DefinedNames>,
     kind: AuthKind,
     kind_select: Entity<SelectState<Vec<AuthKindItem>>>,
     api_key_name: Entity<InputState>,
@@ -130,9 +136,12 @@ impl AuthEditor {
         );
         let mut subscriptions = vec![sub];
         for input in [&api_key_name, &api_key_value, &username, &password, &token] {
-            subscriptions.push(cx.subscribe(input, |_, _, event: &InputEvent, cx| {
+            subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     cx.emit(AuthEditorEvent::Changed);
+                    if this.defined.is_some() {
+                        cx.notify();
+                    }
                 }
             }));
         }
@@ -141,6 +150,7 @@ impl AuthEditor {
             kind: Self::default_kind(options),
             options,
             inherit_note: None,
+            defined: None,
             kind_select,
             api_key_name,
             api_key_value,
@@ -208,6 +218,15 @@ impl AuthEditor {
     pub fn set_inherit_note(&mut self, note: Option<InheritNote>, cx: &mut Context<Self>) {
         if self.inherit_note != note {
             self.inherit_note = note;
+            cx.notify();
+        }
+    }
+
+    /// Warns about references in the values that aren't in `defined`;
+    /// `None` turns the warning off.
+    pub fn set_defined_names(&mut self, defined: Option<DefinedNames>, cx: &mut Context<Self>) {
+        if self.defined != defined {
+            self.defined = defined;
             cx.notify();
         }
     }
@@ -339,10 +358,22 @@ impl Render for AuthEditor {
                 .into_any_element(),
         };
 
+        let hint = self
+            .defined
+            .as_ref()
+            .and_then(|defined| unresolved_hint(&defined.unresolved(&self.auth(cx)), true));
+
         v_flex()
             .size_full()
             .gap_3()
             .child(type_row)
             .child(div().max_w(px(480.)).child(fields))
+            .when_some(hint, |this, hint| {
+                this.child(
+                    div()
+                        .max_w(px(480.))
+                        .child(UnresolvedHint::new("auth-unresolved", Some(hint.into()))),
+                )
+            })
     }
 }

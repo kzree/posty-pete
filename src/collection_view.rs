@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::{
     domain::{
         collection::Collection,
+        defined_names::DefinedNames,
         environment::Environment,
         request::{Auth, KeyValue},
     },
@@ -242,15 +243,27 @@ impl CollectionView {
         let stored_auth = collection.as_ref().map_or(&no_auth, |c| &c.auth);
         self.auth.load(Some(id), stored_auth, window, cx);
 
+        let defined = collection
+            .as_ref()
+            .map(|c| DefinedNames::collection(c, &shared));
+        self.auth
+            .editor()
+            .update(cx, |editor, cx| editor.set_defined_names(defined, cx));
+
         let environments = collection
             .as_ref()
             .map_or_else(Vec::new, |c| c.environments.clone());
+        let environments_defined = collection
+            .as_ref()
+            .map(|c| DefinedNames::collection_environments(c, &shared))
+            .unwrap_or_default();
         self.environments.update(cx, |editor, cx| {
             editor.show(
                 environments,
                 active_environment,
                 HashMap::new(),
                 shared,
+                environments_defined,
                 window,
                 cx,
             )

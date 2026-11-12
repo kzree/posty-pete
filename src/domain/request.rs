@@ -45,6 +45,16 @@ impl Auth {
         *self == Self::Inherit
     }
 
+    /// The field values, which can hold `{{name}}` references.
+    pub fn texts(&self) -> Vec<&str> {
+        match self {
+            Self::Inherit | Self::None => Vec::new(),
+            Self::ApiKey { key, value, .. } => vec![key, value],
+            Self::Basic { username, password } => vec![username, password],
+            Self::Bearer { token } => vec![token],
+        }
+    }
+
     /// The kind of auth, never its values.
     pub fn label(&self) -> &'static str {
         match self {

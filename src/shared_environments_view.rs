@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
+        defined_names::DefinedNames,
         environment::Environment,
         request::{Auth, KeyValue},
     },
@@ -50,17 +51,19 @@ impl SharedEnvironmentsView {
         }
     }
 
-    /// Shows `environments`; `linked` counts the environments based on each.
+    /// Shows `environments`; `linked` counts the environments based on each,
+    /// and `defined` is what each one's auth can reference.
     pub fn show(
         &mut self,
         environments: &[Arc<Environment>],
         linked: HashMap<Uuid, usize>,
+        defined: HashMap<Uuid, DefinedNames>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let environments = environments.iter().map(|env| (**env).clone()).collect();
         self.environments.update(cx, |editor, cx| {
-            editor.show(environments, None, linked, Vec::new(), window, cx)
+            editor.show(environments, None, linked, Vec::new(), defined, window, cx)
         });
     }
 

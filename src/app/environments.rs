@@ -6,6 +6,7 @@ use crate::{
     domain::{
         auth::AuthSourceLink,
         collection,
+        defined_names::DefinedNames,
         environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
         recents::Recent,
     },
@@ -332,9 +333,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let environments = self.shared_environments.read(cx).all().to_vec();
-        let linked = collection::base_counts(self.collections.read(cx).all());
-        self.shared_environments_view
-            .update(cx, |view, cx| view.show(&environments, linked, window, cx));
+        let collections = self.collections.read(cx).all();
+        let linked = collection::base_counts(collections);
+        let defined = DefinedNames::shared_environments(&environments, collections);
+        self.shared_environments_view.update(cx, |view, cx| {
+            view.show(&environments, linked, defined, window, cx)
+        });
     }
 
     /// Brings the library's shared environments in line with the stored ones.

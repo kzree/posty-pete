@@ -1,4 +1,49 @@
-/// The line under the URL bar for `names`, the unresolved variables, or
+use gpui::{
+    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
+    StatefulInteractiveElement, Styled, Window, div,
+};
+use gpui_component::{ActiveTheme, Icon, IconName, Sizable, h_flex, tooltip::Tooltip};
+
+/// The warning line for unresolved variables. It takes its line even
+/// without a hint, so what's below doesn't move when one comes and goes.
+#[derive(IntoElement)]
+pub struct UnresolvedHint {
+    id: ElementId,
+    hint: Option<SharedString>,
+}
+
+impl UnresolvedHint {
+    pub fn new(id: impl Into<ElementId>, hint: Option<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            hint,
+        }
+    }
+}
+
+impl RenderOnce for UnresolvedHint {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let row = h_flex()
+            .id(self.id)
+            .h_4()
+            .gap_1p5()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground);
+        let Some(hint) = self.hint else {
+            return row;
+        };
+        row.child(
+            Icon::new(IconName::TriangleAlert)
+                .xsmall()
+                .flex_none()
+                .text_color(cx.theme().warning),
+        )
+        .child(div().min_w_0().truncate().child(hint.clone()))
+        .tooltip(move |window, cx| Tooltip::new(hint.clone()).build(window, cx))
+    }
+}
+
+/// The hint for `names`, the unresolved variables, or
 /// `None` if there are none. `resolvable` is whether there's a collection
 /// to resolve against; otherwise no variables apply.
 pub fn unresolved_hint(names: &[String], resolvable: bool) -> Option<String> {

@@ -1,7 +1,6 @@
 mod body_editor;
 mod method_item;
 mod tabs;
-mod unresolved_hint;
 mod url_bar;
 
 use gpui::{
@@ -24,12 +23,12 @@ use crate::{
     ui::{
         auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
         key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+        unresolved_hint::unresolved_hint,
     },
 };
 use body_editor::BodyEditor;
 use method_item::MethodItem;
 use tabs::RequestTab;
-use unresolved_hint::unresolved_hint;
 
 const AUTH_OPTIONS: AuthEditorOptions = AuthEditorOptions {
     inherit: Some("Uses the auth from the environment or collection."),
@@ -332,7 +331,7 @@ impl Render for RequestEditor {
                 v_flex()
                     .gap_1()
                     .child(self.render_url_bar(cx))
-                    .child(self.render_unresolved_hint(cx)),
+                    .child(self.render_unresolved_hint()),
             )
             .child(self.render_tab_bar(cx))
             .child(div().flex_1().min_h_0().child(content))

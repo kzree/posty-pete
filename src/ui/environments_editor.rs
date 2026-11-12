@@ -20,6 +20,7 @@ use uuid::Uuid;
 use crate::{
     domain::{
         auth::InheritNote,
+        defined_names::DefinedNames,
         environment::{self, Environment, InheritedVariable},
         request::{Auth, KeyValue},
     },
@@ -120,6 +121,8 @@ pub struct EnvironmentsEditor {
     linked: HashMap<Uuid, usize>,
     /// The environments others can be based on.
     bases: Vec<Arc<Environment>>,
+    /// What each environment's auth can reference, by id.
+    defined: HashMap<Uuid, DefinedNames>,
     selected: Option<Uuid>,
     pane: Pane,
     variables: AutoSavedVariables<Uuid>,
@@ -162,6 +165,7 @@ impl EnvironmentsEditor {
             active: None,
             linked: HashMap::new(),
             bases: Vec::new(),
+            defined: HashMap::new(),
             selected: None,
             pane: Pane::Variables,
             variables: AutoSavedVariables::new(editor),
@@ -172,13 +176,16 @@ impl EnvironmentsEditor {
 
     /// Shows `environments`, keeping the selection if it still exists.
     /// Variables being edited are kept; a pending edit of an environment no
-    /// longer shown is emitted. `bases` are what environments can be based on.
+    /// longer shown is emitted. `bases` are what environments can be based on;
+    /// `defined` is what each one's auth can reference, for the unresolved warning.
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         environments: Vec<Environment>,
         active: Option<Uuid>,
         linked: HashMap<Uuid, usize>,
         bases: Vec<Arc<Environment>>,
+        defined: HashMap<Uuid, DefinedNames>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -187,6 +194,7 @@ impl EnvironmentsEditor {
         self.active = active;
         self.linked = linked;
         self.bases = bases;
+        self.defined = defined;
         self.sync_selection(window, cx);
         self.emit_selected_if_changed(previous, cx);
         cx.notify();
@@ -287,9 +295,11 @@ impl EnvironmentsEditor {
         let inherit = Auth::Inherit;
         let stored = environment.map_or(&inherit, |env| &env.auth);
         self.auth.load(id, stored, window, cx);
-        self.auth
-            .editor()
-            .update(cx, |editor, cx| editor.set_inherit_note(inherit_note, cx));
+        let defined = id.and_then(|id| self.defined.get(&id).cloned());
+        self.auth.editor().update(cx, |editor, cx| {
+            editor.set_inherit_note(inherit_note, cx);
+            editor.set_defined_names(defined, cx);
+        });
     }
 
     /// The existing base of `environment`, when bases are shown.

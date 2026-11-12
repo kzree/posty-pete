@@ -12,3 +12,4 @@ pub mod retry_dialog;
 pub mod save_changes_dialog;
 pub mod setting_row;
 pub mod status_tag;
+pub mod unresolved_hint;

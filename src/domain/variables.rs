@@ -101,7 +101,7 @@ impl Variables {
         }
     }
 
-    fn collect_unresolved(&self, text: &str, unresolved: &mut Vec<String>) {
+    pub(super) fn collect_unresolved(&self, text: &str, unresolved: &mut Vec<String>) {
         for reference in references(text) {
             if self.get(reference.name).is_none() {
                 note(unresolved, reference.name);
@@ -241,12 +241,7 @@ impl Request {
             texts.push(text);
         }
         if substituted.sends_auth() {
-            match auth {
-                Auth::Inherit | Auth::None => {}
-                Auth::ApiKey { key, value, .. } => texts.extend([key.as_str(), value]),
-                Auth::Basic { username, password } => texts.extend([username.as_str(), password]),
-                Auth::Bearer { token } => texts.push(token),
-            }
+            texts.extend(auth.texts());
         }
 
         let mut unresolved = Vec::new();
