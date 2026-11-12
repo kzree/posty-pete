@@ -1,4 +1,4 @@
-use std::{borrow::Cow, ops::Range, time::Duration};
+use std::{ops::Range, time::Duration};
 
 use chrono::{DateTime, Datelike, Days, NaiveDate, NaiveTime, TimeZone, Utc};
 
@@ -14,7 +14,8 @@ pub struct Outcome {
 #[derive(Clone, Debug)]
 pub struct HistoryRecord {
     pub sent_at: DateTime<Utc>,
-    pub request: Request,
+    /// Already capped, so a large body isn't held while the request is in flight.
+    pub request: HistoryRequest,
     pub outcome: Option<Outcome>,
 }
 
@@ -65,30 +66,38 @@ pub fn body_size(body: &Body) -> u64 {
     size as u64
 }
 
-/// `request` as history keeps it, and the size of its body if that's too large to keep.
-pub fn request_to_store(request: &Request) -> (Cow<'_, Request>, Option<u64>) {
-    let size = body_size(&request.body);
-    if size <= MAX_STORED_BODY_SIZE {
-        return (Cow::Borrowed(request), None);
+impl HistoryRequest {
+    /// `request` as history keeps it: a body larger than
+    /// [`MAX_STORED_BODY_SIZE`] is left out and its size noted.
+    pub fn capped(request: &Request) -> Self {
+        let size = body_size(&request.body);
+        if size <= MAX_STORED_BODY_SIZE {
+            return Self {
+                request: request.clone(),
+                omitted_body_size: None,
+            };
+        }
+        let body = match &request.body {
+            Body::None => Body::None,
+            Body::FormData(_) => Body::FormData(Vec::new()),
+            Body::UrlEncoded(_) => Body::UrlEncoded(Vec::new()),
+            Body::Raw { kind, .. } => Body::Raw {
+                kind: *kind,
+                text: Default::default(),
+            },
+        };
+        Self {
+            request: Request {
+                method: request.method,
+                url: request.url.clone(),
+                params: request.params.clone(),
+                headers: request.headers.clone(),
+                body,
+                auth: request.auth.clone(),
+            },
+            omitted_body_size: Some(size),
+        }
     }
-    let body = match &request.body {
-        Body::None => Body::None,
-        Body::FormData(_) => Body::FormData(Vec::new()),
-        Body::UrlEncoded(_) => Body::UrlEncoded(Vec::new()),
-        Body::Raw { kind, .. } => Body::Raw {
-            kind: *kind,
-            text: Default::default(),
-        },
-    };
-    let stored = Request {
-        method: request.method,
-        url: request.url.clone(),
-        params: request.params.clone(),
-        headers: request.headers.clone(),
-        body,
-        auth: request.auth.clone(),
-    };
-    (Cow::Owned(stored), Some(size))
 }
 
 pub fn omitted_body_note(size: u64) -> String {
@@ -193,7 +202,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        request::{KeyValue, RawKind},
+        request::{KeyValue, RawKind, RawText},
         settings::HistorySettings,
     };
 
@@ -350,10 +359,15 @@ mod tests {
     #[test]
     fn bodies_up_to_the_cap_are_kept() {
         let request = raw(MAX_STORED_BODY_SIZE as usize);
-        let (stored, omitted) = request_to_store(&request);
-        assert!(matches!(stored, Cow::Borrowed(_)));
-        assert_eq!(*stored, request);
-        assert_eq!(omitted, None);
+        let kept = HistoryRequest::capped(&request);
+        assert_eq!(kept.request, request);
+        assert_eq!(kept.omitted_body_size, None);
+        let (Body::Raw { text: sent, .. }, Body::Raw { text: kept, .. }) =
+            (&request.body, &kept.request.body)
+        else {
+            panic!("not a raw body");
+        };
+        assert!(RawText::ptr_eq(sent, kept));
     }
 
     #[test]
@@ -366,10 +380,10 @@ mod tests {
             key: "X-Trace".into(),
             value: "1".into(),
         }];
-        let (stored, omitted) = request_to_store(&request);
-        assert_eq!(omitted, Some(MAX_STORED_BODY_SIZE + 1));
+        let capped = HistoryRequest::capped(&request);
+        assert_eq!(capped.omitted_body_size, Some(MAX_STORED_BODY_SIZE + 1));
         assert_eq!(
-            *stored,
+            capped.request,
             Request {
                 body: Body::Raw {
                     kind: RawKind::Text,
@@ -397,9 +411,9 @@ mod tests {
             body,
             ..Default::default()
         };
-        let (stored, omitted) = request_to_store(&request);
-        assert_eq!(omitted, Some(MAX_STORED_BODY_SIZE + 2));
-        assert_eq!(stored.body, Body::FormData(Vec::new()));
+        let capped = HistoryRequest::capped(&request);
+        assert_eq!(capped.omitted_body_size, Some(MAX_STORED_BODY_SIZE + 2));
+        assert_eq!(capped.request.body, Body::FormData(Vec::new()));
     }
 
     #[test]
@@ -414,15 +428,15 @@ mod tests {
             body,
             ..Default::default()
         };
-        let (stored, omitted) = request_to_store(&request);
-        assert_eq!(omitted, Some(MAX_STORED_BODY_SIZE + 1));
-        assert_eq!(stored.body, Body::UrlEncoded(Vec::new()));
+        let capped = HistoryRequest::capped(&request);
+        assert_eq!(capped.omitted_body_size, Some(MAX_STORED_BODY_SIZE + 1));
+        assert_eq!(capped.request.body, Body::UrlEncoded(Vec::new()));
 
         let small = Request {
             body: Body::UrlEncoded(vec![KeyValue::default()]),
             ..Default::default()
         };
-        assert_eq!(request_to_store(&small).1, None);
+        assert_eq!(HistoryRequest::capped(&small).omitted_body_size, None);
     }
 
     #[test]

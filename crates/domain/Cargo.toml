@@ -9,6 +9,7 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+bytes = "1.9"
 chrono.workspace = true
 directories = "6"
 encoding_rs = "0.8"

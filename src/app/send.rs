@@ -7,7 +7,7 @@ use domain::{
     curl,
     environment::Environment,
     environment_selection::EnvironmentSelection,
-    history::{HistoryRecord, Outcome},
+    history::{HistoryRecord, HistoryRequest, Outcome},
     http,
     layers::Layers,
     request::{Auth, Request},
@@ -146,7 +146,8 @@ impl Workspace {
 
         let content = self.editor_content;
         let sent_at = Utc::now();
-        let handle = http::spawn_send(client, request.clone());
+        let history_request = HistoryRequest::capped(&request);
+        let handle = http::spawn_send(client, request);
         let abort = handle.abort_handle();
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = flatten_send_result(handle.await);
@@ -166,7 +167,7 @@ impl Workspace {
                 .await;
             let record = HistoryRecord {
                 sent_at,
-                request,
+                request: history_request,
                 outcome,
             };
             this.update_in(cx, |this, window, cx| {
@@ -460,7 +461,7 @@ mod tests {
 
         let layers = editor_layers(saved_in(id), &selection, &collections, &[]);
         assert_eq!(
-            inherit.resolved_with(layers.as_ref()).auth,
+            inherit.clone().resolved_with(layers.as_ref()).auth,
             Auth::Bearer {
                 token: "collection".into()
             }
@@ -469,14 +470,17 @@ mod tests {
         selection.set_active_environment(id, Some(staging_id));
         let layers = editor_layers(saved_in(id), &selection, &collections, &[]);
         assert_eq!(
-            inherit.resolved_with(layers.as_ref()).auth,
+            inherit.clone().resolved_with(layers.as_ref()).auth,
             Auth::Bearer {
                 token: "from-collection".into()
             }
         );
 
         let layers = editor_layers(EditorContent::Draft, &selection, &collections, &[]);
-        assert_eq!(inherit.resolved_with(layers.as_ref()).auth, Auth::None);
+        assert_eq!(
+            inherit.clone().resolved_with(layers.as_ref()).auth,
+            Auth::None
+        );
     }
 
     #[test]
@@ -492,7 +496,7 @@ mod tests {
 
         let layers = editor_layers(saved_in(id), &none(), &collections, &[]);
         assert_eq!(
-            inherit.resolved_with(layers.as_ref()).auth,
+            inherit.clone().resolved_with(layers.as_ref()).auth,
             Auth::Bearer { token: "t1".into() }
         );
     }

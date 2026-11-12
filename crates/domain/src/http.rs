@@ -7,6 +7,7 @@ use std::{
 use tokio::{runtime::Runtime, task::JoinHandle};
 
 use anyhow::Context as _;
+use bytes::Bytes;
 pub use reqwest::Client;
 use reqwest::{
     Proxy,
@@ -16,8 +17,8 @@ use reqwest::{
 };
 
 use super::{
-    request::Request,
-    resolved::ResolvedBody,
+    request::{Body, RawText, Request},
+    resolved::{ResolvedBody, is_active},
     response::{Response, header_value_text},
     send_error::SendError,
     settings::{ProxyMode, RequestSettings},
@@ -253,40 +254,57 @@ pub(crate) fn runtime() -> &'static Runtime {
     })
 }
 
-fn build_request(client: &reqwest::Client, request: Request) -> anyhow::Result<reqwest::Request> {
-    let resolved = request.resolve();
+/// Lets a raw body's shared text be sent without copying it.
+struct RawBody(RawText);
 
-    let mut headers = HeaderMap::new();
-    for (key, value) in &resolved.headers {
-        let name = HeaderName::from_bytes(key.as_bytes())
-            .with_context(|| format!("invalid header name: {key:?}"))?;
-        let mut value = HeaderValue::from_str(value)
-            .with_context(|| format!("invalid value for header {key:?}"))?;
-        value.set_sensitive(name == AUTHORIZATION);
-        headers.append(name, value); // repeated headers are allowed
+impl AsRef<[u8]> for RawBody {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
     }
+}
 
-    let builder = client
-        .request(resolved.method.into(), resolved.url.as_ref())
-        .query(&resolved.query)
-        .headers(headers);
+/// Takes `request` by value so the raw text and form fields move into reqwest.
+fn build_request(client: &reqwest::Client, request: Request) -> anyhow::Result<reqwest::Request> {
+    let builder = {
+        let resolved = request.resolve();
 
-    let builder = match resolved.basic_auth {
-        Some((username, password)) => builder.basic_auth(username, Some(password)),
-        None => builder,
+        let mut headers = HeaderMap::new();
+        for (key, value) in &resolved.headers {
+            let name = HeaderName::from_bytes(key.as_bytes())
+                .with_context(|| format!("invalid header name: {key:?}"))?;
+            let mut value = HeaderValue::from_str(value)
+                .with_context(|| format!("invalid value for header {key:?}"))?;
+            value.set_sensitive(name == AUTHORIZATION);
+            headers.append(name, value); // repeated headers are allowed
+        }
+
+        let builder = client
+            .request(resolved.method.into(), resolved.url.as_ref())
+            .query(&resolved.query)
+            .headers(headers);
+
+        let builder = match resolved.basic_auth {
+            Some((username, password)) => builder.basic_auth(username, Some(password)),
+            None => builder,
+        };
+
+        match resolved.body {
+            // The Content-Type is already in `headers`, so `form` keeps it.
+            ResolvedBody::UrlEncoded(fields) => builder.form(&fields),
+            ResolvedBody::None | ResolvedBody::FormData(_) | ResolvedBody::Raw(_) => builder,
+        }
     };
 
-    let builder = match resolved.body {
-        ResolvedBody::None => builder,
-        ResolvedBody::FormData(fields) => {
-            let form = fields.into_iter().fold(Form::new(), |form, (key, value)| {
-                form.text(key.to_owned(), value.to_owned())
-            });
+    let builder = match request.body {
+        Body::FormData(fields) => {
+            let form = fields
+                .into_iter()
+                .filter(is_active)
+                .fold(Form::new(), |form, field| form.text(field.key, field.value));
             builder.multipart(form)
         }
-        // The Content-Type is already in `headers`, so `form` keeps it.
-        ResolvedBody::UrlEncoded(fields) => builder.form(&fields),
-        ResolvedBody::Raw(text) => builder.body(text.to_owned()),
+        Body::Raw { text, .. } => builder.body(Bytes::from_owner(RawBody(text))),
+        Body::None | Body::UrlEncoded(_) => builder,
     };
 
     Ok(builder.build()?)
@@ -351,7 +369,7 @@ mod tests {
     use reqwest::header::CONTENT_TYPE;
 
     use super::*;
-    use crate::request::{Auth, Body, HttpMethod, KeyValue, RawKind};
+    use crate::request::{Auth, HttpMethod, KeyValue, RawKind};
     use crate::send_error;
 
     fn header(key: &str, value: &str, enabled: bool) -> KeyValue {
@@ -526,6 +544,68 @@ mod tests {
         let built = build_request(&reqwest::Client::new(), request).unwrap();
         let types: Vec<_> = built.headers().get_all(CONTENT_TYPE).iter().collect();
         assert_eq!(types, ["text/plain"]);
+    }
+
+    #[test]
+    fn built_raw_body_shares_the_text() {
+        let text = RawText::from(r#"{"a": 1}"#);
+        let request = Request {
+            method: HttpMethod::Post,
+            url: "https://example.com".into(),
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: text.clone(),
+            },
+            ..Request::default()
+        };
+        let built = build_request(&reqwest::Client::new(), request).unwrap();
+        let body = built.body().and_then(|body| body.as_bytes()).unwrap();
+        assert_eq!(body, text.as_bytes());
+        assert_eq!(body.as_ptr(), text.as_ptr());
+    }
+
+    #[test]
+    fn form_data_sends_active_fields_with_its_own_content_type() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut received = Vec::new();
+            let mut buf = [0; 4096];
+            while !received.ends_with(b"--\r\n") {
+                let n = stream.read(&mut buf).unwrap();
+                assert!(n > 0, "connection closed early");
+                received.extend_from_slice(&buf[..n]);
+            }
+            let _ = stream.write_all(OK.as_bytes());
+            String::from_utf8(received).unwrap()
+        });
+
+        let request = Request {
+            method: HttpMethod::Post,
+            headers: vec![header("Content-Type", "text/plain", true)],
+            body: Body::FormData(vec![
+                header("a", "1", true),
+                header("off", "2", false),
+                header("", "3", true),
+                header("b", "é", true),
+            ]),
+            ..get(format!("http://{addr}/"))
+        };
+        let response = futures::executor::block_on(spawn_send(settings_client(|_| {}), request));
+        assert_eq!(response.unwrap().unwrap().status, 200);
+
+        let received = server.join().unwrap();
+        let lower = received.to_ascii_lowercase();
+        assert!(
+            lower.contains("content-type: multipart/form-data; boundary="),
+            "{received}"
+        );
+        assert!(!lower.contains("text/plain"), "{received}");
+        assert!(received.contains("name=\"a\"\r\n\r\n1\r\n"), "{received}");
+        assert!(received.contains("name=\"b\"\r\n\r\né\r\n"), "{received}");
+        assert!(!received.contains("name=\"off\""), "{received}");
+        assert!(!received.contains("name=\"\""), "{received}");
     }
 
     fn get(url: String) -> Request {

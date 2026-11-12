@@ -390,7 +390,7 @@ mod tests {
             url: "{{base}}".into(),
             ..Request::default()
         };
-        let sent = request.resolved_with(None);
+        let sent = request.clone().resolved_with(None);
         assert_eq!(sent.auth, Auth::None);
         assert_eq!(sent.url, "{{base}}");
         assert_eq!(request.unresolved_variables_with(None), ["base"]);
@@ -406,7 +406,7 @@ mod tests {
         };
         let request = Request::default();
 
-        let sent = request.resolved_with(Some(&f.layers()));
+        let sent = request.clone().resolved_with(Some(&f.layers()));
         assert_eq!(sent.auth, bearer("from-staging"));
         assert!(
             request
@@ -423,7 +423,7 @@ mod tests {
             request.unresolved_variables_with(Some(&f.layers())),
             ["missing"]
         );
-        let sent = request.resolved_with(Some(&f.layers()));
+        let sent = request.clone().resolved_with(Some(&f.layers()));
         assert_eq!(sent.resolve().headers, [("X-Key", "{{missing}}".into())]);
     }
 
@@ -431,10 +431,13 @@ mod tests {
     fn resolved_request_is_never_inherit() {
         let mut f = fixture();
         let request = Request::default();
-        assert_eq!(request.resolved_with(Some(&f.layers())).auth, Auth::None);
+        assert_eq!(
+            request.clone().resolved_with(Some(&f.layers())).auth,
+            Auth::None
+        );
         f.prod().auth = bearer("prod");
         assert_eq!(
-            request.resolved_with(Some(&f.layers())).auth,
+            request.clone().resolved_with(Some(&f.layers())).auth,
             bearer("prod")
         );
     }
@@ -448,7 +451,7 @@ mod tests {
         };
 
         f.collection.auth = bearer("t");
-        let sent = request.resolved_with(Some(&f.layers()));
+        let sent = request.clone().resolved_with(Some(&f.layers()));
         assert_eq!(
             sent.resolve().headers,
             [("Authorization", "Custom x".into())]
@@ -463,7 +466,7 @@ mod tests {
             username: "{{user}}".into(),
             password: "p".into(),
         };
-        let sent = request.resolved_with(Some(&f.layers()));
+        let sent = request.clone().resolved_with(Some(&f.layers()));
         assert_eq!(sent.resolve().basic_auth, None);
         assert!(
             request

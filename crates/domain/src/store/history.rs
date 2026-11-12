@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Row, params};
 
 use crate::{
-    history::{self, HistoryRecord, HistoryRequest, HistorySummary, Outcome},
+    history::{HistoryRecord, HistoryRequest, HistorySummary, Outcome},
     request::HttpMethod,
 };
 
@@ -65,8 +65,10 @@ impl HistoryStore {
     }
 
     pub fn insert(&self, record: &HistoryRecord) -> anyhow::Result<HistorySummary> {
-        let request = &record.request;
-        let (stored, omitted_body_size) = history::request_to_store(request);
+        let HistoryRequest {
+            request,
+            omitted_body_size,
+        } = &record.request;
         let (status, elapsed_ms) = match record.outcome {
             Some(outcome) => (
                 Some(outcome.status),
@@ -84,7 +86,7 @@ impl HistoryStore {
                 request.url,
                 status,
                 elapsed_ms,
-                serde_json::to_string(&*stored)?,
+                serde_json::to_string(request)?,
                 omitted_body_size.map(|size| i64::try_from(size).unwrap_or(i64::MAX)),
             ],
         )?;
@@ -236,14 +238,14 @@ mod tests {
     fn record(sent_at: DateTime<Utc>, url: &str, outcome: Option<Outcome>) -> HistoryRecord {
         HistoryRecord {
             sent_at,
-            request: Request {
+            request: HistoryRequest::capped(&Request {
                 method: HttpMethod::Get,
                 url: url.into(),
                 params: Vec::new(),
                 headers: Vec::new(),
                 body: Default::default(),
                 auth: Default::default(),
-            },
+            }),
             outcome,
         }
     }
@@ -299,17 +301,17 @@ mod tests {
     fn get_returns_the_full_request() {
         let store = HistoryStore::open_in_memory().unwrap();
         let mut sent = ok(at("2026-11-10T12:00:00Z"), "https://a.test");
-        sent.request.method = HttpMethod::Post;
-        sent.request.headers = vec![KeyValue {
+        sent.request.request.method = HttpMethod::Post;
+        sent.request.request.headers = vec![KeyValue {
             enabled: false,
             key: "X-Trace".into(),
             value: "1".into(),
         }];
-        sent.request.body = Body::Raw {
+        sent.request.request.body = Body::Raw {
             kind: RawKind::Json,
             text: r#"{"a":1}"#.into(),
         };
-        sent.request.auth = Auth::Bearer {
+        sent.request.request.auth = Auth::Bearer {
             token: "secret".into(),
         };
         let id = store.insert(&sent).unwrap().id;
@@ -470,15 +472,20 @@ mod tests {
     #[test]
     fn bodies_over_the_cap_are_not_stored() {
         let store = HistoryStore::open_in_memory().unwrap();
+        let request = Request {
+            method: HttpMethod::Post,
+            url: "https://a.test".into(),
+            auth: Auth::Bearer {
+                token: "secret".into(),
+            },
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: "x".repeat(MAX_STORED_BODY_SIZE as usize + 1).into(),
+            },
+            ..Request::default()
+        };
         let mut sent = ok(at("2026-11-10T12:00:00Z"), "https://a.test");
-        sent.request.method = HttpMethod::Post;
-        sent.request.auth = Auth::Bearer {
-            token: "secret".into(),
-        };
-        sent.request.body = Body::Raw {
-            kind: RawKind::Json,
-            text: "x".repeat(MAX_STORED_BODY_SIZE as usize + 1).into(),
-        };
+        sent.request = HistoryRequest::capped(&request);
         let id = store.insert(&sent).unwrap().id;
 
         let entry = store.get(id).unwrap().unwrap();
@@ -490,7 +497,7 @@ mod tests {
                     kind: RawKind::Json,
                     text: Default::default(),
                 },
-                ..sent.request
+                ..request
             }
         );
     }

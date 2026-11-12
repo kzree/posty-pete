@@ -123,12 +123,22 @@ impl Substitution<'_> {
         self.0.substitute(text, &mut Vec::new()).into_owned()
     }
 
+    /// Keeps `text` when it has nothing to substitute.
+    fn owned_text(&self, text: String) -> String {
+        let substituted = match self.0.substitute(&text, &mut Vec::new()) {
+            Cow::Borrowed(_) => None,
+            Cow::Owned(substituted) => Some(substituted),
+        };
+        substituted.unwrap_or(text)
+    }
+
     /// Shares `text` when it has nothing to substitute.
-    fn raw_text(&self, text: &RawText) -> RawText {
-        match self.0.substitute(text, &mut Vec::new()) {
-            Cow::Borrowed(_) => text.clone(),
-            Cow::Owned(substituted) => substituted.into(),
-        }
+    fn raw_text(&self, text: RawText) -> RawText {
+        let substituted = match self.0.substitute(&text, &mut Vec::new()) {
+            Cow::Borrowed(_) => None,
+            Cow::Owned(substituted) => Some(substituted),
+        };
+        substituted.map_or(text, RawText::from)
     }
 
     fn rows(&self, rows: &[KeyValue]) -> Vec<KeyValue> {
@@ -141,7 +151,21 @@ impl Substitution<'_> {
             .collect()
     }
 
+    fn owned_rows(&self, rows: Vec<KeyValue>) -> Vec<KeyValue> {
+        rows.into_iter()
+            .map(|row| KeyValue {
+                enabled: row.enabled,
+                key: self.owned_text(row.key),
+                value: self.owned_text(row.value),
+            })
+            .collect()
+    }
+
     fn auth(&self, auth: &Auth) -> Auth {
+        self.owned_auth(auth.clone())
+    }
+
+    fn owned_auth(&self, auth: Auth) -> Auth {
         match auth {
             Auth::Inherit => Auth::Inherit,
             Auth::None => Auth::None,
@@ -150,46 +174,41 @@ impl Substitution<'_> {
                 value,
                 location,
             } => Auth::ApiKey {
-                key: self.text(key),
-                value: self.text(value),
-                location: *location,
+                key: self.owned_text(key),
+                value: self.owned_text(value),
+                location,
             },
             Auth::Basic { username, password } => Auth::Basic {
-                username: self.text(username),
-                password: self.text(password),
+                username: self.owned_text(username),
+                password: self.owned_text(password),
             },
             Auth::Bearer { token } => Auth::Bearer {
-                token: self.text(token),
+                token: self.owned_text(token),
             },
         }
     }
 }
 
 impl Request {
-    #[cfg(test)]
-    pub fn with_variables(&self, variables: &Variables) -> Request {
-        self.with_auth_and_variables(&self.auth, variables)
-    }
-
-    /// A copy with `auth` in place of the request's and variables
-    /// substituted (method untouched).
-    pub(super) fn with_auth_and_variables(&self, auth: &Auth, variables: &Variables) -> Request {
+    /// Variables substituted (method untouched). Text without references is
+    /// kept as it is, not copied.
+    pub(super) fn with_variables_substituted(self, variables: &Variables) -> Request {
         let s = Substitution(variables);
         Request {
             method: self.method,
-            url: s.text(&self.url),
-            params: s.rows(&self.params),
-            headers: s.rows(&self.headers),
-            body: match &self.body {
+            url: s.owned_text(self.url),
+            params: s.owned_rows(self.params),
+            headers: s.owned_rows(self.headers),
+            body: match self.body {
                 Body::None => Body::None,
-                Body::FormData(fields) => Body::FormData(s.rows(fields)),
-                Body::UrlEncoded(fields) => Body::UrlEncoded(s.rows(fields)),
+                Body::FormData(fields) => Body::FormData(s.owned_rows(fields)),
+                Body::UrlEncoded(fields) => Body::UrlEncoded(s.owned_rows(fields)),
                 Body::Raw { kind, text } => Body::Raw {
-                    kind: *kind,
+                    kind,
                     text: s.raw_text(text),
                 },
             },
-            auth: s.auth(auth),
+            auth: s.owned_auth(self.auth),
         }
     }
 
@@ -517,7 +536,10 @@ mod tests {
             },
             ..Request::default()
         };
-        let Body::Raw { text: out, .. } = request.with_variables(&vars(&[("id", "7")])).body else {
+        let Body::Raw { text: out, .. } = request
+            .with_variables_substituted(&vars(&[("id", "7")]))
+            .body
+        else {
             panic!("not a raw body");
         };
         assert!(RawText::ptr_eq(&text, &out));
@@ -550,7 +572,7 @@ mod tests {
             .map(|name| row(true, name, &name.to_uppercase()))
             .collect();
         let v = Variables::from_rows(&rows);
-        let out = templated_request().with_variables(&v);
+        let out = templated_request().with_variables_substituted(&v);
         assert!(templated_request().unresolved_variables(&v).is_empty());
         assert_eq!(
             out,
@@ -580,7 +602,7 @@ mod tests {
             ..Request::default()
         };
         let v = vars(&[("id", "7"), ("user", "u"), ("pass", "p")]);
-        let out = raw.with_variables(&v);
+        let out = raw.clone().with_variables_substituted(&v);
         assert!(raw.unresolved_variables(&v).is_empty());
         assert_eq!(
             out.body,
@@ -603,7 +625,9 @@ mod tests {
             },
             ..Request::default()
         };
-        let out = bearer.with_variables(&vars(&[("t", "secret")]));
+        let out = bearer
+            .clone()
+            .with_variables_substituted(&vars(&[("t", "secret")]));
         assert_eq!(
             out.auth,
             Auth::Bearer {
@@ -618,7 +642,12 @@ mod tests {
         request.params.push(row(true, "{{base}}", "{{pv}}"));
         let expected: Vec<String> = ALL_NAMES.iter().map(|n| n.to_string()).collect();
 
-        assert_eq!(request.with_variables(&Variables::default()), request);
+        assert_eq!(
+            request
+                .clone()
+                .with_variables_substituted(&Variables::default()),
+            request
+        );
         assert_eq!(
             request.unresolved_variables(&Variables::default()),
             expected
@@ -664,7 +693,7 @@ mod tests {
         };
         let v = vars(&[("k", "K"), ("v", "V"), ("empty", "")]);
         assert_eq!(
-            request.with_variables(&v).body,
+            request.clone().with_variables_substituted(&v).body,
             Body::UrlEncoded(vec![
                 row(true, "K", "V"),
                 row(false, "off", "{{off}}"),
