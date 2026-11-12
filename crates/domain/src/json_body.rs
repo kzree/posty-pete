@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use serde::de::{self, Deserialize, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
 use super::variables::references;
 
 /// Where and why a JSON body doesn't parse.
@@ -46,9 +48,67 @@ pub fn format(text: &str) -> Result<String, JsonError> {
 }
 
 fn check(text: &str, masked: &str) -> Result<(), JsonError> {
-    serde_json::from_str::<serde_json::Value>(masked)
+    serde_json::from_str::<Discard>(masked)
         .map(|_| ())
         .map_err(|err| json_error(text, &err))
+}
+
+/// Parses a value the way `serde_json::Value` does, so errors are the same,
+/// but keeps nothing. `IgnoredAny` alone takes serde_json's skipping path,
+/// which reports trailing commas, out-of-range numbers and deep nesting
+/// differently or not at all.
+struct Discard;
+
+impl<'de> Deserialize<'de> for Discard {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(DiscardVisitor)
+    }
+}
+
+struct DiscardVisitor;
+
+impl<'de> Visitor<'de> for DiscardVisitor {
+    type Value = Discard;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("any valid JSON value")
+    }
+
+    fn visit_bool<E: de::Error>(self, _: bool) -> Result<Discard, E> {
+        Ok(Discard)
+    }
+
+    fn visit_i64<E: de::Error>(self, _: i64) -> Result<Discard, E> {
+        Ok(Discard)
+    }
+
+    fn visit_u64<E: de::Error>(self, _: u64) -> Result<Discard, E> {
+        Ok(Discard)
+    }
+
+    fn visit_f64<E: de::Error>(self, _: f64) -> Result<Discard, E> {
+        Ok(Discard)
+    }
+
+    fn visit_str<E: de::Error>(self, _: &str) -> Result<Discard, E> {
+        Ok(Discard)
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<Discard, E> {
+        Ok(Discard)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Discard, A::Error> {
+        while seq.next_element::<Discard>()?.is_some() {}
+        Ok(Discard)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Discard, A::Error> {
+        while map.next_key::<IgnoredAny>()?.is_some() {
+            map.next_value::<Discard>()?;
+        }
+        Ok(Discard)
+    }
 }
 
 /// Replaces each reference with a number of the same byte length, so the
@@ -251,6 +311,52 @@ mod tests {
             error_at("{{{key}}: 1}"),
             ("key must be a string".into(), 1, 2)
         );
+    }
+
+    #[test]
+    fn errors_match_parsing_into_a_value() {
+        let deep_ok = format!("{}{}", "[".repeat(100), "]".repeat(100));
+        let too_deep = format!("{}{}", "[".repeat(200), "]".repeat(200));
+        let texts = [
+            "{}",
+            "[1, 2,]",
+            "[[1,]]",
+            "{\"a\": 1,}",
+            "{\"a\": {\"b\": 1,}}",
+            "{\"a\" 1}",
+            "{1: 2}",
+            "[1 2]",
+            "[01]",
+            "[1.]",
+            "[1e]",
+            "[-]",
+            "[1e400]",
+            "[-1e400]",
+            "[18446744073709551616]",
+            "[tru]",
+            "[nul",
+            "\"\\x\"",
+            "\"\\ud800\"",
+            "\"a\u{1}b\"",
+            "{\"\\q\": 1}",
+            "[\"ünï\" \"x\"]",
+            "{\"a\": {{a}}, \"b\": [{{b}},]}",
+            "{\"x\": \"{{y}}\" ,, }",
+            "{} {}",
+            "[",
+            "{",
+            "\"abc",
+            "]",
+            &deep_ok,
+            &too_deep,
+        ];
+        for text in texts {
+            let masked = mask_references(text);
+            let expected = serde_json::from_str::<serde_json::Value>(&masked)
+                .err()
+                .map(|err| json_error(text, &err));
+            assert_eq!(validate(text), expected, "{text:?}");
+        }
     }
 
     #[test]

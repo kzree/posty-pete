@@ -1,12 +1,12 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, time::Duration};
 
 use domain::{
-    json_body,
-    request::{Body, RawKind},
+    json_body::{self, JsonError},
+    request::{Body, RawKind, RawText},
 };
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
     prelude::FluentBuilder, px, relative,
 };
 use gpui_component::{
@@ -82,8 +82,7 @@ pub struct BodyEditor {
     raw: Entity<EditorState>,
     /// Shared by form data and URL-encoded, so switching between them keeps the fields.
     form_fields: Entity<KeyValueEditor>,
-    json_error: Option<SharedString>,
-    json_check_pending: bool,
+    json_check: JsonCheck,
     /// Why the loaded body is empty; dropped when the body is edited or replaced.
     note: Option<SharedString>,
     snapshot: BodySnapshot,
@@ -100,22 +99,21 @@ impl BodyEditor {
             cx.new(|cx| EditorState::new(window, cx).language(editor_language(RawKind::default())));
         let form_fields = cx.new(|cx| KeyValueEditor::new("field", window, cx));
 
-        let sub = cx.subscribe_in(
+        let sub = cx.subscribe(
             &raw_kind,
-            window,
-            |this, _, event: &SelectEvent<Vec<RawKindItem>>, window, cx| {
+            |this, _, event: &SelectEvent<Vec<RawKindItem>>, cx| {
                 if let SelectEvent::Confirm(Some(kind)) = event {
                     let language = editor_language(*kind);
                     this.raw
                         .update(cx, |raw, cx| raw.set_highlighter(language, cx));
-                    this.schedule_json_check(window, cx);
+                    this.schedule_json_check(Duration::ZERO, cx);
                     this.edited(cx);
                 }
             },
         );
-        let raw_sub = cx.subscribe_in(&raw, window, |this, _, event: &InputEvent, window, cx| {
+        let raw_sub = cx.subscribe(&raw, |this, _, event: &InputEvent, cx| {
             if let InputEvent::Change = event {
-                this.schedule_json_check(window, cx);
+                this.schedule_json_check(JSON_CHECK_DELAY, cx);
                 this.edited(cx);
             }
         });
@@ -128,8 +126,7 @@ impl BodyEditor {
             raw_kind,
             raw,
             form_fields,
-            json_error: None,
-            json_check_pending: false,
+            json_check: JsonCheck::default(),
             note: None,
             snapshot: BodySnapshot::default(),
             _subscriptions: vec![sub, raw_sub, form_sub],
@@ -154,42 +151,68 @@ impl BodyEditor {
             && self.raw_kind.read(cx).selected_value() == Some(&RawKind::Json)
     }
 
-    /// Checks the JSON once before the next frame, however many edits come first.
-    fn schedule_json_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.json_check_pending {
-            return;
-        }
-        self.json_check_pending = true;
-        cx.on_next_frame(window, |this, _, cx| this.check_json(cx));
+    /// Checks the body's JSON on a background thread once `delay` passes
+    /// without another call.
+    fn schedule_json_check(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        self.json_check.task = Some(cx.spawn(async move |this, cx| {
+            if !delay.is_zero() {
+                cx.background_executor().timer(delay).await;
+            }
+            let Ok(Some((revision, text))) = this.update(cx, |this, cx| this.start_json_check(cx))
+            else {
+                return;
+            };
+            let error = cx
+                .background_spawn(async move { json_body::validate(&text).map(error_note) })
+                .await;
+            this.update(cx, |this, cx| {
+                if this
+                    .json_check
+                    .apply(revision, this.snapshot.revision, error)
+                {
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
     }
 
-    fn check_json(&mut self, cx: &mut Context<Self>) {
-        self.json_check_pending = false;
-        let error = if self.is_json(cx) {
-            json_body::validate(&self.raw.read(cx).text().to_string())
-                .map(|error| format!("Invalid JSON: {error}").into())
-        } else {
-            None
-        };
-        if error != self.json_error {
-            self.json_error = error;
+    /// The text to check and its revision, or `None` once the error is
+    /// cleared because the body isn't checked live.
+    fn start_json_check(&mut self, cx: &mut Context<Self>) -> Option<(u64, RawText)> {
+        let revision = self.snapshot.revision;
+        let text = live_json_text(&self.body(cx));
+        if text.is_none() && self.json_check.apply(revision, revision, None) {
             cx.notify();
         }
+        text.map(|text| (revision, text))
     }
 
+    /// Formats on this thread and reports errors whatever the body's size.
     fn format_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.is_json(cx) {
             return;
         }
-        let text = self.raw.read(cx).text().to_string();
+        let Body::Raw { text, .. } = self.body(cx) else {
+            return;
+        };
         match json_body::format(&text) {
             Ok(formatted) => self.raw.update(cx, |raw, cx| {
-                if formatted != text {
+                if formatted != text.as_str() {
                     raw.replace_all(formatted, window, cx);
                 }
                 raw.focus(window, cx);
             }),
-            Err(_) => self.check_json(cx),
+            Err(error) => {
+                self.json_check.task = None;
+                let revision = self.snapshot.revision;
+                if self
+                    .json_check
+                    .apply(revision, revision, Some(error_note(error)))
+                {
+                    cx.notify();
+                }
+            }
         }
     }
 
@@ -215,7 +238,7 @@ impl BodyEditor {
             raw.set_highlighter(editor_language(kind), cx);
             raw.set_value(text.to_string(), window, cx);
         });
-        self.schedule_json_check(window, cx);
+        self.schedule_json_check(Duration::ZERO, cx);
         cx.notify();
     }
 
@@ -239,6 +262,44 @@ impl BodyEditor {
                 text: self.raw.read(cx).text().to_string().into(),
             },
         }
+    }
+}
+
+const JSON_CHECK_DELAY: Duration = Duration::from_millis(150);
+
+/// Larger raw JSON bodies are only checked by Format.
+const LIVE_JSON_CHECK_LIMIT: usize = 5 * 1024 * 1024;
+
+fn live_json_text(body: &Body) -> Option<RawText> {
+    match body {
+        Body::Raw {
+            kind: RawKind::Json,
+            text,
+        } if text.len() <= LIVE_JSON_CHECK_LIMIT => Some(text.clone()),
+        _ => None,
+    }
+}
+
+fn error_note(error: JsonError) -> SharedString {
+    format!("Invalid JSON: {error}").into()
+}
+
+#[derive(Default)]
+struct JsonCheck {
+    error: Option<SharedString>,
+    /// Dropping it cancels the check.
+    task: Option<Task<()>>,
+}
+
+impl JsonCheck {
+    /// Shows the outcome of checking body `revision`, unless the body has
+    /// moved on to `current`. Returns whether the shown error changed.
+    fn apply(&mut self, revision: u64, current: u64, error: Option<SharedString>) -> bool {
+        if revision != current || error == self.error {
+            return false;
+        }
+        self.error = error;
+        true
     }
 }
 
@@ -281,9 +342,9 @@ impl Render for BodyEditor {
                         .segmented()
                         .small()
                         .selected_index(self.mode.index())
-                        .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                        .on_click(cx.listener(|this, ix: &usize, _, cx| {
                             this.mode = BodyMode::ALL[*ix];
-                            this.schedule_json_check(window, cx);
+                            this.schedule_json_check(Duration::ZERO, cx);
                             this.edited(cx);
                             cx.notify();
                         }))
@@ -359,7 +420,7 @@ impl BodyEditor {
             .gap_1p5()
             .text_xs()
             .text_color(cx.theme().muted_foreground);
-        let Some(error) = self.json_error.clone() else {
+        let Some(error) = self.json_check.error.clone() else {
             return row;
         };
         row.child(
@@ -403,6 +464,45 @@ mod tests {
             Body::Raw { text, .. } => text,
             _ => panic!("not a raw body"),
         }
+    }
+
+    #[test]
+    fn a_stale_json_check_is_ignored() {
+        let mut check = JsonCheck::default();
+        let error: Option<SharedString> = Some("Invalid JSON: trailing comma".into());
+        assert!(!check.apply(1, 2, error.clone()));
+        assert_eq!(check.error, None);
+
+        assert!(check.apply(2, 2, error.clone()));
+        assert!(!check.apply(1, 2, None));
+        assert_eq!(check.error, error);
+
+        assert!(!check.apply(2, 2, error.clone()));
+        assert!(check.apply(3, 3, None));
+        assert_eq!(check.error, None);
+    }
+
+    #[test]
+    fn large_json_skips_the_live_check_but_not_format() {
+        let small = raw("[1 2]");
+        assert_eq!(live_json_text(&small).as_deref(), Some("[1 2]"));
+        assert!(RawText::ptr_eq(
+            &live_json_text(&small).unwrap(),
+            raw_text(&small)
+        ));
+
+        let text = format!("[1 2]{}", " ".repeat(LIVE_JSON_CHECK_LIMIT));
+        let large = raw(&text);
+        assert_eq!(live_json_text(&large), None);
+        let error = json_body::format(raw_text(&large)).unwrap_err();
+        assert_eq!((error.line, error.column), (1, 4));
+
+        let plain = Body::Raw {
+            kind: RawKind::Text,
+            text: "[1 2]".into(),
+        };
+        assert_eq!(live_json_text(&plain), None);
+        assert_eq!(live_json_text(&Body::None), None);
     }
 
     #[test]
