@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::domain::settings::Settings;
+use crate::settings::Settings;
 
 /// The settings in a single JSON file.
 pub struct SettingsStore {
@@ -131,7 +131,7 @@ impl SettingsWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
+    use crate::{
         settings::{AppearanceSettings, ProxyMode, ThemePreference},
         store::test_support::{TempDir, file_names},
     };

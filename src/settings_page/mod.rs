@@ -8,6 +8,7 @@ mod requests;
 mod reveal;
 mod shortcuts;
 
+use domain::settings_index::{Setting, SettingsGroup};
 use gpui::{
     AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, Point, Render, Role, ScrollHandle,
@@ -25,8 +26,8 @@ use gpui_component::{
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
-pub use crate::domain::settings_index::SettingsSection;
-use crate::domain::settings_index::{Setting, SettingsGroup};
+pub use domain::settings_index::SettingsSection;
+
 use about::AboutPage;
 use ai::AiPage;
 use appearance::AppearancePage;

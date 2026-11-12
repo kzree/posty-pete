@@ -1,3 +1,7 @@
+use domain::{
+    json_body,
+    request::{Body, RawKind},
+};
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
@@ -19,10 +23,6 @@ use gpui_component::{
 use super::Edited;
 use crate::{
     actions::{BODY_EDITOR_CONTEXT, FormatJsonBody},
-    domain::{
-        json_body,
-        request::{Body, RawKind},
-    },
     ui::key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
 };
 

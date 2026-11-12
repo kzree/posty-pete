@@ -3,6 +3,7 @@ mod format;
 mod menu;
 
 use chrono::{DateTime, Utc};
+use domain::history::{HistorySummary, OpenMode};
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, Styled, Subscription, Window, div,
@@ -19,7 +20,6 @@ use gpui_kit_assets::IconName as LucideIcon;
 use super::{panel_header, placeholder};
 use crate::{
     actions::{DeleteHistoryEntry, HISTORY_PANEL_CONTEXT, SendHistoryEntryAgain},
-    domain::history::{HistorySummary, OpenMode},
     ui::confirm_dialog::open_confirm_dialog,
 };
 use delegate::HistoryDelegate;

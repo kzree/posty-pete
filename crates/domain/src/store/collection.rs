@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::json_dir::JsonDir;
-use crate::domain::collection::Collection;
+use crate::collection::Collection;
 
 /// One `<uuid>.json` file per collection in `dir`.
 pub struct CollectionStore {
@@ -38,8 +38,8 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::domain::store::test_support::{TempDir, file_names};
-    use crate::domain::{
+    use crate::store::test_support::{TempDir, file_names};
+    use crate::{
         collection::{Folder, Item, SavedRequest},
         environment::Environment,
         request::{Auth, Body, HttpMethod, KeyValue, Request},

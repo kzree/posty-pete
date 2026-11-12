@@ -13,7 +13,7 @@ pub mod jobs;
 mod json_dir;
 pub mod navigation;
 pub mod settings;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
 /// The app's per-user data directory.

@@ -1,6 +1,6 @@
 use gpui::{Action, App, KeyBinding, actions};
 
-use crate::domain::command::Command;
+use domain::command::Command;
 
 actions!(
     posty_pete,

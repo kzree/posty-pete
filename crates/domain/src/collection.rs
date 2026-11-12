@@ -549,7 +549,7 @@ fn find_request_in(items: &[Item], id: Uuid) -> Option<&SavedRequest> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
+    use crate::{
         environment,
         request::{Body, HttpMethod, KeyValue},
     };

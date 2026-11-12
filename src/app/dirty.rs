@@ -1,4 +1,4 @@
-use crate::domain::{collection::SavedRequest, request::Request};
+use domain::{collection::SavedRequest, request::Request};
 
 /// The stored request the editor was loaded from, and the request the editor
 /// built right after loading it. Inputs normalise what they're given (empty
@@ -55,8 +55,9 @@ impl PendingCheck {
 
 #[cfg(test)]
 mod tests {
+    use domain::request::{Auth, Body, KeyValue, RawKind};
+
     use super::*;
-    use crate::domain::request::{Auth, Body, KeyValue, RawKind};
 
     fn row(key: &str, value: &str) -> KeyValue {
         KeyValue {

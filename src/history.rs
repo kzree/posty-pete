@@ -2,16 +2,16 @@ use std::{mem, time::Duration};
 
 use anyhow::{Context as _, anyhow};
 use chrono::{DateTime, Local, NaiveDate, Utc};
+use domain::{
+    history::{self, HistoryRecord, HistoryRequest, HistorySummary, OpenMode},
+    store::{self, history::HistoryStore},
+};
 use futures::{
     StreamExt,
     channel::{mpsc, oneshot},
 };
 use gpui::{App, AppContext, Context, EventEmitter, Subscription, Task};
 
-use crate::domain::{
-    history::{self, HistoryRecord, HistoryRequest, HistorySummary, OpenMode},
-    store::{self, history::HistoryStore},
-};
 use crate::settings::AppSettings;
 
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);

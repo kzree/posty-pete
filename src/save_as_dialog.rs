@@ -14,7 +14,7 @@ use gpui_component::{
     select::{SearchableVec, Select, SelectEvent, SelectState},
 };
 
-use crate::domain::collection::{Collection, Location};
+use domain::collection::{Collection, Location};
 
 #[derive(Clone)]
 pub struct LocationItem {
@@ -172,8 +172,9 @@ impl Render for SaveAsFooter {
 
 #[cfg(test)]
 mod tests {
+    use domain::collection::{Folder, Item};
+
     use super::*;
-    use crate::domain::collection::{Folder, Item};
 
     #[test]
     fn new_collection_comes_first_then_each_collection_and_folder() {

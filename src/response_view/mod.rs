@@ -12,8 +12,9 @@ use gpui_component::{
     v_flex,
 };
 
+use domain::{body_format::BodyFormat, response::Response, send_error::SendError};
+
 use crate::{
-    domain::{body_format::BodyFormat, response::Response, send_error::SendError},
     settings::AppSettings,
     ui::{clipboard::copy_with_notification, status_tag::status_tag},
 };

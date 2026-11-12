@@ -1,3 +1,10 @@
+use domain::{
+    collection::NEW_COLLECTION_NAME,
+    history::{self, OpenMode},
+    palette::Target,
+    recents::Recent,
+    request::{Auth, KeyValue},
+};
 use gpui::{Context, Window};
 use gpui_component::{WindowExt, notification::Notification};
 
@@ -6,13 +13,6 @@ use crate::{
     collection_view::{CollectionViewEvent, EditTarget},
     collections::CollectionsEvent,
     command_palette::CommandPaletteEvent,
-    domain::{
-        collection::NEW_COLLECTION_NAME,
-        history::{self, OpenMode},
-        palette::Target,
-        recents::Recent,
-        request::{Auth, KeyValue},
-    },
     history::HistoryEvent,
     request_editor::RequestEditorEvent,
     sidebar::{history_panel::HistoryPanelEvent, library_panel::LibraryPanelEvent},

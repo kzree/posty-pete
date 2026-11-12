@@ -8,7 +8,6 @@ mod assets;
 mod collection_view;
 mod collections;
 mod command_palette;
-mod domain;
 mod environment_picker;
 mod history;
 mod menus;

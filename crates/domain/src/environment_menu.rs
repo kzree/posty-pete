@@ -224,7 +224,7 @@ fn draft_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::environment::Environment;
+    use crate::environment::Environment;
 
     fn environment(name: &str) -> Environment {
         Environment::new(name)

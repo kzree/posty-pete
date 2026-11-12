@@ -17,20 +17,19 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
-use crate::{
-    domain::{
-        auth::InheritNote,
-        defined_names::DefinedNames,
-        environment::{self, Environment, InheritedVariable},
-        request::{Auth, KeyValue},
-    },
-    ui::{
-        auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
-        auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
-        confirm_dialog::open_confirm_dialog,
-        key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
-        rename_dialog::open_rename_dialog,
-    },
+use domain::{
+    auth::InheritNote,
+    defined_names::DefinedNames,
+    environment::{self, Environment, InheritedVariable},
+    request::{Auth, KeyValue},
+};
+
+use crate::ui::{
+    auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
+    auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
+    confirm_dialog::open_confirm_dialog,
+    key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+    rename_dialog::open_rename_dialog,
 };
 
 #[derive(Clone, Debug)]

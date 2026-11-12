@@ -2,10 +2,9 @@ use std::time::Duration;
 
 use gpui::{App, Context, Entity, Task, Window};
 
-use crate::{
-    domain::request::{Auth, KeyValue},
-    ui::{auth_editor::AuthEditor, key_value_editor::KeyValueEditor},
-};
+use domain::request::{Auth, KeyValue};
+
+use crate::ui::{auth_editor::AuthEditor, key_value_editor::KeyValueEditor};
 
 /// How long after the last edit changes are saved.
 pub const SAVE_DELAY: Duration = Duration::from_millis(500);

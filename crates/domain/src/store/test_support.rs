@@ -9,6 +9,7 @@ use uuid::Uuid;
 pub struct TempDir(PathBuf);
 
 impl TempDir {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let name = format!("posty-pete-test-{}-{}", std::process::id(), Uuid::new_v4());
         Self(std::env::temp_dir().join(name))

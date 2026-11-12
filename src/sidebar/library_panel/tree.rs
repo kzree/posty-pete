@@ -3,7 +3,7 @@ use std::{collections::HashSet, sync::Arc};
 use gpui::SharedString;
 use uuid::Uuid;
 
-use crate::domain::{
+use domain::{
     collection::{Collection, Item},
     environment::Environment,
     request::HttpMethod,

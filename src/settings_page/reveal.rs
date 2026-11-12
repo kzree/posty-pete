@@ -3,10 +3,9 @@ use gpui::{
     prelude::FluentBuilder, px,
 };
 
-use crate::{
-    domain::settings_index::Setting,
-    ui::setting_row::{HIGHLIGHT_DURATION, SettingRow},
-};
+use domain::settings_index::Setting;
+
+use crate::ui::setting_row::{HIGHLIGHT_DURATION, SettingRow};
 
 /// Space kept above a row scrolled into view.
 const SCROLL_MARGIN: Pixels = px(24.);

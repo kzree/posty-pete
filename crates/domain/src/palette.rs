@@ -555,7 +555,7 @@ fn is_subsequence(query: &str, text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
+    use crate::{
         collection::{Folder, SavedRequest},
         request::Request,
     };

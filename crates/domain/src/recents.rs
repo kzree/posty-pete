@@ -160,7 +160,7 @@ impl<'de> Deserialize<'de> for Recents {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{
+    use crate::{
         collection::{Folder, Item, SavedRequest},
         request::Request,
     };

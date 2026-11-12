@@ -1,10 +1,23 @@
+[workspace]
+members = [".", "crates/domain"]
+default-members = [".", "crates/domain"]
+
+[workspace.dependencies]
+anyhow = "1"
+chrono = { version = "0.4", features = ["clock"] }
+futures = "0.3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+
 [package]
 name = "posty-pete"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chrono = { version = "0.4", features = ["clock"] }
+domain = { package = "posty-domain", path = "crates/domain" }
+chrono.workspace = true
 gpui = { package = "gpui-pre", version = "=0.3.11" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.11", features = [
   "font-kit",
@@ -18,27 +31,12 @@ gpui-component = { version = "0.9", features = [
 ] }
 gpui-kit-assets = "0.9"
 gpui-router = { version = "0.7", default-features = false, features = ["gpui-pre"] }
-mime = "0.3"
-encoding_rs = "0.8"
-reqwest = { version = "0.13", default-features = false, features = [
-  "json",
-  "multipart",
-  "cookies",
-  "gzip",
-  "brotli",
-  "rustls",
-  "stream",
-  "query",
-  "form",
-] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-futures = "0.3"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-url = "2"
-uuid = { version = "1", features = ["v4", "serde"] }
-directories = "6"
-anyhow = "1"
-tracing = "0.1"
+tokio.workspace = true
+futures.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
 tracing-subscriber = "0.3"
-rusqlite = { version = "0.41", features = ["bundled"] }
+
+[dev-dependencies]
+domain = { package = "posty-domain", path = "crates/domain", features = ["test-support"] }

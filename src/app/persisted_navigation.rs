@@ -4,6 +4,12 @@ use std::{
     time::Duration,
 };
 
+use domain::{
+    environment_selection::EnvironmentSelection,
+    navigation::{KeptSession, NavEntry, SavedNavigation, Startup},
+    request::Request,
+    store::{self, navigation::NavigationStore},
+};
 use gpui::{App, AppContext, Context, Task, Window};
 use gpui_router::use_navigate;
 
@@ -11,16 +17,7 @@ use super::{
     EditorContent, Workspace,
     routes::{AppRoute, RouteHistory},
 };
-use crate::{
-    collections::LoadState,
-    domain::{
-        environment_selection::EnvironmentSelection,
-        navigation::{KeptSession, NavEntry, SavedNavigation, Startup},
-        request::Request,
-        store::{self, navigation::NavigationStore},
-    },
-    settings::AppSettings,
-};
+use crate::{collections::LoadState, settings::AppSettings};
 
 const SAVE_DELAY: Duration = Duration::from_millis(500);
 
@@ -333,10 +330,10 @@ fn open_and_load() -> anyhow::Result<(NavigationStore, Option<SavedNavigation>)>
 mod tests {
     use std::{collections::HashMap, fs, path::Path};
 
+    use domain::store::test_support::TempDir;
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::store::test_support::TempDir;
 
     fn navigation(entries: Vec<NavEntry>) -> SavedNavigation {
         SavedNavigation {

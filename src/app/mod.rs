@@ -18,6 +18,12 @@ mod send;
 
 use std::cell::Cell;
 
+use domain::{
+    environment_selection::EnvironmentSelection,
+    layout::Layout,
+    palette::Scope,
+    recents::{Recent, Recents},
+};
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, ParentElement, Styled, Subscription, Window, px,
 };
@@ -37,13 +43,6 @@ use crate::{
     collection_view::CollectionView,
     collections::Collections,
     command_palette::CommandPalette,
-    domain::{
-        self,
-        environment_selection::EnvironmentSelection,
-        layout::Layout,
-        palette::Scope,
-        recents::{Recent, Recents},
-    },
     history::History,
     request_editor::RequestEditor,
     response_view::{ResponseView, ResponseViewEvent},

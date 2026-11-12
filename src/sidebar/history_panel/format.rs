@@ -2,10 +2,9 @@ use chrono::{Local, NaiveDate};
 use gpui::ParentElement;
 use gpui_component::{Sizable, tag::Tag};
 
-use crate::{
-    domain::history::{HistorySummary, Outcome},
-    ui::status_tag::status_tag,
-};
+use domain::history::{HistorySummary, Outcome};
+
+use crate::ui::status_tag::status_tag;
 
 const FAILED_LABEL: &str = "Error";
 

@@ -11,7 +11,7 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::domain::request::KeyValue;
+use domain::request::KeyValue;
 
 struct Row {
     id: usize,

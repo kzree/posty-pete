@@ -1,5 +1,10 @@
 use std::ops::RangeInclusive;
 
+use domain::{
+    accent::Accent,
+    settings::{AppearanceSettings, ThemePreference},
+    settings_index::{Setting, SettingsGroup},
+};
 use gpui::{
     App, AppContext, Context, Entity, Hsla, IntoElement, ParentElement, Render, Styled,
     Subscription, Window, prelude::FluentBuilder, px, rgb,
@@ -11,11 +16,6 @@ use gpui_component::{
 };
 
 use super::{Reveal, group, number_state, page, row};
-use crate::domain::{
-    accent::Accent,
-    settings::{AppearanceSettings, ThemePreference},
-    settings_index::{Setting, SettingsGroup},
-};
 use crate::ui::color_swatches::ColorSwatches;
 use crate::{settings::AppSettings, theme};
 

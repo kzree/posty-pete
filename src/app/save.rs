@@ -1,15 +1,10 @@
+use domain::collection::{Location, NEW_REQUEST_NAME, save_as_defaults};
 use gpui::{Context, Window};
 use gpui_component::{WindowExt, notification::Notification};
 use uuid::Uuid;
 
 use super::{EditorContent, Workspace, dirty::Baseline, show_error};
-use crate::{
-    domain::{
-        self,
-        collection::{Location, NEW_REQUEST_NAME, save_as_defaults},
-    },
-    save_as_dialog::{self, open_save_as_dialog},
-};
+use crate::save_as_dialog::{self, open_save_as_dialog};
 
 impl Workspace {
     /// Saves the editor's request if the main pane shows it; an unlinked

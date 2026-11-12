@@ -5,7 +5,7 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
-use crate::domain::{
+use domain::{
     environment::{self, Environment},
     request::{Auth, KeyValue},
     store::{

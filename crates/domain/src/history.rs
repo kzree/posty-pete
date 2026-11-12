@@ -192,7 +192,7 @@ mod tests {
     use chrono::FixedOffset;
 
     use super::*;
-    use crate::domain::{
+    use crate::{
         request::{KeyValue, RawKind},
         settings::HistorySettings,
     };

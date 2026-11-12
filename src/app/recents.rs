@@ -1,10 +1,8 @@
+use domain::recents::{Recent, Recents};
 use gpui::Context;
 
 use super::Workspace;
-use crate::{
-    collections::LoadState,
-    domain::recents::{Recent, Recents},
-};
+use crate::collections::LoadState;
 
 impl Workspace {
     /// Makes `recent` the newest of what the palette lists as recent.

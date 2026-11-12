@@ -1,3 +1,4 @@
+use domain::collection::SavedRequest;
 use gpui::{App, Context, Window};
 use gpui_component::{WindowExt, notification::Notification};
 use uuid::Uuid;
@@ -7,7 +8,6 @@ use super::{
     show_error,
 };
 use crate::{
-    domain::{self, collection::SavedRequest},
     settings::AppSettings,
     ui::{
         confirm_dialog::open_confirm_dialog,

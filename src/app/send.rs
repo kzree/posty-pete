@@ -1,27 +1,24 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use domain::{
+    auth::effective_auth,
+    collection::Collection,
+    curl,
+    environment::Environment,
+    environment_selection::EnvironmentSelection,
+    history::{HistoryRecord, Outcome},
+    http,
+    layers::Layers,
+    request::{Auth, Request},
+    response::Response,
+    send_error::SendError,
+};
 use gpui::{App, AppContext, Context, SharedString, Task, Window};
 use tokio::task::{AbortHandle, JoinError};
 
 use super::{EditorContent, Workspace, show_error};
-use crate::{
-    domain::{
-        auth::effective_auth,
-        collection::Collection,
-        curl,
-        environment::Environment,
-        environment_selection::EnvironmentSelection,
-        history::{HistoryRecord, Outcome},
-        http,
-        layers::Layers,
-        request::{Auth, Request},
-        response::Response,
-        send_error::SendError,
-    },
-    settings::AppSettings,
-    ui::clipboard::copy_with_notification,
-};
+use crate::{settings::AppSettings, ui::clipboard::copy_with_notification};
 
 /// A send in flight. Dropping it aborts the request on tokio and stops
 /// `finish_request` from running.
@@ -242,14 +239,14 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use uuid::Uuid;
-
-    use super::*;
-    use crate::domain::{
+    use domain::{
         collection::{add_environment, set_auth, set_environment_base, set_environment_variables},
         request::{Auth, KeyValue},
         variables::Variables,
     };
+    use uuid::Uuid;
+
+    use super::*;
 
     fn row(enabled: bool, key: &str, value: &str) -> KeyValue {
         KeyValue {

@@ -1,7 +1,7 @@
 use gpui::{ParentElement, SharedString};
 use gpui_component::{ColorName, Sizable, tag::Tag};
 
-use crate::domain::response::StatusClass;
+use domain::response::StatusClass;
 
 pub fn status_tag(status: u16, label: impl Into<SharedString>) -> Tag {
     let color = match StatusClass::from_status(status) {

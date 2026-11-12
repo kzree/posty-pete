@@ -255,7 +255,7 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::{ApiKeyLocation, HttpMethod, RawKind};
+    use crate::request::{ApiKeyLocation, HttpMethod, RawKind};
 
     fn row(enabled: bool, key: &str, value: &str) -> KeyValue {
         KeyValue {

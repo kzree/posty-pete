@@ -137,7 +137,7 @@ fn active(items: &[KeyValue]) -> impl Iterator<Item = (&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::RawKind;
+    use crate::request::RawKind;
 
     fn kv(key: &str, value: &str) -> KeyValue {
         KeyValue {

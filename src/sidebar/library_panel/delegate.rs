@@ -1,5 +1,6 @@
 use std::{collections::HashSet, sync::Arc};
 
+use domain::{collection::Collection, environment::Environment};
 use gpui::{
     App, Context, ElementId, ParentElement, Pixels, SharedString, Styled, Window, div,
     prelude::FluentBuilder as _, px,
@@ -15,10 +16,7 @@ use super::{
     navigation::{Direction, step},
     tree::{Node, NodeKind, Row, Section, Sections, container_ids, flatten},
 };
-use crate::{
-    domain::{collection::Collection, environment::Environment},
-    ui::method_label::method_label,
-};
+use crate::ui::method_label::method_label;
 
 #[derive(Default)]
 pub(super) struct LibraryDelegate {

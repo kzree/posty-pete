@@ -1,7 +1,7 @@
 use gpui::{App, Div, ParentElement, Styled, div, px};
 use gpui_component::{ActiveTheme, StyledExt};
 
-use crate::domain::request::HttpMethod;
+use domain::request::HttpMethod;
 
 pub fn method_label(method: HttpMethod, cx: &App) -> Div {
     div()

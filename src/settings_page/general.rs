@@ -1,11 +1,11 @@
+use domain::{
+    settings::GeneralSettings,
+    settings_index::{Setting, SettingsGroup},
+};
 use gpui::{Context, Entity, IntoElement, ParentElement, Render, Subscription, Window};
 use gpui_component::{Disableable, switch::Switch};
 
 use super::{Reveal, group, page, row};
-use crate::domain::{
-    settings::GeneralSettings,
-    settings_index::{Setting, SettingsGroup},
-};
 use crate::settings::AppSettings;
 
 pub struct GeneralPage {

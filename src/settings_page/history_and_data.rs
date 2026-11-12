@@ -1,5 +1,10 @@
 use std::path::PathBuf;
 
+use domain::{
+    settings::HistorySettings,
+    settings_index::{Setting, SettingsGroup},
+    store::data_dir,
+};
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled,
     Subscription, Window, px,
@@ -11,11 +16,6 @@ use gpui_component::{
 };
 
 use super::{Reveal, group, number_state, page, row};
-use crate::domain::{
-    settings::HistorySettings,
-    settings_index::{Setting, SettingsGroup},
-    store::data_dir,
-};
 use crate::settings::AppSettings;
 
 const SHOW_DATA_FOLDER: &str = if cfg!(target_os = "macos") {

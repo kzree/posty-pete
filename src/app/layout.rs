@@ -1,8 +1,8 @@
+use domain::layout::Layout;
 use gpui::{Context, Entity, Window, px};
 use gpui_component::ResizableState;
 
 use super::{LeftPanelState, Workspace};
-use crate::domain::layout::Layout;
 
 #[derive(Default)]
 pub(super) struct OwnResizes {

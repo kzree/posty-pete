@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, Row, params};
 
-use crate::domain::{
+use crate::{
     history::{self, HistoryRecord, HistoryRequest, HistorySummary, Outcome},
     request::HttpMethod,
 };
@@ -226,7 +226,7 @@ mod tests {
     use chrono::TimeDelta;
 
     use super::*;
-    use crate::domain::{
+    use crate::{
         history::MAX_STORED_BODY_SIZE,
         history::retention_cutoff,
         request::{Auth, Body, KeyValue, RawKind, Request},

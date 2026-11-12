@@ -1,3 +1,7 @@
+use domain::{
+    mcp::{self, DEFAULT_PORT, PLACEHOLDER_TOKEN, PORT_RANGE},
+    settings_index::{Setting, SettingsGroup},
+};
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
     Window, prelude::FluentBuilder, px,
@@ -11,13 +15,7 @@ use gpui_component::{
 };
 
 use super::{Reveal, group, number_state, page, row, switch};
-use crate::{
-    domain::{
-        mcp::{self, DEFAULT_PORT, PLACEHOLDER_TOKEN, PORT_RANGE},
-        settings_index::{Setting, SettingsGroup},
-    },
-    ui::setting_row::SettingRow,
-};
+use crate::ui::setting_row::SettingRow;
 
 const NOT_AVAILABLE: &str = "Not available yet";
 

@@ -5,6 +5,7 @@ mod tree;
 
 use std::{collections::HashMap, sync::Arc};
 
+use domain::{collection::Collection, environment::Environment};
 use gpui::{
     Anchor, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, ScrollStrategy, Styled, Subscription, Window, div,
@@ -20,10 +21,7 @@ use gpui_kit_assets::IconName as LucideIcon;
 use uuid::Uuid;
 
 use super::panel_header;
-use crate::{
-    actions::{LIBRARY_PANEL_CONTEXT, SelectNextLibraryRow, SelectPreviousLibraryRow},
-    domain::{collection::Collection, environment::Environment},
-};
+use crate::actions::{LIBRARY_PANEL_CONTEXT, SelectNextLibraryRow, SelectPreviousLibraryRow};
 use delegate::LibraryDelegate;
 use menu::context_menu;
 use navigation::Direction;
@@ -326,14 +324,14 @@ impl Render for LibraryPanel {
 mod test_support {
     use std::sync::Arc;
 
-    use uuid::Uuid;
-
-    use super::tree::{Row, Section};
-    use crate::domain::{
+    use domain::{
         collection::{Collection, Folder, Item, SavedRequest},
         environment::Environment,
         request::{Auth, Body, HttpMethod, Request},
     };
+    use uuid::Uuid;
+
+    use super::tree::{Row, Section};
 
     fn request(method: HttpMethod) -> Request {
         Request {

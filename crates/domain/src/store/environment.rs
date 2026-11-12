@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::json_dir::JsonDir;
-use crate::domain::environment::Environment;
+use crate::environment::Environment;
 
 /// One `<uuid>.json` file per shared environment in `dir`.
 pub struct EnvironmentStore {
@@ -38,7 +38,7 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::domain::{
+    use crate::{
         request::KeyValue,
         store::test_support::{TempDir, file_names},
     };

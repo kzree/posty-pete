@@ -11,14 +11,12 @@ use gpui_component::{
 };
 use gpui_kit_assets::IconName as LucideIcon;
 
-use crate::{
-    actions,
-    domain::{
-        command::Command,
-        palette::{self, Entry, Group, Scope, Section, Target},
-    },
-    ui::method_label::method_label,
+use domain::{
+    command::Command,
+    palette::{self, Entry, Group, Scope, Section, Target},
 };
+
+use crate::{actions, ui::method_label::method_label};
 
 pub enum CommandPaletteEvent {
     Open(Target),

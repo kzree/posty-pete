@@ -1,6 +1,7 @@
 use std::{collections::HashSet, ops::Range};
 
 use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
+use domain::history::{self, HistorySummary, day_label};
 use gpui::{
     App, Context, IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled,
     Window, div,
@@ -12,11 +13,7 @@ use gpui_component::{
 };
 
 use super::format::{local_day, outcome_summary, outcome_tag, request_count, today};
-use crate::{
-    domain::history::{self, HistorySummary, day_label},
-    sidebar::placeholder,
-    ui::method_label::method_label,
-};
+use crate::{sidebar::placeholder, ui::method_label::method_label};
 
 #[derive(Default)]
 pub(super) struct HistoryDelegate {
@@ -223,7 +220,7 @@ mod tests {
         HistorySummary {
             id,
             sent_at: local.with_timezone(&Utc),
-            method: crate::domain::request::HttpMethod::Get,
+            method: domain::request::HttpMethod::Get,
             url: format!("https://example.com/{id}"),
             outcome: None,
         }

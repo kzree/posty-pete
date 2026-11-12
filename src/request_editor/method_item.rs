@@ -1,7 +1,7 @@
 use gpui::SharedString;
 use gpui_component::searchable_list::SearchableListItem;
 
-use crate::domain::request::HttpMethod;
+use domain::request::HttpMethod;
 
 /// Keeps gpui-component out of `domain`.
 #[derive(Clone)]

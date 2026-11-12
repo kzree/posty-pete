@@ -350,8 +350,8 @@ mod tests {
     use reqwest::header::CONTENT_TYPE;
 
     use super::*;
-    use crate::domain::request::{Auth, Body, HttpMethod, KeyValue, RawKind};
-    use crate::domain::send_error;
+    use crate::request::{Auth, Body, HttpMethod, KeyValue, RawKind};
+    use crate::send_error;
 
     fn header(key: &str, value: &str, enabled: bool) -> KeyValue {
         KeyValue {

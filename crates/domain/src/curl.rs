@@ -81,7 +81,7 @@ fn quote(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::{ApiKeyLocation, Auth, Body, KeyValue, RawKind};
+    use crate::request::{ApiKeyLocation, Auth, Body, KeyValue, RawKind};
 
     fn kv(key: &str, value: &str) -> KeyValue {
         KeyValue {

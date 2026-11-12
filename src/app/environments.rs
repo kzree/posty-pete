@@ -1,17 +1,15 @@
+use domain::{
+    auth::AuthSourceLink,
+    collection,
+    defined_names::DefinedNames,
+    environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
+    recents::Recent,
+};
 use gpui::{App, Context, Window};
 use uuid::Uuid;
 
 use super::{Workspace, routes::AppRoute};
-use crate::{
-    domain::{
-        auth::AuthSourceLink,
-        collection,
-        defined_names::DefinedNames,
-        environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
-        recents::Recent,
-    },
-    environment_picker::{EnvironmentPicker, EnvironmentPickerAction},
-};
+use crate::environment_picker::{EnvironmentPicker, EnvironmentPickerAction};
 
 impl Workspace {
     /// `None` = no environment.

@@ -1,11 +1,9 @@
+use domain::command::{Command, CommandState};
 use gpui::{App, Context, FocusHandle, Window};
 use uuid::Uuid;
 
 use super::{EditorContent, Workspace, navigation::Direction, routes::AppRoute};
-use crate::{
-    actions,
-    domain::command::{Command, CommandState},
-};
+use crate::actions;
 
 impl Workspace {
     /// What decides which commands run, for the palette and for registering

@@ -15,16 +15,15 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::{
-    domain::{
-        auth::{AuthSourceLink, InheritNote},
-        request::Request,
-    },
-    ui::{
-        auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
-        key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
-        unresolved_hint::unresolved_hint,
-    },
+use domain::{
+    auth::{AuthSourceLink, InheritNote},
+    request::Request,
+};
+
+use crate::ui::{
+    auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
+    key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
+    unresolved_hint::unresolved_hint,
 };
 use body_editor::BodyEditor;
 use method_item::MethodItem;

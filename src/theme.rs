@@ -5,13 +5,12 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, Theme, ThemeColor, ThemeMode, TypographyTokens};
 
-use crate::{
-    domain::{
-        accent::Accent,
-        settings::{AppearanceSettings, ThemePreference},
-    },
-    settings::AppSettings,
+use domain::{
+    accent::Accent,
+    settings::{AppearanceSettings, ThemePreference},
 };
+
+use crate::settings::AppSettings;
 
 /// How far hover and active states move from the accent, in HSL lightness.
 const SHADE_STEP: f32 = 0.06;

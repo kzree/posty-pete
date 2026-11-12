@@ -1,3 +1,8 @@
+use domain::{
+    command::Command,
+    layout::{SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH},
+    palette::Scope,
+};
 use gpui::{
     AnyElement, Context, Div, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
     NavigationDirection, ParentElement, Render, Role, Stateful, StatefulInteractiveElement, Styled,
@@ -11,11 +16,6 @@ use crate::{
         CancelRequest, FocusUrl, GoBack, GoForward, NewRequest, OpenCommandPalette, OpenHistory,
         OpenLibrary, OpenSettings, OpenSharedEnvironments, OpenTests, QuickOpen, RevertRequest,
         SaveRequest, SaveRequestAs, SendRequest, ToggleSidebar, WORKSPACE_CONTEXT,
-    },
-    domain::{
-        command::Command,
-        layout::{SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH},
-        palette::Scope,
     },
     sidebar::SidebarTab,
     window_title_bar::WindowTitleBar,

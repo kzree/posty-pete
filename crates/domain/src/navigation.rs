@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{
+use crate::{
     environment_selection::DraftSource, layout::Layout, recents::Recents, request::Request,
 };
 
@@ -163,7 +163,7 @@ impl KeptSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::recents::Recent;
+    use crate::recents::Recent;
 
     fn load(json: &str) -> SavedNavigation {
         serde_json::from_str(json).unwrap()

@@ -1,13 +1,11 @@
+use domain::settings_index::{Setting, SettingsGroup, SettingsSection, Shortcut};
 use gpui::{
     App, Context, Entity, IntoElement, Keystroke, ParentElement, Render, Styled, Window, div,
 };
 use gpui_component::{ActiveTheme, h_flex, kbd::Kbd};
 
 use super::{Reveal, group, page, row};
-use crate::{
-    actions::keys,
-    domain::settings_index::{Setting, SettingsGroup, SettingsSection, Shortcut},
-};
+use crate::actions::keys;
 
 /// The bindings from `actions::bind_keys` for `shortcut`.
 fn bindings(shortcut: Shortcut) -> Vec<&'static str> {

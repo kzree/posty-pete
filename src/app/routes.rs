@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use domain::collection::Collection;
 use gpui::{App, Context, Div, ParentElement, SharedString, Styled, Window, div};
 use gpui_component::{resizable_panel, v_resizable};
 use gpui_router::{Route, Routes, use_navigate};
@@ -9,7 +10,7 @@ use super::{
     EditorContent, Workspace,
     navigation::{Direction, NavHistory},
 };
-use crate::{domain::collection::Collection, window_title_bar::WindowTitle};
+use crate::window_title_bar::WindowTitle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AppRoute {
@@ -366,11 +367,12 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::domain::{
+    use domain::{
         collection::{Item, SavedRequest},
         request::Request,
     };
+
+    use super::*;
 
     fn library() -> (Vec<Arc<Collection>>, Uuid, Uuid) {
         let mut collection = Collection::new("My API");

@@ -1,5 +1,10 @@
 use std::ops::RangeInclusive;
 
+use domain::{
+    http,
+    settings::{ProxyMode, RequestSettings},
+    settings_index::{Setting, SettingsGroup},
+};
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription,
     Window, prelude::FluentBuilder, px,
@@ -12,11 +17,6 @@ use gpui_component::{
 };
 
 use super::{Reveal, group, number_state, page, row, row_standing_in};
-use crate::domain::{
-    http,
-    settings::{ProxyMode, RequestSettings},
-    settings_index::{Setting, SettingsGroup},
-};
 use crate::settings::AppSettings;
 
 const PROXY_MODES: [ProxyMode; 3] = [ProxyMode::None, ProxyMode::System, ProxyMode::Custom];

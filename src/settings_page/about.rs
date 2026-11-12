@@ -1,8 +1,9 @@
+use domain::settings_index::SettingsGroup;
 use gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div};
 use gpui_component::{ActiveTheme, StyledExt, h_flex, link::Link, v_flex};
 
 use super::{group, page};
-use crate::{WINDOW_TITLE, domain::settings_index::SettingsGroup, ui::setting_row::SettingRow};
+use crate::{WINDOW_TITLE, ui::setting_row::SettingRow};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DESCRIPTION: &str = "A desktop client for composing, sending and saving HTTP requests.";

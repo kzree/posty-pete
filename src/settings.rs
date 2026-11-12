@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Subscription, Task};
 
-use crate::domain::{
+use domain::{
     settings::Settings,
     store::{
         self,

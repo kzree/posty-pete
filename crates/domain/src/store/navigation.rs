@@ -2,7 +2,7 @@ use std::{fs, io, path::PathBuf};
 
 use anyhow::{Context as _, bail};
 
-use crate::domain::navigation::SavedNavigation;
+use crate::navigation::SavedNavigation;
 
 /// The navigation state in a single JSON file.
 pub struct NavigationStore {
@@ -44,8 +44,8 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::domain::store::test_support::TempDir;
-    use crate::domain::{
+    use crate::store::test_support::TempDir;
+    use crate::{
         environment_selection::DraftSource,
         layout::Layout,
         navigation::NavEntry,

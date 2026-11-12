@@ -1,3 +1,4 @@
+use domain::history::OpenMode;
 use gpui::{Context, DismissEvent, WeakEntity, Window};
 use gpui_component::{
     list::ListState,
@@ -7,7 +8,6 @@ use gpui_component::{
 use super::{HistoryPanel, HistoryPanelEvent, delegate::HistoryDelegate};
 use crate::{
     actions::{DeleteHistoryEntry, SendHistoryEntryAgain},
-    domain::history::OpenMode,
     ui::clipboard::copy_with_notification,
 };
 

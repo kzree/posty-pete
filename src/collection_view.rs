@@ -17,21 +17,20 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
-use crate::{
-    domain::{
-        collection::Collection,
-        defined_names::DefinedNames,
-        environment::Environment,
-        request::{Auth, KeyValue},
+use domain::{
+    collection::Collection,
+    defined_names::DefinedNames,
+    environment::Environment,
+    request::{Auth, KeyValue},
+};
+
+use crate::ui::{
+    auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
+    auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
+    environments_editor::{
+        BaseOptions, EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
     },
-    ui::{
-        auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
-        auto_saved::{AutoSavedAuth, AutoSavedVariables, SAVE_DELAY},
-        environments_editor::{
-            BaseOptions, EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
-        },
-        key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
-    },
+    key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
 };
 
 const ENVIRONMENTS_OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOptions {

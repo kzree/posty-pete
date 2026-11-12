@@ -198,7 +198,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::domain::{
+    use crate::{
         collection::Collection,
         environment::Environment,
         request::{ApiKeyLocation, KeyValue, Request},

@@ -1,3 +1,4 @@
+use domain::settings_index::{Setting, SettingsGroup};
 use gpui::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, px,
 };
@@ -8,7 +9,6 @@ use gpui_component::{
 };
 
 use super::{Reveal, group, mcp::McpSettings, page, row, switch};
-use crate::domain::settings_index::{Setting, SettingsGroup};
 
 const PROVIDERS: [&str; 1] = ["Anthropic"];
 const MODELS: [&str; 3] = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];

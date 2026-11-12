@@ -161,7 +161,7 @@ impl EnvironmentSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{collection::add_environment, request::KeyValue};
+    use crate::{collection::add_environment, request::KeyValue};
 
     fn variable(key: &str, value: &str) -> KeyValue {
         KeyValue {

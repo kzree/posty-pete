@@ -117,7 +117,7 @@ fn with_base<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::request::ApiKeyLocation;
+    use crate::request::ApiKeyLocation;
 
     fn variable(key: &str) -> KeyValue {
         KeyValue {

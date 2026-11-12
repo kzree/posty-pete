@@ -7,18 +7,15 @@ use gpui::{
 use gpui_component::{StyledExt, v_flex};
 use uuid::Uuid;
 
-use crate::{
-    domain::{
-        defined_names::DefinedNames,
-        environment::Environment,
-        request::{Auth, KeyValue},
-    },
-    ui::{
-        auth_editor::AuthEditorOptions,
-        environments_editor::{
-            EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions,
-        },
-    },
+use domain::{
+    defined_names::DefinedNames,
+    environment::Environment,
+    request::{Auth, KeyValue},
+};
+
+use crate::ui::{
+    auth_editor::AuthEditorOptions,
+    environments_editor::{EnvironmentsEditor, EnvironmentsEditorEvent, EnvironmentsEditorOptions},
 };
 
 const OPTIONS: EnvironmentsEditorOptions = EnvironmentsEditorOptions {

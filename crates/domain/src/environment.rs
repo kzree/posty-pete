@@ -174,7 +174,7 @@ pub(super) fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> +
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::layers::Layers;
+    use crate::layers::Layers;
 
     fn variable(key: &str, value: &str) -> KeyValue {
         KeyValue {

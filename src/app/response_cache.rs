@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use gpui::SharedString;
 
-use crate::domain::{response::Response, send_error::SendError};
+use domain::{response::Response, send_error::SendError};
 
 const MAX_ENTRIES: usize = 20;
 /// Larger display bodies aren't kept.

@@ -14,14 +14,13 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::{
-    domain::{
-        auth::{AuthSourceLink, InheritNote},
-        defined_names::DefinedNames,
-        request::{ApiKeyLocation, Auth},
-    },
-    ui::unresolved_hint::{UnresolvedHint, unresolved_hint},
+use domain::{
+    auth::{AuthSourceLink, InheritNote},
+    defined_names::DefinedNames,
+    request::{ApiKeyLocation, Auth},
 };
+
+use crate::ui::unresolved_hint::{UnresolvedHint, unresolved_hint};
 
 /// What the editor offers and says, depending on whose auth it edits.
 #[derive(Clone, Copy)]

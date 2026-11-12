@@ -8,10 +8,9 @@ use gpui_component::{
 };
 use uuid::Uuid;
 
-use crate::{
-    domain::environment_menu::{EnvironmentChoice, EnvironmentMenu, EnvironmentMenuItem},
-    window_title_bar::TRAILING_MAX_WIDTH,
-};
+use domain::environment_menu::{EnvironmentChoice, EnvironmentMenu, EnvironmentMenuItem};
+
+use crate::window_title_bar::TRAILING_MAX_WIDTH;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentPickerAction {
