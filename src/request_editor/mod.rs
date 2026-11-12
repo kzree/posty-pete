@@ -17,7 +17,10 @@ use gpui_component::{
 };
 
 use crate::{
-    domain::request::Request,
+    domain::{
+        auth::{AuthSourceLink, InheritNote},
+        request::Request,
+    },
     ui::{
         auth_editor::{AuthEditor, AuthEditorEvent, AuthEditorOptions},
         key_value_editor::{KeyValueEditor, KeyValueEditorEvent},
@@ -41,6 +44,8 @@ pub enum RequestEditorEvent {
     Save,
     /// A field of the request or its name changed.
     Edited,
+    /// Open where the inherited auth comes from.
+    OpenAuthSource(AuthSourceLink),
 }
 
 /// Emitted by the body editor when its content changes.
@@ -109,8 +114,9 @@ impl RequestEditor {
         subscriptions.push(cx.subscribe(&body, |_, _, _: &Edited, cx| {
             cx.emit(RequestEditorEvent::Edited)
         }));
-        subscriptions.push(cx.subscribe(&auth, |_, _, _: &AuthEditorEvent, cx| {
-            cx.emit(RequestEditorEvent::Edited)
+        subscriptions.push(cx.subscribe(&auth, |_, _, event, cx| match event {
+            AuthEditorEvent::Changed => cx.emit(RequestEditorEvent::Edited),
+            AuthEditorEvent::OpenSource(link) => cx.emit(RequestEditorEvent::OpenAuthSource(*link)),
         }));
 
         Self {
@@ -153,6 +159,12 @@ impl RequestEditor {
             self.unresolved_hint = hint;
             cx.notify();
         }
+    }
+
+    /// Says what Inherit sends and where from.
+    pub fn set_auth_inherit_note(&mut self, note: Option<InheritNote>, cx: &mut Context<Self>) {
+        self.auth
+            .update(cx, |auth, cx| auth.set_inherit_note(note, cx));
     }
 
     /// Follows a rename (or unlink) of the linked saved request without reloading it.

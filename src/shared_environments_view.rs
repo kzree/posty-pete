@@ -74,6 +74,12 @@ impl SharedEnvironmentsView {
         self.environments.read(cx).selected()
     }
 
+    /// Shows the auth of the environment shown.
+    pub fn show_auth(&mut self, cx: &mut Context<Self>) {
+        self.environments
+            .update(cx, |editor, cx| editor.show_auth(cx));
+    }
+
     /// Focuses the first variable of the environment shown.
     pub fn focus_variables(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.environments

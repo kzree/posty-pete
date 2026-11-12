@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use gpui::{
-    AnyElement, AppContext, Context, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
+    AnyElement, AppContext, Context, EventEmitter, IntoElement, ParentElement, Render, Styled,
+    Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Sizable,
@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
+        auth::InheritNote,
         environment::{self, Environment, InheritedVariable},
         request::{Auth, KeyValue},
     },
@@ -153,6 +154,7 @@ impl EnvironmentsEditor {
                 // The base's auth reads as inherited or overridden.
                 cx.notify();
             }
+            AuthEditorEvent::OpenSource(_) => {}
         });
         Self {
             options,
@@ -219,6 +221,10 @@ impl EnvironmentsEditor {
             .update(cx, |editor, cx| editor.focus_first_key(window, cx));
     }
 
+    pub fn show_auth(&mut self, cx: &mut Context<Self>) {
+        self.select_pane(Pane::Authorization, cx);
+    }
+
     /// Takes the variables edit waiting for its save delay, as the
     /// environment id and its variables.
     pub fn take_pending_variables(&mut self, cx: &gpui::App) -> Option<(Uuid, Vec<KeyValue>)> {
@@ -273,7 +279,7 @@ impl EnvironmentsEditor {
             .and_then(|id| find(&self.environments, id))
             .and_then(|env| self.base_of(env))
             .and_then(|(_, base)| environment::base_auth_note(&Auth::Inherit, base))
-            .map(SharedString::from);
+            .map(InheritNote::plain);
         let environment = id.and_then(|id| find(&self.environments, id));
         let empty = Vec::new();
         let stored = environment.map_or(&empty, |env| &env.variables);

@@ -7,6 +7,7 @@ use tokio::task::{AbortHandle, JoinError};
 use super::{EditorContent, Workspace, show_error};
 use crate::{
     domain::{
+        auth::effective_auth,
         collection::Collection,
         curl,
         environment::Environment,
@@ -14,7 +15,7 @@ use crate::{
         history::{HistoryRecord, Outcome},
         http,
         layers::Layers,
-        request::Request,
+        request::{Auth, Request},
         response::Response,
         send_error::SendError,
     },
@@ -79,14 +80,16 @@ impl Workspace {
     }
 
     /// Hands the editor the variables `request` references but that don't
-    /// resolve, including those in inherited auth. Without a collection to
-    /// resolve against, all of them.
+    /// resolve, including those in inherited auth (without a collection to
+    /// resolve against, all of them), and where inherited auth comes from.
     pub(super) fn sync_unresolved_variables(&mut self, request: &Request, cx: &mut Context<Self>) {
         let layers = self.editor_layers(cx);
         let resolvable = layers.is_some();
         let names = request.unresolved_variables_with(layers.as_ref());
+        let inherit_note = effective_auth(&Auth::Inherit, layers.as_ref()).inherit_note();
         self.request_editor.update(cx, |editor, cx| {
-            editor.set_unresolved_variables(&names, resolvable, cx)
+            editor.set_unresolved_variables(&names, resolvable, cx);
+            editor.set_auth_inherit_note(inherit_note, cx);
         });
     }
 

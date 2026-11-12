@@ -1,19 +1,23 @@
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, px,
+    SharedString, Styled, Subscription, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
     ActiveTheme, IndexPath, Sizable,
     form::{field, v_form},
     h_flex,
     input::{Input, InputEvent, InputState},
+    link::Link,
     searchable_list::SearchableListItem,
     select::{Select, SelectEvent, SelectState},
     tab::TabBar,
     v_flex,
 };
 
-use crate::domain::request::{ApiKeyLocation, Auth};
+use crate::domain::{
+    auth::{AuthSourceLink, InheritNote},
+    request::{ApiKeyLocation, Auth},
+};
 
 /// What the editor offers and says, depending on whose auth it edits.
 #[derive(Clone, Copy)]
@@ -26,6 +30,8 @@ pub struct AuthEditorOptions {
 
 pub enum AuthEditorEvent {
     Changed,
+    /// The link in the Inherit note was clicked.
+    OpenSource(AuthSourceLink),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -75,7 +81,7 @@ impl SearchableListItem for AuthKindItem {
 pub struct AuthEditor {
     options: AuthEditorOptions,
     /// Replaces the options' Inherit line when set.
-    inherit_note: Option<SharedString>,
+    inherit_note: Option<InheritNote>,
     kind: AuthKind,
     kind_select: Entity<SelectState<Vec<AuthKindItem>>>,
     api_key_name: Entity<InputState>,
@@ -199,7 +205,7 @@ impl AuthEditor {
     }
 
     /// Shows `note` for Inherit instead of the options' line; `None` restores it.
-    pub fn set_inherit_note(&mut self, note: Option<SharedString>, cx: &mut Context<Self>) {
+    pub fn set_inherit_note(&mut self, note: Option<InheritNote>, cx: &mut Context<Self>) {
         if self.inherit_note != note {
             self.inherit_note = note;
             cx.notify();
@@ -227,6 +233,27 @@ impl AuthEditor {
     }
 }
 
+impl AuthEditor {
+    fn render_inherit_note(&self, note: &InheritNote, cx: &mut Context<Self>) -> impl IntoElement {
+        let text = |text: &str| SharedString::from(text.to_string());
+        h_flex()
+            .flex_wrap()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(text(&note.prefix))
+            .when_some(note.link.clone(), |this, (link, name)| {
+                this.child(
+                    Link::new("auth-inherit-source")
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(AuthEditorEvent::OpenSource(link))
+                        }))
+                        .child(name),
+                )
+            })
+            .child(text(&note.suffix))
+    }
+}
+
 impl Render for AuthEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
@@ -242,15 +269,14 @@ impl Render for AuthEditor {
             );
 
         let fields = match self.kind {
-            AuthKind::Inherit => div()
-                .text_sm()
-                .text_color(muted)
-                .child(
-                    self.inherit_note
-                        .clone()
-                        .unwrap_or_else(|| self.options.inherit.unwrap_or_default().into()),
-                )
-                .into_any_element(),
+            AuthKind::Inherit => match &self.inherit_note {
+                Some(note) => self.render_inherit_note(note, cx).into_any_element(),
+                None => div()
+                    .text_sm()
+                    .text_color(muted)
+                    .child(self.options.inherit.unwrap_or_default())
+                    .into_any_element(),
+            },
             AuthKind::None => div()
                 .text_sm()
                 .text_color(muted)

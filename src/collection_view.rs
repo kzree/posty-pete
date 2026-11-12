@@ -176,6 +176,7 @@ impl CollectionView {
                 let save = this.save_after_delay(cx);
                 this.auth.schedule(save);
             }
+            AuthEditorEvent::OpenSource(_) => {}
         });
         let environments = cx.new(|cx| EnvironmentsEditor::new(ENVIRONMENTS_OPTIONS, window, cx));
         let environments_sub = cx.subscribe(&environments, |this, _, event, cx| {
@@ -281,6 +282,17 @@ impl CollectionView {
             self.environments
                 .update(cx, |environments, cx| environments.select(id, window, cx));
         }
+    }
+
+    /// Shows the Authorization tab.
+    pub fn open_auth(&mut self, cx: &mut Context<Self>) {
+        self.select_tab(CollectionTab::Authorization, cx);
+    }
+
+    /// Shows the auth of the environment shown.
+    pub fn show_environment_auth(&mut self, cx: &mut Context<Self>) {
+        self.environments
+            .update(cx, |environments, cx| environments.show_auth(cx));
     }
 
     /// Focuses the first variable of the environment shown.

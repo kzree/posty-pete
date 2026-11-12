@@ -4,6 +4,7 @@ use uuid::Uuid;
 use super::{Workspace, routes::AppRoute};
 use crate::{
     domain::{
+        auth::AuthSourceLink,
         collection,
         environment_menu::{EnvironmentChoice, EnvironmentMenu, MenuScope},
         recents::Recent,
@@ -79,6 +80,48 @@ impl Workspace {
                 },
                 cx,
             );
+        }
+    }
+
+    /// Opens the collection's page on the Authorization tab.
+    pub(super) fn open_collection_auth(
+        &mut self,
+        collection_id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let route = AppRoute::Collection(collection_id);
+        if self.current_route() == route {
+            self.show_collection(collection_id, window, cx);
+        } else {
+            self.navigate(route, window, cx);
+        }
+        if self.collection_view.read(cx).id() == Some(collection_id) {
+            self.collection_view
+                .update(cx, |view, cx| view.open_auth(cx));
+        }
+        self.record_recent(Recent::Collection { id: collection_id }, cx);
+    }
+
+    /// Opens where the editor's inherited auth comes from, on its auth.
+    pub(super) fn open_auth_source(
+        &mut self,
+        link: AuthSourceLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match link {
+            AuthSourceLink::Environment { collection_id, id } => {
+                self.open_environments(collection_id, Some(id), window, cx);
+                self.collection_view
+                    .update(cx, |view, cx| view.show_environment_auth(cx));
+            }
+            AuthSourceLink::SharedEnvironment { id } => {
+                self.open_shared_environments(Some(id), window, cx);
+                self.shared_environments_view
+                    .update(cx, |view, cx| view.show_auth(cx));
+            }
+            AuthSourceLink::Collection { id } => self.open_collection_auth(id, window, cx),
         }
     }
 

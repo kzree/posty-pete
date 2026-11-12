@@ -112,6 +112,87 @@ pub fn effective_auth<'a>(auth: &'a Auth, layers: Option<&Layers<'a>>) -> Effect
     })
 }
 
+/// What the source of inherited auth opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthSourceLink {
+    Environment { collection_id: Uuid, id: Uuid },
+    SharedEnvironment { id: Uuid },
+    Collection { id: Uuid },
+}
+
+/// A line of text with an optional link in the middle:
+/// `prefix`, the link's `name`, then `suffix`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InheritNote {
+    pub prefix: String,
+    pub link: Option<(AuthSourceLink, String)>,
+    pub suffix: String,
+}
+
+impl InheritNote {
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            prefix: text.into(),
+            link: None,
+            suffix: String::new(),
+        }
+    }
+
+    fn linked(prefix: String, link: AuthSourceLink, name: &str, suffix: String) -> Self {
+        Self {
+            prefix,
+            link: Some((link, name.to_string())),
+            suffix,
+        }
+    }
+
+    #[cfg(test)]
+    fn text(&self) -> String {
+        let name = self.link.as_ref().map_or("", |(_, name)| name.as_str());
+        format!("{}{name}{}", self.prefix, self.suffix)
+    }
+}
+
+impl EffectiveAuth<'_> {
+    /// What a request set to Inherit sends and where from, naming only the
+    /// kind of auth; `None` when the request sets its own.
+    pub fn inherit_note(&self) -> Option<InheritNote> {
+        let kind = self.auth.label();
+        Some(match self.source {
+            AuthSource::Request => return None,
+            AuthSource::Environment {
+                collection_id,
+                id,
+                name,
+            } => InheritNote::linked(
+                format!("{kind} from environment “"),
+                AuthSourceLink::Environment { collection_id, id },
+                name,
+                "”".into(),
+            ),
+            AuthSource::SharedEnvironment { id, name, via } => InheritNote::linked(
+                format!("{kind} from shared environment “"),
+                AuthSourceLink::SharedEnvironment { id },
+                name,
+                match via {
+                    Some(via) => format!("” (via “{via}”)"),
+                    None => "”".into(),
+                },
+            ),
+            AuthSource::Collection { id, name } => InheritNote::linked(
+                format!("{kind} from collection “"),
+                AuthSourceLink::Collection { id },
+                name,
+                "”".into(),
+            ),
+            AuthSource::Nothing => InheritNote::plain("No auth: nothing to inherit"),
+            AuthSource::NoSource => {
+                InheritNote::plain("Choose a collection or environment to inherit auth")
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -390,5 +471,104 @@ mod tests {
                 .is_empty(),
             "auth that isn't sent doesn't need its variables"
         );
+    }
+
+    fn note(auth: &Auth, layers: Option<&Layers<'_>>) -> Option<InheritNote> {
+        effective_auth(auth, layers).inherit_note()
+    }
+
+    #[test]
+    fn inherit_note_names_the_kind_and_links_the_source() {
+        let mut f = fixture();
+        let collection_id = f.collection.id;
+        let staging_id = f.staging;
+        let prod_id = f.shared[0].id;
+
+        f.collection.auth = Auth::ApiKey {
+            key: "X-Key".into(),
+            value: "secret".into(),
+            location: ApiKeyLocation::Header,
+        };
+        let n = note(&Auth::Inherit, Some(&f.layers())).unwrap();
+        assert_eq!(n.text(), "API key from collection “Pets”");
+        assert_eq!(n.prefix, "API key from collection “");
+        assert_eq!(
+            n.link,
+            Some((
+                AuthSourceLink::Collection { id: collection_id },
+                "Pets".into()
+            ))
+        );
+        assert_eq!(n.suffix, "”");
+
+        f.prod().auth = Auth::Basic {
+            username: "u".into(),
+            password: "secret".into(),
+        };
+        let n = note(&Auth::Inherit, Some(&f.layers())).unwrap();
+        assert_eq!(
+            n.text(),
+            "Basic auth from shared environment “Prod” (via “Staging”)"
+        );
+        assert_eq!(
+            n.link,
+            Some((
+                AuthSourceLink::SharedEnvironment { id: prod_id },
+                "Prod".into()
+            ))
+        );
+
+        f.staging().auth = bearer("secret");
+        let n = note(&Auth::Inherit, Some(&f.layers())).unwrap();
+        assert_eq!(n.text(), "Bearer token from environment “Staging”");
+        assert_eq!(
+            n.link,
+            Some((
+                AuthSourceLink::Environment {
+                    collection_id,
+                    id: staging_id
+                },
+                "Staging".into()
+            ))
+        );
+        assert!(!n.text().contains("secret"));
+    }
+
+    #[test]
+    fn inherit_note_for_an_environment_turning_auth_off() {
+        let mut f = fixture();
+        f.collection.auth = bearer("collection");
+        f.staging().auth = Auth::None;
+        let n = note(&Auth::Inherit, Some(&f.layers())).unwrap();
+        assert_eq!(n.text(), "No auth from environment “Staging”");
+    }
+
+    #[test]
+    fn inherit_note_for_a_shared_draft_has_no_via() {
+        let mut f = fixture();
+        f.prod().auth = bearer("secret");
+        let layers = Layers::Shared(&f.shared[0]);
+        let n = note(&Auth::Inherit, Some(&layers)).unwrap();
+        assert_eq!(n.text(), "Bearer token from shared environment “Prod”");
+    }
+
+    #[test]
+    fn inherit_note_without_anything_to_inherit() {
+        let f = fixture();
+        let n = note(&Auth::Inherit, Some(&f.layers())).unwrap();
+        assert_eq!(n, InheritNote::plain("No auth: nothing to inherit"));
+
+        let n = note(&Auth::Inherit, None).unwrap();
+        assert_eq!(
+            n,
+            InheritNote::plain("Choose a collection or environment to inherit auth")
+        );
+    }
+
+    #[test]
+    fn no_inherit_note_for_the_requests_own_auth() {
+        let f = fixture();
+        assert_eq!(note(&bearer("own"), Some(&f.layers())), None);
+        assert_eq!(note(&Auth::None, None), None);
     }
 }

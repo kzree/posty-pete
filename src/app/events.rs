@@ -395,6 +395,7 @@ impl Workspace {
                 self.schedule_dirty_check(window, cx);
                 self.schedule_navigation_save(cx);
             }
+            RequestEditorEvent::OpenAuthSource(link) => self.open_auth_source(*link, window, cx),
         }
     }
 
