@@ -150,6 +150,28 @@ mod tests {
     }
 
     #[test]
+    fn body_text_is_compared_by_content_not_storage() {
+        let baseline = Baseline::new(stored(), loaded());
+        let rebuilt = Request {
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: String::from("{}").into(),
+            },
+            ..loaded()
+        };
+        assert!(!baseline.is_dirty(&saved(), &rebuilt, Some("Get users")));
+
+        let edited = Request {
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: "{ }".into(),
+            },
+            ..loaded()
+        };
+        assert!(baseline.is_dirty(&saved(), &edited, Some("Get users")));
+    }
+
+    #[test]
     fn a_burst_of_requests_schedules_one_check() {
         let mut check = PendingCheck::default();
         let scheduled = (0..100).filter(|_| check.request()).count();

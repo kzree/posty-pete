@@ -3,7 +3,7 @@
 use std::{borrow::Cow, collections::HashMap, ops::Range};
 
 use super::{
-    request::{Auth, Body, KeyValue, Request},
+    request::{Auth, Body, KeyValue, RawText, Request},
     resolved::is_active,
 };
 
@@ -123,6 +123,14 @@ impl Substitution<'_> {
         self.0.substitute(text, &mut Vec::new()).into_owned()
     }
 
+    /// Shares `text` when it has nothing to substitute.
+    fn raw_text(&self, text: &RawText) -> RawText {
+        match self.0.substitute(text, &mut Vec::new()) {
+            Cow::Borrowed(_) => text.clone(),
+            Cow::Owned(substituted) => substituted.into(),
+        }
+    }
+
     fn rows(&self, rows: &[KeyValue]) -> Vec<KeyValue> {
         rows.iter()
             .map(|row| KeyValue {
@@ -178,7 +186,7 @@ impl Request {
                 Body::UrlEncoded(fields) => Body::UrlEncoded(s.rows(fields)),
                 Body::Raw { kind, text } => Body::Raw {
                     kind: *kind,
-                    text: s.text(text),
+                    text: s.raw_text(text),
                 },
             },
             auth: s.auth(auth),
@@ -237,16 +245,21 @@ impl Request {
                 }
             }
         }
-        if let Body::Raw { text, .. } = &self.body {
-            texts.push(text);
-        }
-        if substituted.sends_auth() {
-            texts.extend(auth.texts());
-        }
-
         let mut unresolved = Vec::new();
         for text in texts {
             variables.collect_unresolved(text, &mut unresolved);
+        }
+        if let Body::Raw { text, .. } = &self.body {
+            for name in text.reference_names() {
+                if variables.get(name).is_none() {
+                    note(&mut unresolved, name);
+                }
+            }
+        }
+        if substituted.sends_auth() {
+            for text in auth.texts() {
+                variables.collect_unresolved(text, &mut unresolved);
+            }
         }
         unresolved
     }
@@ -493,6 +506,41 @@ mod tests {
     }
 
     const ALL_NAMES: [&str; 9] = ["base", "pk", "pv", "hk", "hv", "fk", "fv", "ak", "av"];
+
+    #[test]
+    fn raw_body_without_references_is_shared_by_substitution() {
+        let text = RawText::from(r#"{"id": 1}"#);
+        let request = Request {
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: text.clone(),
+            },
+            ..Request::default()
+        };
+        let Body::Raw { text: out, .. } = request.with_variables(&vars(&[("id", "7")])).body else {
+            panic!("not a raw body");
+        };
+        assert!(RawText::ptr_eq(&text, &out));
+    }
+
+    #[test]
+    fn raw_body_names_keep_their_place_in_the_unresolved_order() {
+        let request = Request {
+            url: "{{base}}/{{b}}".into(),
+            body: Body::Raw {
+                kind: RawKind::Text,
+                text: "{{a}} {{base}} {{b}} {{c}} {{a}} {{known}}".into(),
+            },
+            auth: Auth::Bearer {
+                token: "{{c}} {{token}}".into(),
+            },
+            ..Request::default()
+        };
+        assert_eq!(
+            request.unresolved_variables(&vars(&[("known", "k")])),
+            ["base", "b", "a", "c", "token"]
+        );
+    }
 
     #[test]
     fn with_variables_covers_every_field() {

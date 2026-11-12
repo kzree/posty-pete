@@ -147,7 +147,7 @@ mod tests {
         request.method = HttpMethod::Get;
         request.body = Body::Raw {
             kind: RawKind::Text,
-            text: String::new(),
+            text: Default::default(),
         };
         assert!(to_curl(&request).contains("-X GET"));
         request.method = HttpMethod::Post;

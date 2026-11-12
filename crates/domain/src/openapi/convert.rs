@@ -544,7 +544,7 @@ impl<'a> Converter<'a> {
                 (
                     Body::Raw {
                         kind: RawKind::Json,
-                        text,
+                        text: text.into(),
                     },
                     content_type_header(RawKind::Json, media_type),
                 )
@@ -562,7 +562,10 @@ impl<'a> Converter<'a> {
                 }
                 let text = text[..end].to_string();
                 (
-                    Body::Raw { kind, text },
+                    Body::Raw {
+                        kind,
+                        text: text.into(),
+                    },
                     content_type_header(kind, media_type),
                 )
             }
@@ -709,7 +712,10 @@ impl<'a> Converter<'a> {
                 _ => String::new(),
             };
             return (
-                Body::Raw { kind, text },
+                Body::Raw {
+                    kind,
+                    text: text.into(),
+                },
                 content_type_header(kind, media_type),
             );
         }

@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use domain::{
     json_body,
     request::{Body, RawKind},
@@ -84,6 +86,7 @@ pub struct BodyEditor {
     json_check_pending: bool,
     /// Why the loaded body is empty; dropped when the body is edited or replaced.
     note: Option<SharedString>,
+    snapshot: BodySnapshot,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -128,6 +131,7 @@ impl BodyEditor {
             json_error: None,
             json_check_pending: false,
             note: None,
+            snapshot: BodySnapshot::default(),
             _subscriptions: vec![sub, raw_sub, form_sub],
         }
     }
@@ -138,6 +142,7 @@ impl BodyEditor {
     }
 
     fn edited(&mut self, cx: &mut Context<Self>) {
+        self.snapshot.invalidate();
         if self.note.take().is_some() {
             cx.notify();
         }
@@ -200,6 +205,7 @@ impl BodyEditor {
 
         self.mode = mode;
         self.note = None;
+        self.snapshot.invalidate();
         self.form_fields
             .update(cx, |form, cx| form.set_values(fields, window, cx));
         self.raw_kind.update(cx, |select, cx| {
@@ -213,7 +219,12 @@ impl BodyEditor {
         cx.notify();
     }
 
+    /// Built once per revision of the body; clones share a raw body's text.
     pub fn body(&self, cx: &App) -> Body {
+        self.snapshot.get_or_build(|| self.build_body(cx))
+    }
+
+    fn build_body(&self, cx: &App) -> Body {
         match self.mode {
             BodyMode::None => Body::None,
             BodyMode::FormData => Body::FormData(self.form_fields.read(cx).values(cx)),
@@ -225,8 +236,34 @@ impl BodyEditor {
                     .selected_value()
                     .copied()
                     .unwrap_or_default(),
-                text: self.raw.read(cx).text().to_string(),
+                text: self.raw.read(cx).text().to_string().into(),
             },
+        }
+    }
+}
+
+/// The body as of the last build, kept until the body changes.
+#[derive(Default)]
+struct BodySnapshot {
+    revision: u64,
+    built: RefCell<Option<(u64, Body)>>,
+}
+
+impl BodySnapshot {
+    /// Called on every change to the raw text, its kind, the form rows or the mode.
+    fn invalidate(&mut self) {
+        self.revision += 1;
+    }
+
+    fn get_or_build(&self, build: impl FnOnce() -> Body) -> Body {
+        let mut built = self.built.borrow_mut();
+        match &*built {
+            Some((revision, body)) if *revision == self.revision => body.clone(),
+            _ => {
+                let body = build();
+                *built = Some((self.revision, body.clone()));
+                body
+            }
         }
     }
 }
@@ -344,4 +381,64 @@ fn render_note(note: SharedString, cx: &App) -> impl IntoElement {
         .text_color(cx.theme().muted_foreground)
         .child(Icon::new(IconName::Info).small().flex_none())
         .child(note)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use domain::request::{KeyValue, RawText};
+
+    use super::*;
+
+    fn raw(text: &str) -> Body {
+        Body::Raw {
+            kind: RawKind::Json,
+            text: text.into(),
+        }
+    }
+
+    fn raw_text(body: &Body) -> &RawText {
+        match body {
+            Body::Raw { text, .. } => text,
+            _ => panic!("not a raw body"),
+        }
+    }
+
+    #[test]
+    fn unchanged_body_shares_the_snapshot() {
+        let snapshot = BodySnapshot::default();
+        let builds = Cell::new(0);
+        let build = || {
+            builds.set(builds.get() + 1);
+            raw("{\"a\": 1}")
+        };
+        let first = snapshot.get_or_build(build);
+        let second = snapshot.get_or_build(build);
+        assert_eq!(builds.get(), 1);
+        assert!(RawText::ptr_eq(raw_text(&first), raw_text(&second)));
+    }
+
+    #[test]
+    fn a_change_builds_a_new_snapshot() {
+        let mut snapshot = BodySnapshot::default();
+        let first = snapshot.get_or_build(|| raw("{}"));
+        snapshot.invalidate();
+        let same_text = snapshot.get_or_build(|| raw("{}"));
+        assert!(!RawText::ptr_eq(raw_text(&first), raw_text(&same_text)));
+        assert_eq!(first, same_text);
+
+        snapshot.invalidate();
+        let row = KeyValue {
+            enabled: true,
+            key: "a".into(),
+            value: "1".into(),
+        };
+        let form = snapshot.get_or_build(|| Body::FormData(vec![row.clone()]));
+        assert_eq!(form, Body::FormData(vec![row]));
+        assert_eq!(snapshot.get_or_build(|| Body::None), form);
+
+        snapshot.invalidate();
+        assert_eq!(snapshot.get_or_build(|| Body::None), Body::None);
+    }
 }

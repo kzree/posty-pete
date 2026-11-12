@@ -77,7 +77,7 @@ pub fn request_to_store(request: &Request) -> (Cow<'_, Request>, Option<u64>) {
         Body::UrlEncoded(_) => Body::UrlEncoded(Vec::new()),
         Body::Raw { kind, .. } => Body::Raw {
             kind: *kind,
-            text: String::new(),
+            text: Default::default(),
         },
     };
     let stored = Request {
@@ -341,7 +341,7 @@ mod tests {
         Request {
             body: Body::Raw {
                 kind: RawKind::Text,
-                text: "x".repeat(len),
+                text: "x".repeat(len).into(),
             },
             ..Default::default()
         }
@@ -373,7 +373,7 @@ mod tests {
             Request {
                 body: Body::Raw {
                     kind: RawKind::Text,
-                    text: String::new(),
+                    text: Default::default(),
                 },
                 ..request.clone()
             }

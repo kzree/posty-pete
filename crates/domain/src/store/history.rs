@@ -477,7 +477,7 @@ mod tests {
         };
         sent.request.body = Body::Raw {
             kind: RawKind::Json,
-            text: "x".repeat(MAX_STORED_BODY_SIZE as usize + 1),
+            text: "x".repeat(MAX_STORED_BODY_SIZE as usize + 1).into(),
         };
         let id = store.insert(&sent).unwrap().id;
 
@@ -488,7 +488,7 @@ mod tests {
             Request {
                 body: Body::Raw {
                     kind: RawKind::Json,
-                    text: String::new(),
+                    text: Default::default(),
                 },
                 ..sent.request
             }

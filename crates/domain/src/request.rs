@@ -1,4 +1,12 @@
-use serde::{Deserialize, Serialize};
+use std::{
+    fmt,
+    ops::Deref,
+    sync::{Arc, OnceLock},
+};
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::variables::references;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request {
@@ -92,8 +100,112 @@ pub enum Body {
     UrlEncoded(Vec<KeyValue>),
     Raw {
         kind: RawKind,
-        text: String,
+        text: RawText,
     },
+}
+
+/// The text of a raw body. Clones share one copy, so a large body can be
+/// snapshotted, compared with an unchanged snapshot and scanned for variables
+/// without copying or rescanning it. Stored as a plain string.
+#[derive(Clone, Default)]
+pub struct RawText(Arc<RawTextInner>);
+
+#[derive(Default)]
+struct RawTextInner {
+    text: String,
+    names: OnceLock<Vec<String>>,
+}
+
+impl RawText {
+    pub fn as_str(&self) -> &str {
+        &self.0.text
+    }
+
+    /// Whether `a` and `b` share their text, rather than just being equal.
+    pub fn ptr_eq(a: &Self, b: &Self) -> bool {
+        Arc::ptr_eq(&a.0, &b.0)
+    }
+
+    /// The names of the `{{name}}` references, each once, in first-seen order.
+    /// Scanned on first use and shared by the clones.
+    pub(crate) fn reference_names(&self) -> &[String] {
+        self.0.names.get_or_init(|| {
+            let mut names: Vec<String> = Vec::new();
+            for reference in references(self.as_str()) {
+                if !names.iter().any(|name| name == reference.name) {
+                    names.push(reference.name.to_string());
+                }
+            }
+            names
+        })
+    }
+}
+
+impl Deref for RawText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for RawText {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl From<String> for RawText {
+    fn from(text: String) -> Self {
+        Self(Arc::new(RawTextInner {
+            text,
+            names: OnceLock::new(),
+        }))
+    }
+}
+
+impl From<&str> for RawText {
+    fn from(text: &str) -> Self {
+        text.to_string().into()
+    }
+}
+
+impl PartialEq for RawText {
+    fn eq(&self, other: &Self) -> bool {
+        Self::ptr_eq(self, other) || self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for RawText {}
+
+impl PartialEq<str> for RawText {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for RawText {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl fmt::Debug for RawText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl Serialize for RawText {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RawText {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +341,38 @@ mod tests {
         {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "None"},
         {"method": "Options", "url": "", "params": [], "headers": [], "body": "None", "auth": "Inherit"}
     ]"#;
+
+    #[test]
+    fn raw_text_clones_share_and_equal_texts_compare_equal() {
+        let text = RawText::from("{\"a\": 1}");
+        let clone = text.clone();
+        assert!(RawText::ptr_eq(&text, &clone));
+
+        let copy = RawText::from(text.to_string());
+        assert!(!RawText::ptr_eq(&text, &copy));
+        assert_eq!(text, copy);
+        assert_ne!(text, RawText::from("{}"));
+        assert_eq!(text, "{\"a\": 1}");
+    }
+
+    #[test]
+    fn raw_text_is_stored_as_a_string() {
+        let text = RawText::from("a\nb");
+        let json = serde_json::to_string(&text).unwrap();
+        assert_eq!(json, r#""a\nb""#);
+        assert_eq!(serde_json::from_str::<RawText>(&json).unwrap(), text);
+    }
+
+    #[test]
+    fn raw_text_reference_names_are_unique_in_first_seen_order() {
+        let text = RawText::from("{{b}} {{a}} {{ b }} {{c}} {{a}}");
+        assert_eq!(text.reference_names(), ["b", "a", "c"]);
+        let clone = text.clone();
+        assert!(std::ptr::eq(
+            text.reference_names(),
+            clone.reference_names()
+        ));
+    }
 
     #[test]
     fn method_parse_inverts_as_str() {
