@@ -175,6 +175,11 @@ impl Workspace {
                     self.open_saved_request(*collection_id, copy, window, cx);
                 }
             }
+            LibraryPanelEvent::MoveRequest {
+                collection_id,
+                request_id,
+                to,
+            } => self.move_request(*collection_id, *request_id, *to, window, cx),
             LibraryPanelEvent::AddFolder {
                 collection_id,
                 parent,

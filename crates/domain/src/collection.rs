@@ -241,6 +241,119 @@ pub fn duplicate_request(
     id
 }
 
+/// Where [`move_request`] puts a request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Destination {
+    pub collection_id: Uuid,
+    /// `None` for the collection's root.
+    pub folder_id: Option<Uuid>,
+    /// The sibling to insert before; `None` for the end.
+    pub before: Option<Uuid>,
+}
+
+/// Moves the request to `to`, keeping its id and content. A move to another
+/// collection clears its origin, since that belongs to the old collection's
+/// spec. Returns `false`, changing (and copying) nothing, if the request,
+/// either collection, the folder or `before` (which must be a child of the
+/// destination, other than the request) is missing, or the request already
+/// is there.
+pub fn move_request(
+    collections: &mut [Arc<Collection>],
+    from_collection: Uuid,
+    request_id: Uuid,
+    to: Destination,
+) -> bool {
+    let find = |id: Uuid| collections.iter().find(|collection| collection.id == id);
+    let Some(source) = find(from_collection) else {
+        return false;
+    };
+    let Some(saved) = source.find_request(request_id) else {
+        return false;
+    };
+    let Some(target) = find(to.collection_id) else {
+        return false;
+    };
+    let Some(siblings) = children(target, to.folder_id) else {
+        return false;
+    };
+    if to.before == Some(request_id)
+        || to
+            .before
+            .is_some_and(|before| !siblings.iter().any(|item| item.id() == before))
+    {
+        return false;
+    }
+    if from_collection == to.collection_id {
+        if let Some(index) = siblings.iter().position(|item| item.id() == request_id)
+            && siblings.get(index + 1).map(Item::id) == to.before
+        {
+            return false;
+        }
+        return modify(collections, from_collection, |collection| {
+            let Some(item) = collection.remove(request_id) else {
+                return false;
+            };
+            insert(collection, to, item)
+        });
+    }
+
+    let moved = SavedRequest {
+        origin: None,
+        ..saved.clone()
+    };
+    modify(collections, to.collection_id, |collection| {
+        insert(collection, to, Item::Request(moved))
+    }) && modify(collections, from_collection, |collection| {
+        collection.remove(request_id).is_some()
+    })
+}
+
+/// A request [`move_request`] moved to another collection, for updating what
+/// refers to it by `(collection_id, request_id)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MovedRequest {
+    pub request_id: Uuid,
+    pub from: Uuid,
+    pub to: Uuid,
+}
+
+impl MovedRequest {
+    /// The collection id a reference to `(collection_id, request_id)` has now.
+    pub fn collection_of(&self, collection_id: Uuid, request_id: Uuid) -> Uuid {
+        if request_id == self.request_id && collection_id == self.from {
+            self.to
+        } else {
+            collection_id
+        }
+    }
+}
+
+fn children(collection: &Collection, folder_id: Option<Uuid>) -> Option<&[Item]> {
+    match folder_id {
+        None => Some(&collection.items),
+        Some(id) => collection.find_folder(id).map(|folder| &folder.items[..]),
+    }
+}
+
+fn insert(collection: &mut Collection, to: Destination, item: Item) -> bool {
+    let items = match to.folder_id {
+        None => &mut collection.items,
+        Some(id) => match collection.find_folder_mut(id) {
+            Some(folder) => &mut folder.items,
+            None => return false,
+        },
+    };
+    let index = match to.before {
+        None => items.len(),
+        Some(before) => match items.iter().position(|item| item.id() == before) {
+            Some(index) => index,
+            None => return false,
+        },
+    };
+    items.insert(index, item);
+    true
+}
+
 /// Runs `f` on the collection, copying it first if it's shared. Returns what
 /// `f` returns, or `false` if there's no such collection.
 pub fn modify(
@@ -1528,6 +1641,212 @@ mod tests {
                 .origin
                 .is_some()
         );
+    }
+
+    struct MoveFixture {
+        collections: Vec<Arc<Collection>>,
+        api: Uuid,
+        other: Uuid,
+        /// API's root: a (with an origin), b, c, then outer > inner > deep.
+        a: Uuid,
+        b: Uuid,
+        c: Uuid,
+        outer: Uuid,
+        inner: Uuid,
+        deep: Uuid,
+        /// Other's only request.
+        root: Uuid,
+    }
+
+    /// API, Other, and an empty Third.
+    fn move_fixture() -> MoveFixture {
+        let mut f = fixture();
+        let root = f.collection.remove(f.root_request).unwrap();
+        let mut a = SavedRequest::new("A", request("example.com/a"));
+        a.origin = Some(Origin {
+            key: "GET /a".into(),
+            hash: a.content_hash(),
+            untagged: false,
+        });
+        let b = SavedRequest::new("B", request("example.com/b"));
+        let c = SavedRequest::new("C", request("example.com/c"));
+        let ids = (a.id, b.id, c.id);
+        let mut items = vec![Item::Request(a), Item::Request(b), Item::Request(c)];
+        items.append(&mut f.collection.items);
+        f.collection.items = items;
+        let mut other = Collection::new("Other");
+        other.items.push(root);
+        MoveFixture {
+            api: f.collection.id,
+            other: other.id,
+            a: ids.0,
+            b: ids.1,
+            c: ids.2,
+            outer: f.outer,
+            inner: f.inner,
+            deep: f.deep_request,
+            root: f.root_request,
+            collections: vec![
+                Arc::new(f.collection),
+                Arc::new(other),
+                Arc::new(Collection::new("Third")),
+            ],
+        }
+    }
+
+    fn to(collection_id: Uuid, folder_id: Option<Uuid>, before: Option<Uuid>) -> Destination {
+        Destination {
+            collection_id,
+            folder_id,
+            before,
+        }
+    }
+
+    #[test]
+    fn move_request_reorders_siblings_down_and_up() {
+        let mut m = move_fixture();
+        let outer = m.outer;
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            m.a,
+            to(m.api, None, Some(m.c))
+        ));
+        assert_eq!(item_ids(&m.collections[0].items), [m.b, m.a, m.c, outer]);
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            m.c,
+            to(m.api, None, Some(m.b))
+        ));
+        assert_eq!(item_ids(&m.collections[0].items), [m.c, m.b, m.a, outer]);
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            m.c,
+            to(m.api, None, None)
+        ));
+        assert_eq!(item_ids(&m.collections[0].items), [m.b, m.a, outer, m.c]);
+        assert!(m.collections[0].find_request(m.a).unwrap().origin.is_some());
+    }
+
+    #[test]
+    fn move_request_into_a_folder_out_to_the_root_and_into_a_nested_folder() {
+        let mut m = move_fixture();
+        let (outer, inner, deep) = (m.outer, m.inner, m.deep);
+        let held = m.collections.clone();
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            m.b,
+            to(m.api, Some(outer), None)
+        ));
+        let items =
+            |m: &MoveFixture, id| item_ids(&m.collections[0].find_folder(id).unwrap().items);
+        assert_eq!(items(&m, outer), [inner, m.b]);
+        assert_eq!(item_ids(&m.collections[0].items), [m.a, m.c, outer]);
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            deep,
+            to(m.api, None, Some(m.a))
+        ));
+        assert_eq!(item_ids(&m.collections[0].items), [deep, m.a, m.c, outer]);
+        assert!(items(&m, inner).is_empty());
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            m.a,
+            to(m.api, Some(inner), None)
+        ));
+        assert_eq!(items(&m, inner), [m.a]);
+        assert_eq!(item_ids(&held[0].items), [m.a, m.b, m.c, outer]);
+        assert!(Arc::ptr_eq(&m.collections[1], &held[1]));
+    }
+
+    #[test]
+    fn move_request_to_another_collection_clears_the_origin() {
+        let mut m = move_fixture();
+        let held = m.collections.clone();
+        let original = m.collections[0].find_request(m.a).unwrap().clone();
+        let root = m.root;
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            m.a,
+            to(m.other, None, Some(root))
+        ));
+
+        assert_eq!(item_ids(&m.collections[0].items), [m.b, m.c, m.outer]);
+        assert_eq!(item_ids(&m.collections[1].items), [m.a, root]);
+        let moved = m.collections[1].find_request(m.a).unwrap();
+        assert_eq!(moved.name, original.name);
+        assert_eq!(moved.request, original.request);
+        assert!(moved.origin.is_none());
+        assert!(!Arc::ptr_eq(&m.collections[0], &held[0]));
+        assert!(!Arc::ptr_eq(&m.collections[1], &held[1]));
+        assert!(Arc::ptr_eq(&m.collections[2], &held[2]));
+        assert!(held[0].find_request(m.a).unwrap().origin.is_some());
+    }
+
+    #[test]
+    fn move_request_into_a_folder_of_another_collection() {
+        let mut m = move_fixture();
+        let third = m.collections[2].id;
+        let folder = Folder::new("Inbox");
+        let folder_id = folder.id;
+        assert!(Arc::make_mut(&mut m.collections[2]).add_item(None, Item::Folder(folder)));
+
+        assert!(move_request(
+            &mut m.collections,
+            m.api,
+            m.deep,
+            to(third, Some(folder_id), None)
+        ));
+
+        let inbox = m.collections[2].find_folder(folder_id).unwrap();
+        assert_eq!(item_ids(&inbox.items), [m.deep]);
+        assert!(m.collections[0].find_request(m.deep).is_none());
+    }
+
+    #[test]
+    fn move_request_no_ops_change_and_copy_nothing() {
+        let mut m = move_fixture();
+        let held = m.collections.clone();
+        let missing = Uuid::new_v4();
+        let (api, other) = (m.api, m.other);
+        let no_ops = [
+            (missing, m.a, to(api, None, None)),
+            (api, missing, to(api, None, None)),
+            (other, m.a, to(api, None, None)),
+            (api, m.a, to(missing, None, None)),
+            (api, m.a, to(api, Some(missing), None)),
+            (api, m.a, to(api, Some(m.b), None)),
+            (api, m.a, to(api, None, Some(missing))),
+            (api, m.a, to(api, Some(m.outer), Some(m.b))),
+            (api, m.a, to(api, None, Some(m.a))),
+            (api, m.a, to(other, None, Some(m.a))),
+            (api, m.a, to(api, None, Some(m.b))),
+            (api, m.outer, to(api, None, None)),
+            (api, m.deep, to(api, Some(m.inner), None)),
+            (api, m.c, to(api, None, Some(m.outer))),
+        ];
+        for (from, request_id, destination) in no_ops {
+            assert!(
+                !move_request(&mut m.collections, from, request_id, destination),
+                "{request_id} to {destination:?}"
+            );
+        }
+        for (now, before) in m.collections.iter().zip(&held) {
+            assert!(Arc::ptr_eq(now, before));
+        }
     }
 
     #[test]

@@ -5,7 +5,7 @@ use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
 use domain::{
-    collection::{self, Collection, Folder, Item, Location, SavedRequest},
+    collection::{self, Collection, Destination, Folder, Item, Location, SavedRequest},
     openapi::update::{self, Choices},
     request::{Auth, KeyValue, Request},
     store::{
@@ -350,6 +350,25 @@ impl Collections {
         let id = collection::duplicate_request(&mut self.collections, collection_id, request_id)?;
         self.changed(collection_id, cx);
         Some(id)
+    }
+
+    /// Moves the request to `to`, saving each collection that changed.
+    /// Returns `false` if nothing moved.
+    pub fn move_request(
+        &mut self,
+        collection_id: Uuid,
+        request_id: Uuid,
+        to: Destination,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !collection::move_request(&mut self.collections, collection_id, request_id, to) {
+            return false;
+        }
+        self.changed(collection_id, cx);
+        if to.collection_id != collection_id {
+            self.enqueue_save(to.collection_id, cx);
+        }
+        true
     }
 
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {

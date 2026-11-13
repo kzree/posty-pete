@@ -2,8 +2,8 @@ use std::{collections::HashSet, sync::Arc};
 
 use domain::{collection::Collection, environment::Environment};
 use gpui::{
-    App, Context, ElementId, ParentElement, Pixels, SharedString, Styled, Window, div,
-    prelude::FluentBuilder as _, px,
+    App, Context, ElementId, InteractiveElement, ParentElement, Pixels, SharedString, Styled,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     ActiveTheme, Icon, IconName, IndexPath, Sizable, StyledExt, h_flex,
@@ -12,6 +12,8 @@ use gpui_component::{
 use uuid::Uuid;
 
 use super::{
+    LibraryPanel,
+    drag::drag_and_drop,
     menu::MenuTarget,
     navigation::{Direction, step},
     tree::{Node, NodeKind, Row, Section, Sections, container_ids, flatten},
@@ -28,6 +30,8 @@ pub(super) struct LibraryDelegate {
     expanded: HashSet<Uuid>,
     pub(super) selected: Option<Uuid>,
     rows: Vec<Row>,
+    /// Receives drops; `None` only in tests.
+    pub(super) panel: Option<WeakEntity<LibraryPanel>>,
 }
 
 impl LibraryDelegate {
@@ -204,7 +208,7 @@ impl ListDelegate for LibraryDelegate {
         Some(match self.rows.get(ix.row)? {
             Row::Section { section, expanded } => render_section(*section, *expanded, cx),
             Row::Empty(section) => render_empty_section(*section, cx),
-            Row::Node(node) => render_node(node, cx),
+            Row::Node(node) => render_node(node, self.panel.as_ref(), cx),
             Row::Environment { id, name } => render_environment(*id, name.clone(), cx),
         })
     }
@@ -300,7 +304,7 @@ fn render_environment(id: Uuid, name: SharedString, cx: &App) -> ListItem {
         )
 }
 
-fn render_node(node: &Node, cx: &App) -> ListItem {
+fn render_node(node: &Node, panel: Option<&WeakEntity<LibraryPanel>>, cx: &App) -> ListItem {
     let name = node.name.clone();
     let (label, chevron, method) = match node.kind {
         NodeKind::Collection { expanded } => (
@@ -317,6 +321,7 @@ fn render_node(node: &Node, cx: &App) -> ListItem {
     };
 
     row_item(node.id)
+        .debug_selector(|| format!("library-row-{}", node.id))
         .accessibility_label(label)
         .text_color(cx.theme().muted_foreground)
         .child(
@@ -338,6 +343,9 @@ fn render_node(node: &Node, cx: &App) -> ListItem {
                         .child(name),
                 ),
         )
+        .when_some(panel, |row, panel| {
+            drag_and_drop(row, node, px((node.depth + 1) as f32 * INDENT), panel)
+        })
 }
 
 #[cfg(test)]

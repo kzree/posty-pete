@@ -1,11 +1,15 @@
 mod delegate;
+mod drag;
 mod menu;
 mod navigation;
 mod tree;
 
 use std::{collections::HashMap, sync::Arc};
 
-use domain::{collection::Collection, environment::Environment};
+use domain::{
+    collection::{Collection, Destination},
+    environment::Environment,
+};
 use gpui::{
     Anchor, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, ScrollStrategy, Styled, Subscription, Window, div,
@@ -23,6 +27,7 @@ use uuid::Uuid;
 use super::panel_header;
 use crate::actions::{LIBRARY_PANEL_CONTEXT, SelectNextLibraryRow, SelectPreviousLibraryRow};
 use delegate::LibraryDelegate;
+use drag::DraggedRequest;
 use menu::context_menu;
 use navigation::Direction;
 use tree::Section;
@@ -50,6 +55,12 @@ pub enum LibraryPanelEvent {
     DuplicateRequest {
         collection_id: Uuid,
         request_id: Uuid,
+    },
+    /// Dropped on another place in the library, maybe in another collection.
+    MoveRequest {
+        collection_id: Uuid,
+        request_id: Uuid,
+        to: Destination,
     },
     /// `parent` is `None` for the collection root.
     AddFolder {
@@ -91,7 +102,8 @@ impl EventEmitter<LibraryPanelEvent> for LibraryPanel {}
 
 impl LibraryPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let delegate = LibraryDelegate::default();
+        let mut delegate = LibraryDelegate::default();
+        delegate.panel = Some(cx.weak_entity());
         let list = cx.new(|cx| ListState::new(delegate, window, cx));
         let list_sub = cx.subscribe_in(&list, window, |this, _, event, window, cx| {
             if let ListEvent::Confirm(ix) = event {
@@ -211,6 +223,14 @@ impl LibraryPanel {
     /// Only read when a context menu opens, so nothing needs repainting.
     pub fn set_dirty_request(&mut self, id: Option<Uuid>) {
         self.dirty_request = id;
+    }
+
+    fn move_request(&mut self, dragged: &DraggedRequest, to: Destination, cx: &mut Context<Self>) {
+        cx.emit(LibraryPanelEvent::MoveRequest {
+            collection_id: dragged.collection_id,
+            request_id: dragged.request_id,
+            to,
+        });
     }
 
     fn create_shared_environment(&mut self, cx: &mut Context<Self>) {
@@ -416,5 +436,126 @@ mod test_support {
                 Row::Environment { name, .. } => format!("env:{name}"),
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::RefCell, rc::Rc};
+
+    use gpui::{
+        Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, point, px,
+    };
+
+    use super::*;
+    use crate::test_support::open_view;
+
+    #[derive(Debug, PartialEq)]
+    enum Emitted {
+        Open(Uuid),
+        Move(Uuid, Destination),
+    }
+
+    fn open_panel(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<LibraryPanel>,
+        test_support::Ids,
+        Rc<RefCell<Vec<Emitted>>>,
+        &mut VisualTestContext,
+    ) {
+        let (panel, cx) = open_view(cx, LibraryPanel::new);
+        let (collections, ids) = test_support::fixture();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_collections(collections, window, cx);
+            panel.reveal([ids.collection, ids.outer, ids.inner], cx);
+        });
+        let emitted = Rc::new(RefCell::new(Vec::new()));
+        let sink = emitted.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&panel, move |_, event: &LibraryPanelEvent, _| match event {
+                LibraryPanelEvent::OpenRequest { request_id, .. } => {
+                    sink.borrow_mut().push(Emitted::Open(*request_id))
+                }
+                LibraryPanelEvent::MoveRequest { request_id, to, .. } => {
+                    sink.borrow_mut().push(Emitted::Move(*request_id, *to))
+                }
+                _ => {}
+            })
+            .detach()
+        });
+        cx.run_until_parked();
+        (panel, ids, emitted, cx)
+    }
+
+    fn row(id: Uuid, cx: &mut VisualTestContext) -> gpui::Bounds<Pixels> {
+        let selector = Box::leak(format!("library-row-{id}").into_boxed_str());
+        cx.debug_bounds(selector).expect("row is rendered")
+    }
+
+    fn drag(from: Point<Pixels>, to: Point<Pixels>, cx: &mut VisualTestContext) {
+        let none = Modifiers::none();
+        cx.simulate_mouse_down(from, MouseButton::Left, none);
+        cx.simulate_mouse_move(from + point(px(0.), px(6.)), MouseButton::Left, none);
+        cx.simulate_mouse_move(to, MouseButton::Left, none);
+        cx.simulate_mouse_up(to, MouseButton::Left, none);
+        cx.run_until_parked();
+    }
+
+    fn top_half(bounds: gpui::Bounds<Pixels>) -> Point<Pixels> {
+        point(bounds.center().x, bounds.top() + px(3.))
+    }
+
+    fn bottom_half(bounds: gpui::Bounds<Pixels>) -> Point<Pixels> {
+        point(bounds.center().x, bounds.bottom() - px(3.))
+    }
+
+    #[gpui::test]
+    fn dropping_a_request_emits_where_it_goes(cx: &mut TestAppContext) {
+        let (panel, ids, emitted, cx) = open_panel(cx);
+        let empty = panel.read_with(cx, |panel, cx| {
+            panel.list.read(cx).delegate().collection_at(6).unwrap()
+        });
+        let at = |collection_id, folder_id, before| Destination {
+            collection_id,
+            folder_id,
+            before,
+        };
+        let root = row(ids.root, cx).center();
+
+        drag(root, top_half(row(ids.deep, cx)), cx);
+        drag(root, bottom_half(row(ids.deep, cx)), cx);
+        drag(root, row(ids.outer, cx).center(), cx);
+        drag(root, row(empty, cx).center(), cx);
+        drag(row(ids.deep, cx).center(), top_half(row(ids.outer, cx)), cx);
+
+        assert_eq!(
+            *emitted.borrow(),
+            [
+                Emitted::Move(
+                    ids.root,
+                    at(ids.collection, Some(ids.inner), Some(ids.deep))
+                ),
+                Emitted::Move(ids.root, at(ids.collection, Some(ids.inner), None)),
+                Emitted::Move(ids.root, at(ids.collection, Some(ids.outer), None)),
+                Emitted::Move(ids.root, at(empty, None, None)),
+                Emitted::Move(ids.deep, at(ids.collection, Some(ids.outer), None)),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn clicks_open_and_drops_in_place_do_nothing(cx: &mut TestAppContext) {
+        let (_, ids, emitted, cx) = open_panel(cx);
+        let root = row(ids.root, cx);
+
+        cx.simulate_click(root.center(), Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(*emitted.borrow(), [Emitted::Open(ids.root)]);
+
+        drag(root.center(), top_half(root), cx);
+        drag(root.center(), bottom_half(root), cx);
+        drag(row(ids.deep, cx).center(), row(ids.inner, cx).center(), cx);
+        assert_eq!(*emitted.borrow(), [Emitted::Open(ids.root)]);
     }
 }

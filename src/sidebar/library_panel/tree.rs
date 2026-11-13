@@ -82,6 +82,10 @@ pub(super) struct Node {
     /// 0 for collections.
     pub(super) depth: usize,
     pub(super) kind: NodeKind,
+    /// The folder holding it; `None` at a collection's root and for collections.
+    pub(super) parent: Option<Uuid>,
+    /// The item after it in the same folder or root.
+    pub(super) next: Option<Uuid>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -145,21 +149,25 @@ fn flatten_collections(
             kind: NodeKind::Collection {
                 expanded: is_expanded,
             },
+            parent: None,
+            next: None,
         }));
         if is_expanded {
-            flatten_items(collection.id, &collection.items, 1, expanded, rows);
+            flatten_items(collection.id, None, &collection.items, 1, expanded, rows);
         }
     }
 }
 
 fn flatten_items(
     collection_id: Uuid,
+    parent: Option<Uuid>,
     items: &[Item],
     depth: usize,
     expanded: &HashSet<Uuid>,
     rows: &mut Vec<Row>,
 ) {
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
+        let next = items.get(index + 1).map(Item::id);
         match item {
             Item::Folder(folder) => {
                 let is_expanded = expanded.contains(&folder.id);
@@ -171,9 +179,18 @@ fn flatten_items(
                     kind: NodeKind::Folder {
                         expanded: is_expanded,
                     },
+                    parent,
+                    next,
                 }));
                 if is_expanded {
-                    flatten_items(collection_id, &folder.items, depth + 1, expanded, rows);
+                    flatten_items(
+                        collection_id,
+                        Some(folder.id),
+                        &folder.items,
+                        depth + 1,
+                        expanded,
+                        rows,
+                    );
                 }
             }
             Item::Request(saved) => rows.push(Row::Node(Node {
@@ -182,6 +199,8 @@ fn flatten_items(
                 name: saved.name.clone().into(),
                 depth,
                 kind: NodeKind::Request(saved.request.method),
+                parent,
+                next,
             })),
         }
     }
@@ -333,6 +352,30 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn nodes_know_their_folder_and_next_sibling() {
+        let (collections, ids) = fixture();
+        let expanded = HashSet::from([ids.collection, ids.outer, ids.inner]);
+        let rows = flatten(&collections, &[], ALL, &expanded);
+        let links: Vec<_> = rows[1..6]
+            .iter()
+            .map(|row| match row {
+                Row::Node(node) => (node.id, node.parent, node.next),
+                row => panic!("expected a node, got {row:?}"),
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [
+                (ids.collection, None, None),
+                (ids.root, None, Some(ids.outer)),
+                (ids.outer, None, None),
+                (ids.inner, Some(ids.outer), None),
+                (ids.deep, Some(ids.inner), None),
+            ]
+        );
     }
 
     #[test]

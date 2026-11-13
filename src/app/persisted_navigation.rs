@@ -5,6 +5,7 @@ use std::{
 };
 
 use domain::{
+    collection::MovedRequest,
     environment_selection::EnvironmentSelection,
     navigation::{KeptSession, NavEntry, SavedNavigation, Startup},
     request::Request,
@@ -83,6 +84,13 @@ impl PersistedNavigation {
 
     fn is_saving(&self) -> bool {
         matches!(self.phase, Phase::Saving(_))
+    }
+
+    /// Points the session kept on disk at the moved request's new collection.
+    pub(super) fn apply_move(&mut self, moved: MovedRequest) {
+        if let Phase::Saving(writer) = &mut self.phase {
+            writer.kept.apply_move(moved);
+        }
     }
 }
 

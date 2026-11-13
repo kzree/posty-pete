@@ -68,6 +68,11 @@ impl<T: PartialEq> NavHistory<T> {
         self.entries[self.index] = entry;
     }
 
+    /// Replaces every entry with what `f` makes of it.
+    pub(super) fn map_entries(&mut self, f: impl FnMut(&T) -> T) {
+        self.entries = self.entries.iter().map(f).collect();
+    }
+
     /// Finds the nearest entry in `direction` that is `usable` and differs from
     /// the current one, and returns how many steps away it is.
     pub(super) fn peek(
@@ -123,6 +128,17 @@ mod tests {
         let (steps, _) = history.peek(Direction::Forward, any)?;
         history.go(Direction::Forward, steps);
         Some(*history.current())
+    }
+
+    #[test]
+    fn map_entries_keeps_the_position() {
+        let mut history = NavHistory::new("/");
+        history.push("a");
+        history.push("b");
+        history.go(Direction::Back, 1);
+        history.map_entries(|entry| if *entry == "a" { "A" } else { entry });
+        assert_eq!(history.entries(), ["/", "A", "b"]);
+        assert_eq!(*history.current(), "A");
     }
 
     #[test]

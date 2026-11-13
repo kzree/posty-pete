@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::{
-    environment_selection::DraftSource, layout::Layout, recents::Recents, request::Request,
+    collection::MovedRequest, environment_selection::DraftSource, layout::Layout, recents::Recents,
+    request::Request,
 };
 
 /// A back/forward history entry as stored on disk.
@@ -21,6 +22,22 @@ pub enum NavEntry {
         id: Uuid,
     },
     SharedEnvironments,
+}
+
+impl NavEntry {
+    /// The entry pointing at the moved request's new collection.
+    pub fn with_move(self, moved: MovedRequest) -> Self {
+        match self {
+            Self::SavedRequest {
+                collection_id,
+                request_id,
+            } => Self::SavedRequest {
+                collection_id: moved.collection_of(collection_id, request_id),
+                request_id,
+            },
+            entry => entry,
+        }
+    }
 }
 
 /// The back/forward history and the unsaved draft, kept across restarts.
@@ -86,7 +103,7 @@ impl Serialize for SavedNavigation {
 }
 
 /// The route, back/forward history and draft of a [`SavedNavigation`].
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Session {
     entries: Vec<NavEntry>,
     index: usize,
@@ -201,6 +218,23 @@ impl KeptSession {
             }
         };
         NavigationToSave { current, kept }
+    }
+
+    /// Points the kept session's entries at the moved request's new collection.
+    pub fn apply_move(&mut self, moved: MovedRequest) {
+        let Some(session) = &mut self.0 else {
+            return;
+        };
+        if session
+            .entries
+            .iter()
+            .any(|entry| entry.with_move(moved) != *entry)
+        {
+            let session = Arc::make_mut(session);
+            for entry in &mut session.entries {
+                *entry = entry.with_move(moved);
+            }
+        }
     }
 }
 
@@ -362,6 +396,43 @@ mod tests {
         let shared = kept.0.as_ref().unwrap();
         assert!(Arc::ptr_eq(first.kept.as_ref().unwrap(), shared));
         assert!(Arc::ptr_eq(second.kept.as_ref().unwrap(), shared));
+    }
+
+    #[test]
+    fn moves_repoint_saved_request_entries_and_the_kept_session() {
+        let (from, to, request_id) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let saved = |collection_id, request_id| NavEntry::SavedRequest {
+            collection_id,
+            request_id,
+        };
+        let moved = MovedRequest {
+            request_id,
+            from,
+            to,
+        };
+        let other = saved(from, Uuid::new_v4());
+        assert_eq!(
+            saved(from, request_id).with_move(moved),
+            saved(to, request_id)
+        );
+        assert_eq!(other.with_move(moved), other);
+        assert_eq!(
+            NavEntry::Collection { id: from }.with_move(moved),
+            NavEntry::Collection { id: from }
+        );
+
+        let stored = session(vec![saved(from, request_id), other], None);
+        let mut kept = kept(&stored);
+        let untouched = kept.0.clone().unwrap();
+        kept.apply_move(MovedRequest {
+            request_id: Uuid::new_v4(),
+            ..moved
+        });
+        assert!(Arc::ptr_eq(kept.0.as_ref().unwrap(), &untouched));
+        kept.apply_move(moved);
+        let written = read_back(&kept.apply(blank()));
+        assert_eq!(written.entries, [saved(to, request_id), other]);
+        assert_eq!(untouched.entries, stored.entries);
     }
 
     #[test]

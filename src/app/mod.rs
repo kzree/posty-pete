@@ -6,6 +6,7 @@ mod events;
 mod focus;
 mod layout;
 mod menu_fallback;
+mod moves;
 mod navigation;
 mod persisted_navigation;
 mod quit;
