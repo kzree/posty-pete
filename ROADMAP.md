@@ -24,7 +24,7 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Variable autocomplete and highlighting.** Suggest names after typing `{{` and highlight references (resolved vs unresolved) in the URL, key/value and body inputs. `domain::variables::references` returns byte ranges for this.
 - [ ] **Folder-level variables.** Variables on folders, overriding the collection's for requests inside them.
 - [ ] **Folder-level auth.** Auth on folders, used by requests set to Inherit inside them. Decide where it sits relative to the environment layers, matching folder variables.
-- [ ] **Manage requests in collections.** Move requests (and move folders) in the library tree, including drag and drop.
+- [ ] **Move folders.** Move folders in the library tree by drag and drop (requests can be moved since task 120).
 - [ ] **Move to… for requests.** A context-menu item and keyboard way to move a request to a collection or folder, picked from a list like Save as's location picker, as an alternative to dragging.
 - [ ] **Library drag: auto-expand folders.** While dragging, expand a collapsed folder or collection after hovering it briefly, so a request can be dropped into a nested folder.
 - [ ] **Library drag: auto-scroll.** While dragging, scroll the library list when the pointer is near its top or bottom edge.
