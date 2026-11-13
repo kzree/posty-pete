@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -241,7 +245,7 @@ pub fn duplicate_request(
     id
 }
 
-/// Where [`move_request`] puts a request.
+/// Where [`move_request`] or [`move_folder`] puts an item.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Destination {
     pub collection_id: Uuid,
@@ -263,20 +267,89 @@ pub fn move_request(
     request_id: Uuid,
     to: Destination,
 ) -> bool {
-    let find = |id: Uuid| collections.iter().find(|collection| collection.id == id);
-    let Some(source) = find(from_collection) else {
-        return false;
-    };
-    let Some(saved) = source.find_request(request_id) else {
-        return false;
-    };
-    let Some(target) = find(to.collection_id) else {
+    find_collection(collections, from_collection)
+        .is_some_and(|source| source.find_request(request_id).is_some())
+        && move_item(collections, from_collection, request_id, to)
+}
+
+/// Moves the folder with everything in it to `to`, keeping ids and content.
+/// A move to another collection clears the origins in it, like
+/// [`move_request`]. Returns the folders and requests it moved, or `None`,
+/// changing (and copying) nothing, in the cases [`move_request`] returns `false` and when
+/// `to` is inside the folder itself.
+pub fn move_folder(
+    collections: &mut [Arc<Collection>],
+    from_collection: Uuid,
+    folder_id: Uuid,
+    to: Destination,
+) -> Option<MovedItems> {
+    let folder = find_collection(collections, from_collection)?.find_folder(folder_id)?;
+    let into_itself = to.collection_id == from_collection
+        && to
+            .folder_id
+            .is_some_and(|id| id == folder_id || find_folder_in(&folder.items, id).is_some());
+    if into_itself {
+        return None;
+    }
+    let mut item_ids = HashSet::from([folder_id]);
+    collect_item_ids(&folder.items, &mut item_ids);
+    move_item(collections, from_collection, folder_id, to).then_some(MovedItems {
+        from: from_collection,
+        to: to.collection_id,
+        item_ids,
+    })
+}
+
+/// Folders and requests that moved from one collection to another (or within
+/// one, when `from == to`), for updating what refers to them by
+/// `(collection_id, item_id)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MovedItems {
+    pub from: Uuid,
+    pub to: Uuid,
+    pub item_ids: HashSet<Uuid>,
+}
+
+impl MovedItems {
+    pub fn one(item_id: Uuid, from: Uuid, to: Uuid) -> Self {
+        Self {
+            from,
+            to,
+            item_ids: HashSet::from([item_id]),
+        }
+    }
+
+    /// The collection id a reference to `(collection_id, item_id)` has now.
+    pub fn collection_of(&self, collection_id: Uuid, item_id: Uuid) -> Uuid {
+        if collection_id == self.from && self.item_ids.contains(&item_id) {
+            self.to
+        } else {
+            collection_id
+        }
+    }
+}
+
+fn find_collection(collections: &[Arc<Collection>], id: Uuid) -> Option<&Collection> {
+    collections
+        .iter()
+        .find(|collection| collection.id == id)
+        .map(|collection| &**collection)
+}
+
+/// Moves the item, which the caller checked is in `from_collection`.
+fn move_item(
+    collections: &mut [Arc<Collection>],
+    from_collection: Uuid,
+    item_id: Uuid,
+    to: Destination,
+) -> bool {
+    let Some(target) = find_collection(collections, to.collection_id) else {
         return false;
     };
     let Some(siblings) = children(target, to.folder_id) else {
         return false;
     };
-    if to.before == Some(request_id)
+    if to.before == Some(item_id)
         || to
             .before
             .is_some_and(|before| !siblings.iter().any(|item| item.id() == before))
@@ -284,46 +357,48 @@ pub fn move_request(
         return false;
     }
     if from_collection == to.collection_id {
-        if let Some(index) = siblings.iter().position(|item| item.id() == request_id)
+        if let Some(index) = siblings.iter().position(|item| item.id() == item_id)
             && siblings.get(index + 1).map(Item::id) == to.before
         {
             return false;
         }
         return modify(collections, from_collection, |collection| {
-            let Some(item) = collection.remove(request_id) else {
+            let Some(item) = collection.remove(item_id) else {
                 return false;
             };
             insert(collection, to, item)
         });
     }
 
-    let moved = SavedRequest {
-        origin: None,
-        ..saved.clone()
+    let mut removed = None;
+    modify(collections, from_collection, |collection| {
+        removed = collection.remove(item_id);
+        removed.is_some()
+    });
+    let Some(mut item) = removed else {
+        return false;
     };
+    clear_origins(&mut item);
     modify(collections, to.collection_id, |collection| {
-        insert(collection, to, Item::Request(moved))
-    }) && modify(collections, from_collection, |collection| {
-        collection.remove(request_id).is_some()
+        insert(collection, to, item)
     })
 }
 
-/// A request [`move_request`] moved to another collection, for updating what
-/// refers to it by `(collection_id, request_id)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MovedRequest {
-    pub request_id: Uuid,
-    pub from: Uuid,
-    pub to: Uuid,
+fn clear_origins(item: &mut Item) {
+    match item {
+        Item::Request(saved) => saved.origin = None,
+        Item::Folder(folder) => {
+            folder.origin = None;
+            folder.items.iter_mut().for_each(clear_origins);
+        }
+    }
 }
 
-impl MovedRequest {
-    /// The collection id a reference to `(collection_id, request_id)` has now.
-    pub fn collection_of(&self, collection_id: Uuid, request_id: Uuid) -> Uuid {
-        if request_id == self.request_id && collection_id == self.from {
-            self.to
-        } else {
-            collection_id
+fn collect_item_ids(items: &[Item], ids: &mut HashSet<Uuid>) {
+    for item in items {
+        ids.insert(item.id());
+        if let Item::Folder(folder) = item {
+            collect_item_ids(&folder.items, ids);
         }
     }
 }
@@ -1842,6 +1917,174 @@ mod tests {
             assert!(
                 !move_request(&mut m.collections, from, request_id, destination),
                 "{request_id} to {destination:?}"
+            );
+        }
+        for (now, before) in m.collections.iter().zip(&held) {
+            assert!(Arc::ptr_eq(now, before));
+        }
+    }
+
+    /// Adds a folder to API's root, or to `parent`, and returns its id.
+    fn add_folder(m: &mut MoveFixture, parent: Option<Uuid>, name: &str) -> Uuid {
+        let folder = Folder::new(name);
+        let id = folder.id;
+        assert!(Arc::make_mut(&mut m.collections[0]).add_item(parent, Item::Folder(folder)));
+        id
+    }
+
+    #[test]
+    fn move_folder_reorders_siblings() {
+        let mut m = move_fixture();
+        let outer = m.outer;
+        let held = m.collections.clone();
+
+        let moved = move_folder(&mut m.collections, m.api, outer, to(m.api, None, Some(m.a)));
+        assert_eq!(
+            moved,
+            Some(MovedItems {
+                from: m.api,
+                to: m.api,
+                item_ids: [outer, m.inner, m.deep].into(),
+            })
+        );
+        assert_eq!(item_ids(&m.collections[0].items), [outer, m.a, m.b, m.c]);
+        assert_eq!(
+            item_ids(&m.collections[0].find_folder(outer).unwrap().items),
+            [m.inner]
+        );
+
+        assert!(move_folder(&mut m.collections, m.api, outer, to(m.api, None, None)).is_some());
+        assert_eq!(item_ids(&m.collections[0].items), [m.a, m.b, m.c, outer]);
+        assert!(Arc::ptr_eq(&m.collections[1], &held[1]));
+    }
+
+    #[test]
+    fn move_folder_into_a_folder_out_to_the_root_and_into_a_nested_folder() {
+        let mut m = move_fixture();
+        let (outer, inner, deep) = (m.outer, m.inner, m.deep);
+        let side = add_folder(&mut m, None, "Side");
+        let nested = add_folder(&mut m, Some(side), "Nested");
+        let items =
+            |m: &MoveFixture, id| item_ids(&m.collections[0].find_folder(id).unwrap().items);
+
+        assert!(
+            move_folder(
+                &mut m.collections,
+                m.api,
+                inner,
+                to(m.api, Some(side), None)
+            )
+            .is_some()
+        );
+        assert_eq!(items(&m, side), [nested, inner]);
+        assert_eq!(items(&m, inner), [deep]);
+        assert!(items(&m, outer).is_empty());
+
+        assert!(
+            move_folder(&mut m.collections, m.api, inner, to(m.api, None, Some(m.b))).is_some()
+        );
+        assert_eq!(
+            item_ids(&m.collections[0].items),
+            [m.a, inner, m.b, m.c, outer, side]
+        );
+        assert_eq!(items(&m, side), [nested]);
+
+        assert!(
+            move_folder(
+                &mut m.collections,
+                m.api,
+                outer,
+                to(m.api, Some(nested), None)
+            )
+            .is_some()
+        );
+        assert_eq!(items(&m, nested), [outer]);
+        assert_eq!(
+            item_ids(&m.collections[0].items),
+            [m.a, inner, m.b, m.c, side]
+        );
+    }
+
+    #[test]
+    fn move_folder_to_another_collection_clears_origins_in_it() {
+        let mut m = move_fixture();
+        let (outer, inner, deep, root) = (m.outer, m.inner, m.deep, m.root);
+        let origin = |key: &str| Origin {
+            key: key.into(),
+            hash: "h".into(),
+            untagged: false,
+        };
+        {
+            let api = Arc::make_mut(&mut m.collections[0]);
+            api.find_folder_mut(outer).unwrap().origin = Some(origin("outer"));
+            api.find_request_mut(deep).unwrap().origin = Some(origin("GET /deep"));
+        }
+        let held = m.collections.clone();
+
+        let moved = move_folder(
+            &mut m.collections,
+            m.api,
+            outer,
+            to(m.other, None, Some(root)),
+        );
+
+        assert_eq!(
+            moved,
+            Some(MovedItems {
+                from: m.api,
+                to: m.other,
+                item_ids: [outer, inner, deep].into(),
+            })
+        );
+        assert_eq!(item_ids(&m.collections[0].items), [m.a, m.b, m.c]);
+        assert_eq!(item_ids(&m.collections[1].items), [outer, root]);
+        let other = &m.collections[1];
+        assert_eq!(item_ids(&other.find_folder(outer).unwrap().items), [inner]);
+        assert!(other.find_folder(outer).unwrap().origin.is_none());
+        let moved_deep = other.find_request(deep).unwrap();
+        assert!(moved_deep.origin.is_none());
+        assert_eq!(
+            moved_deep.request,
+            held[0].find_request(deep).unwrap().request
+        );
+        assert_eq!(other.ancestors(deep), Some(vec![outer, inner]));
+        assert!(!Arc::ptr_eq(&m.collections[0], &held[0]));
+        assert!(!Arc::ptr_eq(&m.collections[1], &held[1]));
+        assert!(Arc::ptr_eq(&m.collections[2], &held[2]));
+        assert!(held[0].find_request(deep).unwrap().origin.is_some());
+        assert!(m.collections[0].find_request(m.a).unwrap().origin.is_some());
+    }
+
+    #[test]
+    fn move_folder_no_ops_change_and_copy_nothing() {
+        let mut m = move_fixture();
+        let side = add_folder(&mut m, None, "Side");
+        let held = m.collections.clone();
+        let missing = Uuid::new_v4();
+        let (api, other, outer, inner) = (m.api, m.other, m.outer, m.inner);
+        let no_ops = [
+            (missing, outer, to(api, None, None)),
+            (api, missing, to(api, None, None)),
+            (other, outer, to(api, None, None)),
+            (api, m.a, to(api, None, None)),
+            (api, outer, to(missing, None, None)),
+            (api, outer, to(api, Some(missing), None)),
+            (api, outer, to(api, Some(m.b), None)),
+            (api, outer, to(api, None, Some(missing))),
+            (api, outer, to(api, Some(side), Some(m.b))),
+            (api, outer, to(api, Some(outer), None)),
+            (api, outer, to(api, Some(inner), None)),
+            (api, outer, to(api, None, Some(outer))),
+            (api, outer, to(other, None, Some(outer))),
+            (api, outer, to(api, None, Some(side))),
+            (api, side, to(api, None, None)),
+            (api, inner, to(api, Some(outer), None)),
+        ];
+        for (from, folder_id, destination) in no_ops {
+            assert_eq!(
+                move_folder(&mut m.collections, from, folder_id, destination),
+                None,
+                "{folder_id} to {destination:?}"
             );
         }
         for (now, before) in m.collections.iter().zip(&held) {

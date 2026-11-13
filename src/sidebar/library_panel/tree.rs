@@ -82,10 +82,18 @@ pub(super) struct Node {
     /// 0 for collections.
     pub(super) depth: usize,
     pub(super) kind: NodeKind,
-    /// The folder holding it; `None` at a collection's root and for collections.
-    pub(super) parent: Option<Uuid>,
+    /// The folders holding it, outermost first; empty at a collection's root
+    /// and for collections.
+    pub(super) folders: Vec<Uuid>,
     /// The item after it in the same folder or root.
     pub(super) next: Option<Uuid>,
+}
+
+impl Node {
+    /// The folder holding it; `None` at a collection's root and for collections.
+    pub(super) fn parent(&self) -> Option<Uuid> {
+        self.folders.last().copied()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,23 +157,31 @@ fn flatten_collections(
             kind: NodeKind::Collection {
                 expanded: is_expanded,
             },
-            parent: None,
+            folders: Vec::new(),
             next: None,
         }));
         if is_expanded {
-            flatten_items(collection.id, None, &collection.items, 1, expanded, rows);
+            let mut folders = Vec::new();
+            flatten_items(
+                collection.id,
+                &mut folders,
+                &collection.items,
+                expanded,
+                rows,
+            );
         }
     }
 }
 
+/// `folders` holds the folders down to `items`, and is as it was on return.
 fn flatten_items(
     collection_id: Uuid,
-    parent: Option<Uuid>,
+    folders: &mut Vec<Uuid>,
     items: &[Item],
-    depth: usize,
     expanded: &HashSet<Uuid>,
     rows: &mut Vec<Row>,
 ) {
+    let depth = folders.len() + 1;
     for (index, item) in items.iter().enumerate() {
         let next = items.get(index + 1).map(Item::id);
         match item {
@@ -179,18 +195,13 @@ fn flatten_items(
                     kind: NodeKind::Folder {
                         expanded: is_expanded,
                     },
-                    parent,
+                    folders: folders.clone(),
                     next,
                 }));
                 if is_expanded {
-                    flatten_items(
-                        collection_id,
-                        Some(folder.id),
-                        &folder.items,
-                        depth + 1,
-                        expanded,
-                        rows,
-                    );
+                    folders.push(folder.id);
+                    flatten_items(collection_id, folders, &folder.items, expanded, rows);
+                    folders.pop();
                 }
             }
             Item::Request(saved) => rows.push(Row::Node(Node {
@@ -199,7 +210,7 @@ fn flatten_items(
                 name: saved.name.clone().into(),
                 depth,
                 kind: NodeKind::Request(saved.request.method),
-                parent,
+                folders: folders.clone(),
                 next,
             })),
         }
@@ -355,25 +366,25 @@ mod tests {
     }
 
     #[test]
-    fn nodes_know_their_folder_and_next_sibling() {
+    fn nodes_know_their_folders_and_next_sibling() {
         let (collections, ids) = fixture();
         let expanded = HashSet::from([ids.collection, ids.outer, ids.inner]);
         let rows = flatten(&collections, &[], ALL, &expanded);
         let links: Vec<_> = rows[1..6]
             .iter()
             .map(|row| match row {
-                Row::Node(node) => (node.id, node.parent, node.next),
+                Row::Node(node) => (node.id, node.folders.clone(), node.next, node.depth),
                 row => panic!("expected a node, got {row:?}"),
             })
             .collect();
         assert_eq!(
             links,
             [
-                (ids.collection, None, None),
-                (ids.root, None, Some(ids.outer)),
-                (ids.outer, None, None),
-                (ids.inner, Some(ids.outer), None),
-                (ids.deep, Some(ids.inner), None),
+                (ids.collection, vec![], None, 0),
+                (ids.root, vec![], Some(ids.outer), 1),
+                (ids.outer, vec![], None, 1),
+                (ids.inner, vec![ids.outer], None, 2),
+                (ids.deep, vec![ids.outer, ids.inner], None, 3),
             ]
         );
     }

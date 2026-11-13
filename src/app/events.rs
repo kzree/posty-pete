@@ -180,6 +180,11 @@ impl Workspace {
                 request_id,
                 to,
             } => self.move_request(*collection_id, *request_id, *to, window, cx),
+            LibraryPanelEvent::MoveFolder {
+                collection_id,
+                folder_id,
+                to,
+            } => self.move_folder(*collection_id, *folder_id, *to, window, cx),
             LibraryPanelEvent::AddFolder {
                 collection_id,
                 parent,

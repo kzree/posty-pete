@@ -27,7 +27,7 @@ use uuid::Uuid;
 use super::panel_header;
 use crate::actions::{LIBRARY_PANEL_CONTEXT, SelectNextLibraryRow, SelectPreviousLibraryRow};
 use delegate::LibraryDelegate;
-use drag::DraggedRequest;
+use drag::{DraggedItem, DraggedKind};
 use menu::context_menu;
 use navigation::Direction;
 use tree::Section;
@@ -60,6 +60,12 @@ pub enum LibraryPanelEvent {
     MoveRequest {
         collection_id: Uuid,
         request_id: Uuid,
+        to: Destination,
+    },
+    /// Like `MoveRequest`, with everything in the folder.
+    MoveFolder {
+        collection_id: Uuid,
+        folder_id: Uuid,
         to: Destination,
     },
     /// `parent` is `None` for the collection root.
@@ -225,11 +231,19 @@ impl LibraryPanel {
         self.dirty_request = id;
     }
 
-    fn move_request(&mut self, dragged: &DraggedRequest, to: Destination, cx: &mut Context<Self>) {
-        cx.emit(LibraryPanelEvent::MoveRequest {
-            collection_id: dragged.collection_id,
-            request_id: dragged.request_id,
-            to,
+    fn move_item(&mut self, dragged: &DraggedItem, to: Destination, cx: &mut Context<Self>) {
+        let collection_id = dragged.collection_id;
+        cx.emit(match dragged.kind {
+            DraggedKind::Request(_) => LibraryPanelEvent::MoveRequest {
+                collection_id,
+                request_id: dragged.id,
+                to,
+            },
+            DraggedKind::Folder => LibraryPanelEvent::MoveFolder {
+                collection_id,
+                folder_id: dragged.id,
+                to,
+            },
         });
     }
 
@@ -454,6 +468,7 @@ mod tests {
     enum Emitted {
         Open(Uuid),
         Move(Uuid, Destination),
+        MoveFolder(Uuid, Destination),
     }
 
     fn open_panel(
@@ -479,6 +494,9 @@ mod tests {
                 }
                 LibraryPanelEvent::MoveRequest { request_id, to, .. } => {
                     sink.borrow_mut().push(Emitted::Move(*request_id, *to))
+                }
+                LibraryPanelEvent::MoveFolder { folder_id, to, .. } => {
+                    sink.borrow_mut().push(Emitted::MoveFolder(*folder_id, *to))
                 }
                 _ => {}
             })
@@ -528,6 +546,11 @@ mod tests {
         drag(root, row(ids.outer, cx).center(), cx);
         drag(root, row(empty, cx).center(), cx);
         drag(row(ids.deep, cx).center(), top_half(row(ids.outer, cx)), cx);
+        drag(
+            row(ids.deep, cx).center(),
+            bottom_half(row(ids.outer, cx)),
+            cx,
+        );
 
         assert_eq!(
             *emitted.borrow(),
@@ -539,9 +562,58 @@ mod tests {
                 Emitted::Move(ids.root, at(ids.collection, Some(ids.inner), None)),
                 Emitted::Move(ids.root, at(ids.collection, Some(ids.outer), None)),
                 Emitted::Move(ids.root, at(empty, None, None)),
-                Emitted::Move(ids.deep, at(ids.collection, Some(ids.outer), None)),
+                Emitted::Move(ids.deep, at(ids.collection, None, Some(ids.outer))),
+                Emitted::Move(ids.deep, at(ids.collection, None, None)),
             ]
         );
+    }
+
+    #[gpui::test]
+    fn dropping_a_folder_emits_where_it_goes(cx: &mut TestAppContext) {
+        let (panel, ids, emitted, cx) = open_panel(cx);
+        let empty = panel.read_with(cx, |panel, cx| {
+            panel.list.read(cx).delegate().collection_at(6).unwrap()
+        });
+        let at = |collection_id, folder_id, before| Destination {
+            collection_id,
+            folder_id,
+            before,
+        };
+        let inner = row(ids.inner, cx).center();
+
+        drag(inner, top_half(row(ids.root, cx)), cx);
+        drag(inner, top_half(row(ids.outer, cx)), cx);
+        drag(inner, row(empty, cx).center(), cx);
+        drag(row(ids.outer, cx).center(), top_half(row(ids.root, cx)), cx);
+
+        assert_eq!(
+            *emitted.borrow(),
+            [
+                Emitted::MoveFolder(ids.inner, at(ids.collection, None, Some(ids.root))),
+                Emitted::MoveFolder(ids.inner, at(ids.collection, None, Some(ids.outer))),
+                Emitted::MoveFolder(ids.inner, at(empty, None, None)),
+                Emitted::MoveFolder(ids.outer, at(ids.collection, None, Some(ids.root))),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn folders_dont_drop_into_themselves(cx: &mut TestAppContext) {
+        let (_, ids, emitted, cx) = open_panel(cx);
+        let outer = row(ids.outer, cx);
+
+        for target in [
+            top_half(outer),
+            outer.center(),
+            bottom_half(outer),
+            row(ids.inner, cx).center(),
+            top_half(row(ids.deep, cx)),
+            bottom_half(row(ids.deep, cx)),
+        ] {
+            drag(outer.center(), target, cx);
+        }
+        drag(row(ids.inner, cx).center(), row(ids.outer, cx).center(), cx);
+        assert_eq!(*emitted.borrow(), []);
     }
 
     #[gpui::test]

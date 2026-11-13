@@ -5,7 +5,7 @@ use gpui::{AppContext, Context, EventEmitter};
 use uuid::Uuid;
 
 use domain::{
-    collection::{self, Collection, Destination, Folder, Item, Location, SavedRequest},
+    collection::{self, Collection, Destination, Folder, Item, Location, MovedItems, SavedRequest},
     openapi::update::{self, Choices},
     request::{Auth, KeyValue, Request},
     store::{
@@ -369,6 +369,23 @@ impl Collections {
             self.enqueue_save(to.collection_id, cx);
         }
         true
+    }
+
+    /// Moves the folder with everything in it to `to`, saving each collection
+    /// that changed. Returns what moved, or `None` if nothing did.
+    pub fn move_folder(
+        &mut self,
+        collection_id: Uuid,
+        folder_id: Uuid,
+        to: Destination,
+        cx: &mut Context<Self>,
+    ) -> Option<MovedItems> {
+        let moved = collection::move_folder(&mut self.collections, collection_id, folder_id, to)?;
+        self.changed(collection_id, cx);
+        if to.collection_id != collection_id {
+            self.enqueue_save(to.collection_id, cx);
+        }
+        Some(moved)
     }
 
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {

@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 use super::{
-    collection::{Collection, MovedRequest},
+    collection::{Collection, MovedItems},
     command::Command,
     environment::Environment,
     settings_index::SettingsSection,
@@ -132,17 +132,21 @@ impl Recents {
         *self = Self::new(newer.into_iter().chain(older.0));
     }
 
-    /// Points the moved request's entry at its new collection. Returns whether
-    /// anything changed.
-    pub fn apply_move(&mut self, moved: MovedRequest) -> bool {
+    /// Points the moved requests' and folders' entries at their new
+    /// collection. Returns whether anything changed.
+    pub fn apply_move(&mut self, moved: &MovedItems) -> bool {
         let mut changed = false;
         for recent in &mut self.0 {
             if let Recent::Request {
                 collection_id,
-                request_id,
+                request_id: item_id,
+            }
+            | Recent::Folder {
+                collection_id,
+                folder_id: item_id,
             } = recent
             {
-                let now = moved.collection_of(*collection_id, *request_id);
+                let now = moved.collection_of(*collection_id, *item_id);
                 changed |= now != *collection_id;
                 *collection_id = now;
             }
@@ -234,8 +238,9 @@ mod tests {
     }
 
     #[test]
-    fn apply_move_repoints_only_the_moved_request() {
-        let (from, to, request_id, other_request) = (
+    fn apply_move_repoints_only_the_moved_items() {
+        let (from, to, request_id, other_request, folder_id) = (
+            Uuid::new_v4(),
             Uuid::new_v4(),
             Uuid::new_v4(),
             Uuid::new_v4(),
@@ -245,33 +250,35 @@ mod tests {
             collection_id,
             request_id,
         };
-        let folder = Recent::Folder {
-            collection_id: from,
-            folder_id: request_id,
+        let folder = |collection_id| Recent::Folder {
+            collection_id,
+            folder_id,
         };
         let mut recents = Recents::new([
             request(from, other_request),
             request(from, request_id),
-            folder,
+            folder(from),
             Recent::Collection { id: from },
         ]);
-        let moved = MovedRequest {
-            request_id,
-            from,
-            to,
-        };
 
-        assert!(recents.apply_move(moved));
+        assert!(recents.apply_move(&MovedItems::one(request_id, from, to)));
         assert_eq!(
             recents.all(),
             [
                 request(from, other_request),
                 request(to, request_id),
-                folder,
+                folder(from),
                 Recent::Collection { id: from },
             ]
         );
-        assert!(!recents.apply_move(moved));
+        let subtree = MovedItems {
+            from,
+            to,
+            item_ids: [request_id, folder_id].into(),
+        };
+        assert!(recents.apply_move(&subtree));
+        assert_eq!(recents.all()[2], folder(to));
+        assert!(!recents.apply_move(&subtree));
     }
 
     #[test]

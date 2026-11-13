@@ -87,6 +87,14 @@ impl<K: Copy + Eq> ResponseCache<K> {
         }
     }
 
+    /// Replaces every key with what `f` makes of it. `f` mustn't map two
+    /// keys to one.
+    pub(super) fn map_keys(&mut self, mut f: impl FnMut(K) -> K) {
+        for (key, _) in &mut self.entries {
+            *key = f(*key);
+        }
+    }
+
     /// Copies the entry for `from` to `to`, replacing what `to` had.
     pub(super) fn copy(&mut self, from: K, to: K) {
         if from == to {
@@ -182,6 +190,17 @@ mod tests {
         assert!(cache.get(1).is_none());
         cache.insert(2, &ok(200), "x".repeat(MAX_BODY_BYTES).into());
         assert!(cache.get(2).is_some());
+    }
+
+    #[test]
+    fn map_keys_keeps_the_entries() {
+        let mut cache = ResponseCache::new();
+        cache.insert(1, &ok(201), "".into());
+        cache.insert(2, &ok(202), "".into());
+        cache.map_keys(|key| key * 10);
+        assert!(cache.get(1).is_none());
+        assert_eq!(status(&mut cache, 10), Some(201));
+        assert_eq!(status(&mut cache, 20), Some(202));
     }
 
     #[test]

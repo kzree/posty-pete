@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::{
-    collection::MovedRequest, environment_selection::DraftSource, layout::Layout, recents::Recents,
+    collection::MovedItems, environment_selection::DraftSource, layout::Layout, recents::Recents,
     request::Request,
 };
 
@@ -26,7 +26,7 @@ pub enum NavEntry {
 
 impl NavEntry {
     /// The entry pointing at the moved request's new collection.
-    pub fn with_move(self, moved: MovedRequest) -> Self {
+    pub fn with_move(self, moved: &MovedItems) -> Self {
         match self {
             Self::SavedRequest {
                 collection_id,
@@ -220,8 +220,8 @@ impl KeptSession {
         NavigationToSave { current, kept }
     }
 
-    /// Points the kept session's entries at the moved request's new collection.
-    pub fn apply_move(&mut self, moved: MovedRequest) {
+    /// Points the kept session's entries at the moved requests' new collection.
+    pub fn apply_move(&mut self, moved: &MovedItems) {
         let Some(session) = &mut self.0 else {
             return;
         };
@@ -400,38 +400,46 @@ mod tests {
 
     #[test]
     fn moves_repoint_saved_request_entries_and_the_kept_session() {
-        let (from, to, request_id) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let (from, to, request_id, sibling) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
         let saved = |collection_id, request_id| NavEntry::SavedRequest {
             collection_id,
             request_id,
         };
-        let moved = MovedRequest {
-            request_id,
-            from,
-            to,
-        };
+        let moved = MovedItems::one(request_id, from, to);
         let other = saved(from, Uuid::new_v4());
         assert_eq!(
-            saved(from, request_id).with_move(moved),
+            saved(from, request_id).with_move(&moved),
             saved(to, request_id)
         );
-        assert_eq!(other.with_move(moved), other);
+        assert_eq!(other.with_move(&moved), other);
         assert_eq!(
-            NavEntry::Collection { id: from }.with_move(moved),
+            NavEntry::Collection { id: from }.with_move(&moved),
             NavEntry::Collection { id: from }
         );
 
-        let stored = session(vec![saved(from, request_id), other], None);
+        let stored = session(
+            vec![saved(from, request_id), other, saved(from, sibling)],
+            None,
+        );
         let mut kept = kept(&stored);
         let untouched = kept.0.clone().unwrap();
-        kept.apply_move(MovedRequest {
-            request_id: Uuid::new_v4(),
-            ..moved
-        });
+        kept.apply_move(&MovedItems::one(Uuid::new_v4(), from, to));
         assert!(Arc::ptr_eq(kept.0.as_ref().unwrap(), &untouched));
-        kept.apply_move(moved);
+        kept.apply_move(&MovedItems {
+            from,
+            to,
+            item_ids: [request_id, sibling].into(),
+        });
         let written = read_back(&kept.apply(blank()));
-        assert_eq!(written.entries, [saved(to, request_id), other]);
+        assert_eq!(
+            written.entries,
+            [saved(to, request_id), other, saved(to, sibling)]
+        );
         assert_eq!(untouched.entries, stored.entries);
     }
 
