@@ -5,56 +5,25 @@ use gpui::{
     Subscription, Window, px,
 };
 use gpui_component::{
-    Disableable as _, IndexPath, WindowExt as _,
+    Disableable as _, WindowExt as _,
     button::{Button, ButtonVariants as _},
     dialog::{DialogAction, DialogClose, DialogFooter},
     form::{field, v_form},
     input::{Input, InputEvent, InputState},
-    searchable_list::SearchableListItem,
-    select::{SearchableVec, Select, SelectEvent, SelectState},
+    select::SelectEvent,
 };
 
+use crate::ui::location_select::{
+    LocationItem, LocationSelect, folder_locations, location_select, new_location_select,
+};
 use domain::collection::{Collection, Location};
-
-#[derive(Clone)]
-pub struct LocationItem {
-    location: Location,
-    label: SharedString,
-}
-
-impl SearchableListItem for LocationItem {
-    type Value = Location;
-
-    fn title(&self) -> SharedString {
-        self.label.clone()
-    }
-
-    fn value(&self) -> &Location {
-        &self.location
-    }
-}
-
-type LocationSelect = SelectState<SearchableVec<LocationItem>>;
 
 /// "New collection", then every collection and folder.
 pub fn locations(collections: &[Arc<Collection>]) -> Vec<LocationItem> {
-    let new_collection = LocationItem {
-        location: Location::NewCollection,
-        label: "New collection".into(),
-    };
-    let folders = collections.iter().flat_map(|collection| {
-        collection
-            .folder_paths()
-            .into_iter()
-            .map(|(folder_id, path)| LocationItem {
-                location: Location::Folder {
-                    collection_id: collection.id,
-                    folder_id,
-                },
-                label: path.into(),
-            })
-    });
-    std::iter::once(new_collection).chain(folders).collect()
+    let new_collection = LocationItem::new(Location::NewCollection, "New collection");
+    std::iter::once(new_collection)
+        .chain(folder_locations(collections, None))
+        .collect()
 }
 
 /// Asks for a name and a location from `locations`. `on_save` gets the
@@ -68,19 +37,7 @@ pub fn open_save_as_dialog(
     cx: &mut App,
 ) {
     let input = cx.new(|cx| InputState::new(window, cx).default_value(name));
-    let selected = locations
-        .iter()
-        .position(|item| item.location == selected)
-        .unwrap_or_default();
-    let location = cx.new(|cx| {
-        SelectState::new(
-            SearchableVec::new(locations),
-            Some(IndexPath::new(selected)),
-            window,
-            cx,
-        )
-        .searchable(true)
-    });
+    let location = new_location_select(locations, selected, window, cx);
     let footer = cx.new(|cx| SaveAsFooter::new(input.clone(), &location, cx));
     let on_save = Rc::new(on_save);
     // The builder reruns on every rebuild of the dialog layer.
@@ -101,11 +58,7 @@ pub fn open_save_as_dialog(
             .child(
                 v_form()
                     .child(field().label("Name").child(Input::new(&input)))
-                    .child(
-                        field()
-                            .label("Location")
-                            .child(Select::new(&location).search_placeholder("Search folders")),
-                    ),
+                    .child(field().label("Location").child(location_select(&location))),
             )
             .footer(footer.clone())
             .on_ok(move |_, window, cx| {
@@ -185,18 +138,18 @@ mod tests {
         let other = Collection::new("Other");
 
         let items = locations(&[Arc::new(api.clone()), Arc::new(other.clone())]);
-        let labels: Vec<_> = items.iter().map(|item| item.label.to_string()).collect();
+        let labels: Vec<_> = items.iter().map(|item| item.label().to_string()).collect();
         assert_eq!(labels, ["New collection", "API", "API / Users", "Other"]);
-        assert_eq!(items[0].location, Location::NewCollection);
+        assert_eq!(items[0].location(), Location::NewCollection);
         assert_eq!(
-            items[2].location,
+            items[2].location(),
             Location::Folder {
                 collection_id: api.id,
                 folder_id: Some(users_id),
             }
         );
         assert_eq!(
-            items[3].location,
+            items[3].location(),
             Location::Folder {
                 collection_id: other.id,
                 folder_id: None,

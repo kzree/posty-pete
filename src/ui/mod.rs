@@ -6,6 +6,7 @@ pub mod confirm_dialog;
 pub mod environments_editor;
 pub mod key_value_editor;
 pub mod loading_bar;
+pub mod location_select;
 pub mod method_label;
 pub mod rename_dialog;
 pub mod retry_dialog;

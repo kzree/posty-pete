@@ -42,6 +42,10 @@ impl LibraryDelegate {
         self.rebuild_rows();
     }
 
+    pub(super) fn collections(&self) -> &[Arc<Collection>] {
+        &self.collections
+    }
+
     pub(super) fn set_environments(&mut self, environments: Vec<Arc<Environment>>) {
         self.environments = environments;
         self.rebuild_rows();

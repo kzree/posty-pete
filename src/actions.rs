@@ -2,6 +2,8 @@ use gpui::{Action, App, KeyBinding, actions};
 
 use domain::command::Command;
 
+use crate::ui::location_select::ConfirmLocation;
+
 actions!(
     posty_pete,
     [
@@ -71,6 +73,8 @@ pub const LIBRARY_PANEL_CONTEXT: &str = "LibraryPanel";
 /// Outranks the list's own up/down, which stop on placeholder rows.
 const LIBRARY_LIST_CONTEXT: &str = "LibraryPanel > List";
 const INPUT_CONTEXT: &str = "Input";
+/// Outranks the closed select's own enter, which opens it.
+const LOCATION_SELECT_ENTER_CONTEXT: &str = "LocationSelect > Select";
 
 // gpui-pre 0.3.11's `KeyBinding::new` can't parse "secondary-".
 #[cfg(target_os = "macos")]
@@ -186,6 +190,11 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("up", SelectPreviousLibraryRow, Some(LIBRARY_LIST_CONTEXT)),
         KeyBinding::new("down", SelectNextLibraryRow, Some(LIBRARY_LIST_CONTEXT)),
+        KeyBinding::new(
+            "enter",
+            ConfirmLocation,
+            Some(LOCATION_SELECT_ENTER_CONTEXT),
+        ),
     ]);
 }
 
@@ -207,6 +216,11 @@ mod tests {
                 Command::NewSharedEnvironment
             ]
         );
+    }
+
+    #[test]
+    fn location_select_enter_uses_its_context() {
+        assert!(LOCATION_SELECT_ENTER_CONTEXT.starts_with(crate::ui::location_select::CONTEXT));
     }
 
     #[test]

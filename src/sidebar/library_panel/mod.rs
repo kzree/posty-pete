@@ -1,6 +1,7 @@
 mod delegate;
 mod drag;
 mod menu;
+mod move_dialog;
 mod navigation;
 mod tree;
 

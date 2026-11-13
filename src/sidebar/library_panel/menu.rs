@@ -332,6 +332,16 @@ fn library_menu(
             }),
         );
     }
+    if !matches!(target, MenuTarget::Collection(_)) {
+        let panel = panel.clone();
+        menu = menu.item(
+            PopupMenuItem::new("Move to…").on_click(move |_, window, cx| {
+                panel
+                    .update(cx, |panel, cx| panel.move_to(target, window, cx))
+                    .ok();
+            }),
+        );
+    }
     let delete_panel = panel.clone();
     menu.item(
         PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
@@ -357,7 +367,7 @@ pub(super) enum MenuTarget {
 }
 
 impl MenuTarget {
-    fn id(self) -> Uuid {
+    pub(super) fn id(self) -> Uuid {
         match self {
             Self::Collection(id) => id,
             Self::Folder { folder_id, .. } => folder_id,
