@@ -21,6 +21,7 @@ pub struct GeneralSettings {
     /// Read at startup only.
     pub restore_last_session: bool,
     pub ask_before_discarding: bool,
+    pub open_duplicated_request: bool,
 }
 
 impl Default for GeneralSettings {
@@ -28,6 +29,7 @@ impl Default for GeneralSettings {
         Self {
             restore_last_session: true,
             ask_before_discarding: true,
+            open_duplicated_request: false,
         }
     }
 }
@@ -189,6 +191,7 @@ mod tests {
             serde_json::from_str(r#"{"appearance":{"theme":"light"}}"#).unwrap();
         assert!(settings.general.restore_last_session);
         assert!(settings.general.ask_before_discarding);
+        assert!(!settings.general.open_duplicated_request);
     }
 
     #[test]
@@ -201,6 +204,7 @@ mod tests {
             GeneralSettings {
                 restore_last_session: false,
                 ask_before_discarding: true,
+                open_duplicated_request: false,
             }
         );
     }
@@ -211,11 +215,13 @@ mod tests {
             general: GeneralSettings {
                 restore_last_session: false,
                 ask_before_discarding: false,
+                open_duplicated_request: true,
             },
             ..Settings::default()
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains(r#""ask_before_discarding":false"#), "{json}");
+        assert!(json.contains(r#""open_duplicated_request":true"#), "{json}");
         assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), settings);
     }
 

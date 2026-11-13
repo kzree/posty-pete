@@ -58,15 +58,25 @@ impl Render for GeneralPage {
                     ),
             )
             .child(
-                group(SettingsGroup::Editing).child(
-                    row(reveal, Setting::ConfirmDiscard, cx)
-                        .description("Confirm before closing a request with unsaved edits.")
-                        .control(switch(
-                            Setting::ConfirmDiscard,
-                            settings.ask_before_discarding,
-                            |s, on| s.ask_before_discarding = on,
-                        )),
-                ),
+                group(SettingsGroup::Editing)
+                    .child(
+                        row(reveal, Setting::ConfirmDiscard, cx)
+                            .description("Confirm before closing a request with unsaved edits.")
+                            .control(switch(
+                                Setting::ConfirmDiscard,
+                                settings.ask_before_discarding,
+                                |s, on| s.ask_before_discarding = on,
+                            )),
+                    )
+                    .child(
+                        row(reveal, Setting::OpenDuplicate, cx)
+                            .description("Open the copy after duplicating a request.")
+                            .control(switch(
+                                Setting::OpenDuplicate,
+                                settings.open_duplicated_request,
+                                |s, on| s.open_duplicated_request = on,
+                            )),
+                    ),
             )
     }
 }

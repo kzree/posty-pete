@@ -224,6 +224,7 @@ pub enum Setting {
     RestoreSession,
     CheckForUpdates,
     ConfirmDiscard,
+    OpenDuplicate,
     Theme,
     Accent,
     UiFontSize,
@@ -282,10 +283,11 @@ const fn info(
 
 impl Setting {
     /// The rows other than shortcuts, in page order.
-    pub const ROWS: [Self; 35] = [
+    pub const ROWS: [Self; 36] = [
         Self::RestoreSession,
         Self::CheckForUpdates,
         Self::ConfirmDiscard,
+        Self::OpenDuplicate,
         Self::Theme,
         Self::Accent,
         Self::UiFontSize,
@@ -347,6 +349,12 @@ impl Setting {
                 G::Editing,
                 "Ask before discarding changes",
                 &["unsaved", "confirm", "prompt", "close"],
+            ),
+            Self::OpenDuplicate => info(
+                "general.open-duplicate",
+                G::Editing,
+                "Open duplicated requests",
+                &["duplicate", "copy", "clone"],
             ),
             Self::Theme => info(
                 "appearance.theme",

@@ -17,6 +17,7 @@ use crate::{
     history::HistoryEvent,
     import_dialog::{ImportDialogOptions, open_import_dialog},
     request_editor::RequestEditorEvent,
+    settings::AppSettings,
     sidebar::{SidebarTab, history_panel::HistoryPanelEvent, library_panel::LibraryPanelEvent},
     ui::environments_editor::EnvironmentsEditorEvent,
 };
@@ -165,9 +166,14 @@ impl Workspace {
                 collection_id,
                 request_id,
             } => {
-                self.collections.update(cx, |collections, cx| {
+                let copy = self.collections.update(cx, |collections, cx| {
                     collections.duplicate_request(*collection_id, *request_id, cx)
                 });
+                if let Some(copy) = copy
+                    && AppSettings::get(cx).general.open_duplicated_request
+                {
+                    self.open_saved_request(*collection_id, copy, window, cx);
+                }
             }
             LibraryPanelEvent::AddFolder {
                 collection_id,
