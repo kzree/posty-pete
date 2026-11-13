@@ -341,6 +341,17 @@ impl Collections {
         }
     }
 
+    pub fn duplicate_request(
+        &mut self,
+        collection_id: Uuid,
+        request_id: Uuid,
+        cx: &mut Context<Self>,
+    ) -> Option<Uuid> {
+        let id = collection::duplicate_request(&mut self.collections, collection_id, request_id)?;
+        self.changed(collection_id, cx);
+        Some(id)
+    }
+
     pub fn remove_item(&mut self, collection_id: Uuid, item_id: Uuid, cx: &mut Context<Self>) {
         let removed = self.modify(collection_id, |collection| {
             collection.remove(item_id).is_some()

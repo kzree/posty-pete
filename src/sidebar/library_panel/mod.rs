@@ -47,6 +47,10 @@ pub enum LibraryPanelEvent {
         collection_id: Uuid,
         item_id: Uuid,
     },
+    DuplicateRequest {
+        collection_id: Uuid,
+        request_id: Uuid,
+    },
     /// `parent` is `None` for the collection root.
     AddFolder {
         collection_id: Uuid,

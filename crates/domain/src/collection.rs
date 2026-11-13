@@ -209,6 +209,38 @@ pub fn add_request_at(
     }
 }
 
+/// Inserts a copy of the saved request right after it, named "<name> (Copy)".
+/// The copy has no origin, so a spec update leaves it alone. Returns the
+/// copy's id, or `None`, changing (and copying) nothing, if there's no such
+/// request.
+pub fn duplicate_request(
+    collections: &mut [Arc<Collection>],
+    collection_id: Uuid,
+    request_id: Uuid,
+) -> Option<Uuid> {
+    collections
+        .iter()
+        .find(|collection| collection.id == collection_id)?
+        .find_request(request_id)?;
+    let mut id = None;
+    modify(collections, collection_id, |collection| {
+        let Some((items, index)) = locate(&mut collection.items, request_id) else {
+            return false;
+        };
+        let Item::Request(original) = &items[index] else {
+            return false;
+        };
+        let copy = SavedRequest {
+            name: format!("{} (Copy)", original.name),
+            ..SavedRequest::new("", original.request.clone())
+        };
+        id = Some(copy.id);
+        items.insert(index + 1, Item::Request(copy));
+        true
+    });
+    id
+}
+
 /// Runs `f` on the collection, copying it first if it's shared. Returns what
 /// `f` returns, or `false` if there's no such collection.
 pub fn modify(
@@ -1393,6 +1425,122 @@ mod tests {
     fn modify_a_missing_collection_does_nothing() {
         let mut collections = vec![Arc::new(Collection::new("API"))];
         assert!(!modify(&mut collections, Uuid::new_v4(), |_| true));
+    }
+
+    fn item_ids(items: &[Item]) -> Vec<Uuid> {
+        items.iter().map(Item::id).collect()
+    }
+
+    #[test]
+    fn duplicate_request_inserts_a_copy_after_it_at_the_root() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let mut collections = vec![Arc::new(f.collection), Arc::new(Collection::new("Other"))];
+        let held = collections.clone();
+
+        let copy = duplicate_request(&mut collections, collection_id, f.root_request).unwrap();
+
+        assert_eq!(
+            item_ids(&collections[0].items),
+            [f.root_request, copy, f.outer]
+        );
+        let original = collections[0].find_request(f.root_request).unwrap();
+        let copied = collections[0].find_request(copy).unwrap();
+        assert_ne!(copy, f.root_request);
+        assert_eq!(copied.name, "Root (Copy)");
+        assert_eq!(copied.request, original.request);
+        assert_eq!(held[0].items.len(), 2);
+        assert!(Arc::ptr_eq(&collections[1], &held[1]));
+    }
+
+    #[test]
+    fn duplicate_request_inserts_a_copy_after_it_in_a_nested_folder() {
+        let mut f = fixture();
+        let last = SavedRequest::new("Last", request("example.com/last"));
+        let last_id = last.id;
+        assert!(f.collection.add_item(Some(f.inner), Item::Request(last)));
+        let collection_id = f.collection.id;
+        let mut collections = vec![Arc::new(f.collection)];
+
+        let copy = duplicate_request(&mut collections, collection_id, f.deep_request).unwrap();
+
+        let inner = collections[0].find_folder(f.inner).unwrap();
+        assert_eq!(item_ids(&inner.items), [f.deep_request, copy, last_id]);
+        assert_eq!(
+            collections[0].find_request(copy).unwrap().name,
+            "Deep (Copy)"
+        );
+        assert_eq!(item_ids(&collections[0].items), [f.root_request, f.outer]);
+    }
+
+    #[test]
+    fn duplicating_twice_or_a_copy_isnt_numbered() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let mut collections = vec![Arc::new(f.collection)];
+
+        let first = duplicate_request(&mut collections, collection_id, f.root_request).unwrap();
+        let second = duplicate_request(&mut collections, collection_id, f.root_request).unwrap();
+        let of_copy = duplicate_request(&mut collections, collection_id, first).unwrap();
+
+        assert_eq!(
+            item_ids(&collections[0].items),
+            [f.root_request, second, first, of_copy, f.outer]
+        );
+        let name = |id| collections[0].find_request(id).unwrap().name.clone();
+        assert_eq!(name(first), "Root (Copy)");
+        assert_eq!(name(second), "Root (Copy)");
+        assert_eq!(name(of_copy), "Root (Copy) (Copy)");
+    }
+
+    #[test]
+    fn duplicate_request_shares_the_raw_body_and_drops_the_origin() {
+        let request = Request {
+            body: Body::Raw {
+                kind: RawKind::Json,
+                text: RawText::from("{}"),
+            },
+            ..Request::default()
+        };
+        let mut saved = SavedRequest::new("Imported", request);
+        saved.origin = Some(Origin {
+            key: "GET /users".into(),
+            hash: saved.content_hash(),
+            untagged: true,
+        });
+        let request_id = saved.id;
+        let mut collection = Collection::new("API");
+        collection.items.push(Item::Request(saved));
+        let collection_id = collection.id;
+        let mut collections = vec![Arc::new(collection)];
+
+        let copy = duplicate_request(&mut collections, collection_id, request_id).unwrap();
+
+        assert!(RawText::ptr_eq(
+            raw_text(&collections[0], request_id),
+            raw_text(&collections[0], copy)
+        ));
+        assert!(collections[0].find_request(copy).unwrap().origin.is_none());
+        assert!(
+            collections[0]
+                .find_request(request_id)
+                .unwrap()
+                .origin
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn duplicate_a_missing_request_changes_nothing() {
+        let f = fixture();
+        let collection_id = f.collection.id;
+        let mut collections = vec![Arc::new(f.collection)];
+        let held = collections.clone();
+
+        assert!(duplicate_request(&mut collections, collection_id, Uuid::new_v4()).is_none());
+        assert!(duplicate_request(&mut collections, collection_id, f.outer).is_none());
+        assert!(duplicate_request(&mut collections, Uuid::new_v4(), f.root_request).is_none());
+        assert!(Arc::ptr_eq(&collections[0], &held[0]));
     }
 
     fn variable(key: &str, value: &str) -> KeyValue {

@@ -161,6 +161,14 @@ impl Workspace {
             } => self.collections.update(cx, |collections, cx| {
                 collections.remove_item(*collection_id, *item_id, cx)
             }),
+            LibraryPanelEvent::DuplicateRequest {
+                collection_id,
+                request_id,
+            } => {
+                self.collections.update(cx, |collections, cx| {
+                    collections.duplicate_request(*collection_id, *request_id, cx)
+                });
+            }
             LibraryPanelEvent::AddFolder {
                 collection_id,
                 parent,

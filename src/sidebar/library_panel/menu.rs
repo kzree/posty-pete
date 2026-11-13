@@ -305,15 +305,35 @@ fn library_menu(
             )
             .separator();
     }
-    let (rename_panel, delete_panel) = (panel.clone(), panel.clone());
-    menu.item(
+    let rename_panel = panel.clone();
+    menu = menu.item(
         PopupMenuItem::new("Rename…").on_click(move |_, window, cx| {
             rename_panel
                 .update(cx, |panel, cx| panel.rename(target, window, cx))
                 .ok();
         }),
-    )
-    .item(
+    );
+    if let MenuTarget::Request {
+        collection_id,
+        request_id,
+    } = target
+    {
+        let panel = panel.clone();
+        menu = menu.item(
+            PopupMenuItem::new("Duplicate request").on_click(move |_, _, cx| {
+                panel
+                    .update(cx, |_, cx| {
+                        cx.emit(LibraryPanelEvent::DuplicateRequest {
+                            collection_id,
+                            request_id,
+                        })
+                    })
+                    .ok();
+            }),
+        );
+    }
+    let delete_panel = panel.clone();
+    menu.item(
         PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
             delete_panel
                 .update(cx, |panel, cx| panel.delete(target, window, cx))
