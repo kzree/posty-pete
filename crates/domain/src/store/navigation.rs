@@ -48,6 +48,7 @@ mod tests {
     use crate::{
         environment_selection::DraftSource,
         layout::Layout,
+        library_expansion::{LibraryExpansion, LibrarySection},
         navigation::NavEntry,
         recents::{Recent, Recents},
         request::{HttpMethod, Request},
@@ -83,6 +84,10 @@ mod tests {
                 sidebar_width: 320.,
                 sidebar_collapsed: true,
                 request_split: Some(0.4),
+            },
+            library: LibraryExpansion {
+                expanded: [Uuid::new_v4(), Uuid::new_v4()].into(),
+                collapsed_sections: [LibrarySection::Environments].into(),
             },
         }
     }

@@ -428,7 +428,7 @@ mod tests {
     fn menu_targets_are_collections_folders_and_requests() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         delegate.toggle_at(1);
         delegate.toggle_at(3);
         assert_eq!(delegate.menu_target_at(0), None);

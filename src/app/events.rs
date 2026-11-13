@@ -12,7 +12,7 @@ use gpui_component::{WindowExt, notification::Notification};
 use super::{EditorContent, Workspace, routes::AppRoute, show_error};
 use crate::{
     collection_view::{CollectionViewEvent, EditTarget},
-    collections::CollectionsEvent,
+    collections::{CollectionsEvent, LoadState},
     command_palette::CommandPaletteEvent,
     history::HistoryEvent,
     import_dialog::{ImportDialogOptions, open_import_dialog},
@@ -99,9 +99,11 @@ impl Workspace {
     }
 
     fn on_collections_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let collections = self.collections.read(cx).all().to_vec();
+        let collections = self.collections.read(cx);
+        let complete = collections.load_state() == LoadState::Loaded;
+        let collections = collections.all().to_vec();
         self.library_panel.update(cx, |panel, cx| {
-            panel.set_collections(collections, window, cx)
+            panel.set_collections(collections, complete, window, cx)
         });
         if !self.route_exists(self.editor_route(), cx) {
             self.keep_deleted_request_as_draft();
@@ -224,6 +226,10 @@ impl Workspace {
                 if self.editor_content == content {
                     self.revert_request(window, cx);
                 }
+            }
+            LibraryPanelEvent::ExpansionChanged(expansion) => {
+                self.library_expansion = expansion.clone();
+                self.schedule_navigation_save(cx);
             }
         }
     }

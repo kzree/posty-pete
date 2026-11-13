@@ -202,8 +202,8 @@ impl Workspace {
         .detach();
     }
 
-    /// Restores the stored navigation, environment selection, recents and
-    /// layout if both it and the collections are loaded. All but the
+    /// Restores the stored navigation, environment selection, recents,
+    /// layout and library expansion if both it and the collections are loaded. All but the
     /// navigation are restored even if the user already moved on or turned off
     /// restoring the last session.
     pub(super) fn restore_navigation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -226,6 +226,10 @@ impl Workspace {
         );
         self.restore_recents(mem::take(&mut saved.recents), cx);
         self.restore_layout(saved.layout, window, cx);
+        self.library_expansion = self.library_panel.update(cx, |panel, cx| {
+            panel.restore_expansion(&saved.library, window, cx);
+            panel.expansion(cx)
+        });
         if self.navigation_untouched(cx) {
             self.apply_saved_navigation(saved, window, cx);
         } else {
@@ -319,6 +323,7 @@ impl Workspace {
             draft_source,
             recents: self.recents.clone(),
             layout: self.current_layout(),
+            library: self.library_expansion.clone(),
         };
         self.persisted_navigation.save_job(saved)
     }
@@ -352,6 +357,7 @@ mod tests {
             draft_source: Default::default(),
             recents: Default::default(),
             layout: Default::default(),
+            library: Default::default(),
         }
     }
 

@@ -1,4 +1,7 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashSet},
+    sync::Arc,
+};
 
 use gpui::SharedString;
 use uuid::Uuid;
@@ -33,11 +36,7 @@ impl Row {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Section {
-    Collections,
-    Environments,
-}
+pub(super) use domain::library_expansion::LibrarySection as Section;
 
 /// Which sections are expanded.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -63,6 +62,23 @@ impl Sections {
 
     pub(super) fn expand(&mut self, section: Section) {
         *self.get_mut(section) = true;
+    }
+
+    pub(super) fn collapsed(self) -> BTreeSet<Section> {
+        [
+            (Section::Collections, self.collections),
+            (Section::Environments, self.environments),
+        ]
+        .into_iter()
+        .filter_map(|(section, expanded)| (!expanded).then_some(section))
+        .collect()
+    }
+
+    pub(super) fn with_collapsed(collapsed: &BTreeSet<Section>) -> Self {
+        Self {
+            collections: !collapsed.contains(&Section::Collections),
+            environments: !collapsed.contains(&Section::Environments),
+        }
     }
 
     fn get_mut(&mut self, section: Section) -> &mut bool {
@@ -397,6 +413,27 @@ mod tests {
         assert_eq!(
             outline(&rows)[..5],
             ["Collections", "0:API", "1:Root", "1:Outer", "0:Empty"]
+        );
+    }
+
+    #[test]
+    fn collapsed_sections_round_trip() {
+        for collections in [true, false] {
+            for environments in [true, false] {
+                let sections = Sections {
+                    collections,
+                    environments,
+                };
+                assert_eq!(Sections::with_collapsed(&sections.collapsed()), sections);
+            }
+        }
+        assert_eq!(
+            Sections {
+                collections: true,
+                environments: false
+            }
+            .collapsed(),
+            BTreeSet::from([Section::Environments])
         );
     }
 

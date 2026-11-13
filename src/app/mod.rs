@@ -23,6 +23,7 @@ use std::cell::Cell;
 use domain::{
     environment_selection::EnvironmentSelection,
     layout::Layout,
+    library_expansion::LibraryExpansion,
     palette::Scope,
     recents::{Recent, Recents},
 };
@@ -139,6 +140,7 @@ pub struct Workspace {
     /// `Resized` events still to come from restoring the layout, which
     /// mustn't overwrite the stored sizes with the clamped ones.
     own_resizes: OwnResizes,
+    library_expansion: LibraryExpansion,
     /// The OS window title last set.
     os_window_title: String,
     os_window_edited: bool,
@@ -200,6 +202,7 @@ impl Workspace {
             sidebar_initial_width: domain::layout::SIDEBAR_DEFAULT_WIDTH,
             split_pending: false,
             own_resizes: OwnResizes::default(),
+            library_expansion: LibraryExpansion::default(),
             os_window_title: String::new(),
             os_window_edited: false,
             focus_handle: cx.focus_handle(),

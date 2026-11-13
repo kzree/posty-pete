@@ -13,6 +13,7 @@ pub mod http;
 pub mod json_body;
 pub mod layers;
 pub mod layout;
+pub mod library_expansion;
 pub mod mcp;
 pub mod navigation;
 pub mod openapi;

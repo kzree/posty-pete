@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::{
-    collection::MovedItems, environment_selection::DraftSource, layout::Layout, recents::Recents,
-    request::Request,
+    collection::MovedItems, environment_selection::DraftSource, layout::Layout,
+    library_expansion::LibraryExpansion, recents::Recents, request::Request,
 };
 
 /// A back/forward history entry as stored on disk.
@@ -54,6 +54,8 @@ pub struct SavedNavigation {
     /// What the palette lists as recent.
     pub recents: Recents,
     pub layout: Layout,
+    /// Which library rows are open.
+    pub library: LibraryExpansion,
 }
 
 /// How [`SavedNavigation`] is written, borrowing the session part from
@@ -69,6 +71,8 @@ pub struct NavigationFile<'a> {
     #[serde(skip_serializing_if = "Recents::is_empty")]
     recents: &'a Recents,
     layout: &'a Layout,
+    #[serde(skip_serializing_if = "LibraryExpansion::is_default")]
+    library: &'a LibraryExpansion,
 }
 
 impl<'a> NavigationFile<'a> {
@@ -92,6 +96,7 @@ impl<'a> From<&'a SavedNavigation> for NavigationFile<'a> {
             draft_source: &saved.draft_source,
             recents: &saved.recents,
             layout: &saved.layout,
+            library: &saved.library,
         }
     }
 }
@@ -128,6 +133,8 @@ struct StoredNavigation {
     recents: Recents,
     #[serde(default)]
     layout: Layout,
+    #[serde(default)]
+    library: LibraryExpansion,
 }
 
 impl From<StoredNavigation> for SavedNavigation {
@@ -144,6 +151,7 @@ impl From<StoredNavigation> for SavedNavigation {
             draft_source,
             recents: stored.recents,
             layout: stored.layout,
+            library: stored.library,
         }
     }
 }
@@ -256,7 +264,7 @@ impl<'a> From<&'a NavigationToSave> for NavigationFile<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::recents::Recent;
+    use crate::{library_expansion::LibrarySection, recents::Recent};
 
     fn load(json: &str) -> SavedNavigation {
         serde_json::from_str(json).unwrap()
@@ -271,6 +279,7 @@ mod tests {
             draft_source: DraftSource::None,
             recents: Recents::default(),
             layout: Layout::default(),
+            library: LibraryExpansion::default(),
         }
     }
 
@@ -479,6 +488,7 @@ mod tests {
             draft_source: DraftSource::Shared(Uuid::new_v4()),
             recents: Recents::default(),
             layout: Layout::default(),
+            library: LibraryExpansion::default(),
         };
         let value = serde_json::to_value(&saved).unwrap();
         assert!(value.get("draft_collection").is_none());
@@ -572,6 +582,47 @@ mod tests {
         assert_eq!(
             read_back(&kept.apply(current.clone())).layout,
             current.layout
+        );
+    }
+
+    #[test]
+    fn files_without_library_state_load_with_everything_closed() {
+        let saved = load(r#"{ "entries": [{ "kind": "draft" }], "index": 0 }"#);
+        assert_eq!(saved.library, LibraryExpansion::default());
+        let value = serde_json::to_value(&saved).unwrap();
+        assert!(value.get("library").is_none());
+    }
+
+    #[test]
+    fn library_state_round_trips() {
+        let mut saved = blank();
+        saved.library = LibraryExpansion {
+            expanded: [Uuid::new_v4(), Uuid::new_v4()].into(),
+            collapsed_sections: [LibrarySection::Collections].into(),
+        };
+        let value = serde_json::to_value(&saved).unwrap();
+        assert_eq!(
+            serde_json::from_value::<SavedNavigation>(value).unwrap(),
+            saved
+        );
+    }
+
+    #[test]
+    fn library_state_is_restored_and_written_without_restoring_the_session() {
+        let mut stored = session(
+            vec![NavEntry::Draft, NavEntry::Settings],
+            Some(edited_draft()),
+        );
+        stored.library.expanded.insert(Uuid::new_v4());
+        let startup = Startup::new(Some(stored.clone()), false);
+        assert_eq!(startup.restore.unwrap().library, stored.library);
+
+        let mut kept = startup.kept;
+        let mut current = blank();
+        current.library.expanded.insert(Uuid::new_v4());
+        assert_eq!(
+            read_back(&kept.apply(current.clone())).library,
+            current.library
         );
     }
 

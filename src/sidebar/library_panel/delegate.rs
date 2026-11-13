@@ -1,6 +1,8 @@
 use std::{collections::HashSet, sync::Arc};
 
-use domain::{collection::Collection, environment::Environment};
+use domain::{
+    collection::Collection, environment::Environment, library_expansion::LibraryExpansion,
+};
 use gpui::{
     App, Context, ElementId, InteractiveElement, ParentElement, Pixels, SharedString, Styled,
     WeakEntity, Window, div, prelude::FluentBuilder as _, px,
@@ -28,6 +30,9 @@ pub(super) struct LibraryDelegate {
     pub(super) sections: Sections,
     /// Expanded collections and folders.
     expanded: HashSet<Uuid>,
+    /// Whether `collections` is the whole library. Until it is, expanded ids
+    /// that aren't in it are kept, since they may be restored ones still loading.
+    complete: bool,
     pub(super) selected: Option<Uuid>,
     rows: Vec<Row>,
     /// Receives drops; `None` only in tests.
@@ -35,11 +40,35 @@ pub(super) struct LibraryDelegate {
 }
 
 impl LibraryDelegate {
-    pub(super) fn set_collections(&mut self, collections: Vec<Arc<Collection>>) {
-        let existing = container_ids(&collections);
-        self.expanded.retain(|id| existing.contains(id));
+    /// `complete` is whether `collections` is the whole library, loaded.
+    pub(super) fn set_collections(&mut self, collections: Vec<Arc<Collection>>, complete: bool) {
         self.collections = collections;
+        self.complete = complete;
+        self.prune();
         self.rebuild_rows();
+    }
+
+    /// Adds the stored expanded rows to the ones opened since startup, and
+    /// applies the stored sections.
+    pub(super) fn restore(&mut self, saved: &LibraryExpansion) {
+        self.expanded.extend(&saved.expanded);
+        self.sections = Sections::with_collapsed(&saved.collapsed_sections);
+        self.prune();
+        self.rebuild_rows();
+    }
+
+    pub(super) fn expansion(&self) -> LibraryExpansion {
+        LibraryExpansion {
+            expanded: self.expanded.iter().copied().collect(),
+            collapsed_sections: self.sections.collapsed(),
+        }
+    }
+
+    fn prune(&mut self) {
+        if self.complete {
+            let existing = container_ids(&self.collections);
+            self.expanded.retain(|id| existing.contains(id));
+        }
     }
 
     pub(super) fn collections(&self) -> &[Arc<Collection>] {
@@ -361,7 +390,7 @@ mod tests {
     fn toggling_keeps_nested_state_and_survives_refresh() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections.clone());
+        delegate.set_collections(collections.clone(), true);
 
         delegate.toggle_at(1);
         delegate.toggle_at(3);
@@ -378,7 +407,7 @@ mod tests {
         delegate.toggle_at(0);
         assert_eq!(outline(&delegate.rows).len(), 8);
 
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         assert_eq!(
             outline(&delegate.rows)[..6],
             [
@@ -396,7 +425,7 @@ mod tests {
     fn toggling_a_request_does_nothing() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         delegate.toggle_at(1);
         delegate.toggle_at(2);
         assert_eq!(delegate.expanded, HashSet::from([ids.collection]));
@@ -406,7 +435,7 @@ mod tests {
     fn only_collection_rows_open_a_collection() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         delegate.toggle_at(1);
         delegate.toggle_at(3);
         assert_eq!(delegate.collection_at(0), None);
@@ -420,7 +449,7 @@ mod tests {
     fn only_request_rows_open_a_request() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         delegate.toggle_at(1);
         assert_eq!(delegate.request_at(0), None);
         assert_eq!(delegate.request_at(1), None);
@@ -433,7 +462,7 @@ mod tests {
     fn row_of_finds_only_visible_rows() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         assert_eq!(delegate.row_of(ids.collection), Some(1));
         assert_eq!(delegate.row_of(ids.root), None);
 
@@ -451,7 +480,7 @@ mod tests {
     fn target_names_come_from_collections_and_nested_items() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         let folder = |folder_id| MenuTarget::Folder {
             collection_id: ids.collection,
             folder_id,
@@ -483,7 +512,7 @@ mod tests {
     fn expand_opens_the_section_and_the_parent() {
         let (collections, ids) = fixture();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections.clone());
+        delegate.set_collections(collections.clone(), true);
         delegate.toggle_at(0);
         delegate.expand(ids.collection);
         assert_eq!(
@@ -492,7 +521,7 @@ mod tests {
         );
 
         delegate.expand(ids.collection);
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         assert_eq!(delegate.expanded, HashSet::from([ids.collection]));
     }
 
@@ -504,8 +533,55 @@ mod tests {
             ..Default::default()
         };
         Arc::make_mut(&mut collections[0]).remove(ids.outer);
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         assert_eq!(delegate.expanded, HashSet::from([ids.collection]));
+    }
+
+    #[test]
+    fn restoring_before_the_library_loads_keeps_unknown_ids() {
+        let (collections, ids) = fixture();
+        let created_while_loading = vec![collections[1].clone()];
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(Vec::new(), false);
+        let saved = LibraryExpansion {
+            expanded: [ids.collection, ids.outer].into(),
+            collapsed_sections: [Section::Environments].into(),
+        };
+        delegate.restore(&saved);
+        delegate.set_collections(created_while_loading, false);
+        assert_eq!(delegate.expansion(), saved);
+
+        delegate.set_collections(collections, true);
+        assert_eq!(delegate.expansion(), saved);
+        assert_eq!(
+            outline(&delegate.rows),
+            [
+                "Collections",
+                "0:API",
+                "1:Root",
+                "1:Outer",
+                "2:Inner",
+                "0:Empty",
+                "Environments"
+            ]
+        );
+    }
+
+    #[test]
+    fn restoring_into_a_loaded_library_drops_only_missing_ids() {
+        let (collections, ids) = fixture();
+        let mut delegate = LibraryDelegate::default();
+        delegate.set_collections(collections, true);
+        delegate.expand(ids.outer);
+        let deleted = Uuid::new_v4();
+        delegate.restore(&LibraryExpansion {
+            expanded: [ids.collection, deleted].into(),
+            collapsed_sections: Default::default(),
+        });
+        assert_eq!(
+            delegate.expansion().expanded,
+            [ids.collection, ids.outer].into()
+        );
     }
 
     #[test]
@@ -513,7 +589,7 @@ mod tests {
         let (collections, _) = fixture();
         let environments = environments();
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(collections);
+        delegate.set_collections(collections, true);
         delegate.set_environments(environments.clone());
         let staging = environments[1].id;
 
@@ -536,7 +612,7 @@ mod tests {
     #[test]
     fn arrow_keys_skip_empty_rows() {
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(Vec::new());
+        delegate.set_collections(Vec::new(), true);
         assert_eq!(delegate.step(Some(0), Direction::Down), Some(2));
         assert_eq!(delegate.step(Some(2), Direction::Down), Some(0));
         assert_eq!(delegate.step(Some(0), Direction::Up), Some(2));
@@ -550,7 +626,7 @@ mod tests {
     #[test]
     fn empty_rows_do_nothing() {
         let mut delegate = LibraryDelegate::default();
-        delegate.set_collections(Vec::new());
+        delegate.set_collections(Vec::new(), true);
         assert_eq!(
             outline(&delegate.rows),
             ["Collections", "(none)", "Environments", "(none)"]

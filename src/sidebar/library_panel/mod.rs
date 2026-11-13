@@ -10,9 +10,10 @@ use std::{collections::HashMap, sync::Arc};
 use domain::{
     collection::{Collection, Destination},
     environment::Environment,
+    library_expansion::LibraryExpansion,
 };
 use gpui::{
-    Anchor, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
+    Anchor, App, AppContext, Context, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, ScrollStrategy, Styled, Subscription, Window, div,
 };
 use gpui_component::{
@@ -92,6 +93,9 @@ pub enum LibraryPanelEvent {
     },
     DuplicateSharedEnvironment(Uuid),
     DeleteSharedEnvironment(Uuid),
+    /// A collection, folder or section was expanded or collapsed, or expanded
+    /// rows were dropped with their deleted items.
+    ExpansionChanged(LibraryExpansion),
 }
 
 pub struct LibraryPanel {
@@ -148,13 +152,18 @@ impl LibraryPanel {
         }
     }
 
+    /// `complete` is whether `collections` is the whole library, loaded.
+    /// Until it is, expanded rows missing from it are kept.
     pub fn set_collections(
         &mut self,
         collections: Vec<Arc<Collection>>,
+        complete: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.update_rows(cx, |delegate| delegate.set_collections(collections));
+        self.update_rows(cx, |delegate| {
+            delegate.set_collections(collections, complete)
+        });
         self.list.update(cx, |list, cx| {
             list.set_right_clicked_index(None, window, cx)
         });
@@ -183,6 +192,21 @@ impl LibraryPanel {
         self.list
             .update(cx, |list, _| list.delegate_mut().selected = id);
         self.sync_selection(window, cx);
+    }
+
+    /// Opens the stored rows along with any opened since startup.
+    pub fn restore_expansion(
+        &mut self,
+        saved: &LibraryExpansion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_rows(cx, |delegate| delegate.restore(saved));
+        self.sync_selection(window, cx);
+    }
+
+    pub fn expansion(&self, cx: &App) -> LibraryExpansion {
+        self.list.read(cx).delegate().expansion()
     }
 
     /// Expands these collections and folders, including ones the next
@@ -277,11 +301,18 @@ impl LibraryPanel {
         });
     }
 
+    /// Emits `ExpansionChanged` if `f` expands or collapses anything.
     fn update_rows(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut LibraryDelegate)) {
-        self.list.update(cx, |list, cx| {
+        let changed = self.list.update(cx, |list, cx| {
+            let before = list.delegate().expansion();
             f(list.delegate_mut());
             cx.notify();
+            let after = list.delegate().expansion();
+            (after != before).then_some(after)
         });
+        if let Some(expansion) = changed {
+            cx.emit(LibraryPanelEvent::ExpansionChanged(expansion));
+        }
         cx.notify();
     }
 
@@ -483,7 +514,7 @@ mod tests {
         let (panel, cx) = open_view(cx, LibraryPanel::new);
         let (collections, ids) = test_support::fixture();
         panel.update_in(cx, |panel, window, cx| {
-            panel.set_collections(collections, window, cx);
+            panel.set_collections(collections, true, window, cx);
             panel.reveal([ids.collection, ids.outer, ids.inner], cx);
         });
         let emitted = Rc::new(RefCell::new(Vec::new()));
@@ -615,6 +646,54 @@ mod tests {
         }
         drag(row(ids.inner, cx).center(), row(ids.outer, cx).center(), cx);
         assert_eq!(*emitted.borrow(), []);
+    }
+
+    #[gpui::test]
+    fn expanding_and_collapsing_emits_the_expansion(cx: &mut TestAppContext) {
+        let (panel, ids, _, cx) = open_panel(cx);
+        let expansions = Rc::new(RefCell::new(Vec::new()));
+        let sink = expansions.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&panel, move |_, event: &LibraryPanelEvent, _| {
+                if let LibraryPanelEvent::ExpansionChanged(expansion) = event {
+                    sink.borrow_mut().push(expansion.clone())
+                }
+            })
+            .detach()
+        });
+
+        let inner = row(ids.inner, cx).center();
+        cx.simulate_click(inner, Modifiers::none());
+        cx.run_until_parked();
+        let last = || expansions.borrow().last().cloned().unwrap();
+        assert_eq!(last().expanded, [ids.collection, ids.outer].into());
+
+        panel.update_in(cx, |panel, _, cx| {
+            panel.update_rows(cx, |delegate| {
+                delegate.sections.toggle(Section::Environments)
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(last().collapsed_sections, [Section::Environments].into());
+
+        let (other_library, _) = test_support::fixture();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_collections(other_library.clone(), false, window, cx);
+            panel.reveal([ids.inner], cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(expansions.borrow().len(), 3);
+        assert_eq!(
+            last().expanded,
+            [ids.collection, ids.outer, ids.inner].into()
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_collections(other_library, true, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(expansions.borrow().len(), 4);
+        assert_eq!(last().expanded, [].into());
     }
 
     #[gpui::test]
