@@ -25,6 +25,9 @@ Functionality that's planned but not built yet. Add items here when they come up
 - [ ] **Folder-level variables.** Variables on folders, overriding the collection's for requests inside them.
 - [ ] **Folder-level auth.** Auth on folders, used by requests set to Inherit inside them. Decide where it sits relative to the environment layers, matching folder variables.
 - [ ] **Manage requests in collections.** Move requests (and move folders) in the library tree, including drag and drop.
+- [ ] **Move to… for requests.** A context-menu item and keyboard way to move a request to a collection or folder, picked from a list like Save as's location picker, as an alternative to dragging.
+- [ ] **Library drag: auto-expand folders.** While dragging, expand a collapsed folder or collection after hovering it briefly, so a request can be dropped into a nested folder.
+- [ ] **Library drag: auto-scroll.** While dragging, scroll the library list when the pointer is near its top or bottom edge.
 - [ ] **Unsaved changes on Dock Quit / logout.** cmd+Q, the Quit menu item and closing the window ask before discarding edits, but Dock "Quit", logout and shutdown bypass the app's Quit action (gpui-macos 0.3.11 doesn't implement `applicationShouldTerminate:`), so edits are dropped without asking. Relatedly, a collection-variables edit made in the last half second before a Dock quit may not be written: gpui waits only 200 ms for quit handlers.
 - [ ] **Unsaved collection name edits.** `CollectionView::show` keeps a typed but unsaved name when you leave a collection and come back to it. Decide whether it should be discarded instead.
 - [ ] **OpenAPI: more of the spec.** Follow external `$ref`s (other files or URLs) and honour per-operation `servers` (every request uses `baseUrl` now).
